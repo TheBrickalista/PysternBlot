@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pysternblot"
+version = "0.1.0"
+description = "Western blot panel builder with hierarchical lane annotations (GPLv3)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-only" }
+dependencies = [
+  "PySide6>=6.6",
+  "pydantic>=2.6",
+  "numpy>=1.24",
+  "scikit-image>=0.21"
+]
+
+[project.scripts]
+pysternblot = "pysternblot.main:main"

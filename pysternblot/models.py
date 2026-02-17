@@ -68,6 +68,7 @@ class DisplaySettings(BaseModel):
     gamma: float = 1.0
     auto_contrast: bool = True
     overlay_alpha: float = 0.35
+    overlay_visible: bool = True
 
 class Blot(BaseModel):
     id: str

@@ -70,6 +70,16 @@ class DisplaySettings(BaseModel):
     overlay_alpha: float = 0.35
     overlay_visible: bool = True
 
+class LegendRow(BaseModel):
+    left: str = ""
+    cells: List[str] = Field(default_factory=list)
+    right: str = ""
+
+class LegendSettings(BaseModel):
+    mode: Literal["protein", "dna"] = "protein"
+    upper_rows: List[LegendRow] = Field(default_factory=list)
+    lower_rows: List[LegendRow] = Field(default_factory=list)
+
 class Blot(BaseModel):
     id: str
     asset_sha256: str
@@ -102,6 +112,7 @@ class Panel(BaseModel):
     lane_layout: LaneLayout
     blots: List[Blot]
     layout: Layout
+    legend: LegendSettings = Field(default_factory=LegendSettings)
 
 class AssetEntry(BaseModel):
     sha256: str

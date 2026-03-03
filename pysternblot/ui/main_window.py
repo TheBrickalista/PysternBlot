@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
 from ..models import Blot
-
+from .legend_tab import LegendTab
 
 class MainWindow(QMainWindow):
     def __init__(self, workspace: Workspace):
@@ -50,6 +50,11 @@ class MainWindow(QMainWindow):
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
         self.tabs.addTab(prov, "Provenance")
+
+        # Legend tab
+        self.legend_tab = LegendTab()
+        self.legend_tab.changed.connect(self._on_legend_changed)
+        self.tabs.addTab(self.legend_tab, "Legend")
 
         self._toolbar()
 
@@ -105,6 +110,7 @@ class MainWindow(QMainWindow):
         try:
             self.current_project = self.workspace.load_project(path)
             self._sync_controls_from_project()
+            self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
@@ -118,6 +124,7 @@ class MainWindow(QMainWindow):
             proj_path = self.workspace.create_new_project(name.strip())
             self.current_project = self.workspace.load_project(str(proj_path))
             self._sync_controls_from_project()
+            self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
         except Exception as e:
@@ -243,6 +250,24 @@ class MainWindow(QMainWindow):
 
         self.a_overlay.setChecked(bool(overlay_vis))
         self.alpha_slider.setValue(int(round(overlay_alpha * 100)))
+
+    def _on_legend_changed(self):
+        if not self.current_project:
+            return
+        self.workspace.save_project(self.current_project)
+        # Later when legend affects rendering, we’ll also call refresh_previews()
+
+    def _get_legend_suggestions(self) -> list[str]:
+        return self.workspace.load_legend_suggestions()
+
+    def _add_legend_suggestion(self, txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return
+        items = self.workspace.load_legend_suggestions()
+        if txt not in items:
+            items.append(txt)
+            self.workspace.save_legend_suggestions(items)
 
     def toggle_overlay(self, checked: bool):
         blot = self._first_blot()

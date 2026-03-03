@@ -287,10 +287,32 @@ class MainWindow(QMainWindow):
         if not self.current_project:
             return
 
-        panel_scene = build_panel_scene(self.current_project)
+        # Option 2: ensure cached crop previews exist before rendering
+        for blot in self.current_project.panel.blots:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot)
+            except Exception as e:
+                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+
+        panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
-        prov_scene = build_provenance_scene(self.current_project, self.workspace.root)
+        prov_scene = build_provenance_scene(self.current_project, self.workspace.root, self._on_crop_changed)
         self.prov_view.setScene(prov_scene)
         self.prov_view.fitInView(prov_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def _on_crop_changed(self, blot):
+        if not self.current_project:
+            return
+        # persist crop
+        self.workspace.save_project(self.current_project)
+
+        # regenerate cached preview for this blot
+        try:
+            self.workspace.ensure_blot_crop_preview(blot)
+        except Exception as e:
+            print(f"[preview] failed after crop move: {e}")
+
+        # refresh both views
+        self.refresh_previews()

@@ -27,10 +27,18 @@ class Workspace:
     def assets_dir(self) -> Path: return self.root / "assets"
     @property
     def projects_dir(self) -> Path: return self.root / "projects"
+    @property
+    def presets_dir(self) -> Path: return self.root / "presets"
 
     def ensure(self) -> None:
         self.assets_dir.mkdir(parents=True, exist_ok=True)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.presets_dir.mkdir(parents=True, exist_ok=True)
+
+        # Legend suggestions history (editable dropdown memory)
+        sugg = self.presets_dir / "legend_suggestions.json"
+        if not sugg.exists():
+            sugg.write_text('{"items":[]}\n', encoding="utf-8")
 
     def import_asset(self, src_path: str) -> tuple[str, Path]:
         self.ensure()
@@ -55,6 +63,39 @@ class Workspace:
     def load_project(self, project_json_path: str) -> Project:
         data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
         return Project.model_validate(data)
+    
+    def load_legend_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "legend_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            # unique + stable order
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_legend_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "legend_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
         
     def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
         """
@@ -98,6 +139,7 @@ class Workspace:
                 },
                 "blots": [],
                 "layout": {"stack_mode": "vertical_stack", "order": []},
+                "legend": {"mode": "protein", "upper_rows": [], "lower_rows": []},
             },
         }
 

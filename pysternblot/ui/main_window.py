@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
+from ..models import Blot
 
 
 class MainWindow(QMainWindow):
@@ -55,6 +56,10 @@ class MainWindow(QMainWindow):
     def _toolbar(self):
         tb = QToolBar("Main")
         self.addToolBar(tb)
+        
+        a_new = QAction("New Project…", self)
+        a_new.triggered.connect(self.new_project)
+        tb.addAction(a_new)
 
         a_open = QAction("Open Project…", self)
         a_open.triggered.connect(self.open_project)
@@ -63,6 +68,10 @@ class MainWindow(QMainWindow):
         a_import = QAction("Import Blot…", self)
         a_import.triggered.connect(self.import_blot)
         tb.addAction(a_import)
+        
+        a_import_mem = QAction("Import Membrane…", self)
+        a_import_mem.triggered.connect(self.import_membrane)
+        tb.addAction(a_import_mem)
 
         tb.addSeparator()
 
@@ -100,16 +109,122 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+            
+    def new_project(self):
+        name, ok = QInputDialog.getText(self, "New Project", "Project name:")
+        if not ok or not name.strip():
+            return
+        try:
+            proj_path = self.workspace.create_new_project(name.strip())
+            self.current_project = self.workspace.load_project(str(proj_path))
+            self._sync_controls_from_project()
+            self.refresh_previews()
+            QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
 
     def import_blot(self):
+        if not self.current_project:
+            QMessageBox.information(
+                self,
+                "No project",
+                "Create or open a project first (New Project… or Open Project…)."
+            )
+            return
+
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import blot", "", "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+            self,
+            "Import blot",
+            "",
+            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
         )
         if not path:
             return
+
         try:
             digest, dest = self.workspace.import_asset(path)
-            QMessageBox.information(self, "Imported", f"{dest}\nsha256={digest}")
+
+            blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
+
+            new_blot_dict = {
+                "id": blot_id,
+                "asset_sha256": digest,
+                "overlay_asset_sha256": None,
+                "crop": {"x": 50, "y": 50, "w": 300, "h": 200, "mode": "absolute"},
+                "ladder": {
+                    "lane_index": 0,
+                    "marker_set_id": "ms_default",
+                    "calibration_points": [
+                        {"y_px": 50, "kda": 55},
+                        {"y_px": 120, "kda": 36}
+                    ],
+                    "show_ticks": True
+                },
+                "protein_label": {"text": "Protein", "align": "center"},
+                "display": {
+                    "invert": False,
+                    "gamma": 1.0,
+                    "auto_contrast": True,
+                    "overlay_alpha": 0.35,
+                    "overlay_visible": True
+                },
+            }
+
+            new_blot = Blot.model_validate(new_blot_dict)
+
+            self.current_project.panel.blots.append(new_blot)
+            self.current_project.panel.layout.order.append(blot_id)
+
+            self.workspace.save_project(self.current_project)
+
+            QMessageBox.information(
+                self,
+                "Imported",
+                f"Copied to:\n{dest}\n\nAttached to project as {blot_id}"
+            )
+
+            self.refresh_previews()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            
+    def import_membrane(self):
+        if not self.current_project or not self.current_project.panel.blots:
+            QMessageBox.information(
+                self,
+                "No blot to attach membrane",
+                "Create/open a project and import a blot first."
+            )
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import membrane (overlay)",
+            "",
+            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+        )
+        if not path:
+            return
+
+        try:
+            digest, dest = self.workspace.import_asset(path)
+
+            # v0.1: attach to first blot (later we’ll support selecting which blot)
+            blot = self.current_project.panel.blots[0]
+            blot.overlay_asset_sha256 = digest
+
+            # Optional: force overlay visible immediately
+            blot.display.overlay_visible = True
+
+            self.workspace.save_project(self.current_project)
+            self.refresh_previews()
+
+            QMessageBox.information(
+                self,
+                "Membrane imported",
+                f"Copied to:\n{dest}\n\nLinked as overlay to blot: {getattr(blot, 'id', 'blot_01')}"
+            )
+
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 

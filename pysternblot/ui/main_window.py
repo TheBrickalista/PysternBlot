@@ -255,8 +255,23 @@ class MainWindow(QMainWindow):
         if not self.current_project:
             return
         self.workspace.save_project(self.current_project)
-        # Later when legend affects rendering, we’ll also call refresh_previews()
+        self._refresh_final_only(fit=True)  # or fit=False if you don't want jumping
 
+
+    def _refresh_final_only(self, fit: bool = True):
+        if not self.current_project:
+            return
+
+        panel_scene = build_panel_scene(self.current_project, self.workspace.root)
+        if panel_scene is None:
+            raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
+
+        self.view.setScene(panel_scene)
+
+        if fit:
+            rect = panel_scene.itemsBoundingRect()
+            if rect.isValid() and not rect.isNull():
+                self.view.fitInView(rect, Qt.KeepAspectRatio)
     def _on_crop_commit(self, blot: Blot):
         """
         Called when user releases the crop rectangle.

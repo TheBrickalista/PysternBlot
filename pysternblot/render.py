@@ -43,6 +43,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     Final Result view = stacked cropped previews (preview_crop.png) + protein labels.
     v0.1: keep it simple (no legends yet).
     """
+    print("DEBUG: render.py build_panel_scene called from:", __file__)
     scene = QGraphicsScene()
     s = project.panel.style
     font = QFont(s.font_family, int(s.font_size_pt))
@@ -102,7 +103,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     return scene
 
 
-def build_provenance_scene(project: Project, workspace_root: Path, on_crop_changed=None) -> QGraphicsScene:
+def build_provenance_scene(project: Project, workspace_root: Path, on_crop_commit=None) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
     v0.1: uses the first blot in the project.
@@ -143,18 +144,28 @@ def build_provenance_scene(project: Project, workspace_root: Path, on_crop_chang
             ov_item.setOpacity(overlay_alpha)
             ov_item.setPos(x0, y0)
 
-    # Crop box overlay (assumes crop coords are in image pixel space)
+    # Crop box overlay (crop coords are in image pixel space)
     c = blot.crop
 
-    def on_crop_changed(new_scene_rect: QRectF):
-        # convert back to image pixel coordinates
-        blot.crop.x = float(new_scene_rect.x() - x0)
-        blot.crop.y = float(new_scene_rect.y() - y0)
-        blot.crop.w = float(new_scene_rect.width())
-        blot.crop.h = float(new_scene_rect.height())
+    def _apply_crop_from_scene_rect(scene_rect: QRectF) -> None:
+        # Convert scene coords -> image pixel coords
+        x = float(scene_rect.x() - x0)
+        y = float(scene_rect.y() - y0)
+        w = float(scene_rect.width())
+        h = float(scene_rect.height())
 
-        if on_crop_changed is not None:
-            on_crop_changed(blot)
+        # Optional: clamp into image bounds (recommended)
+        if w < 1: w = 1
+        if h < 1: h = 1
+        if x < 0: x = 0
+        if y < 0: y = 0
+        if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
+        if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
+
+        blot.crop.x = x
+        blot.crop.y = y
+        blot.crop.w = w
+        blot.crop.h = h
 
     crop_rect = QRectF(
         x0 + float(c.x),
@@ -163,5 +174,11 @@ def build_provenance_scene(project: Project, workspace_root: Path, on_crop_chang
         float(c.h)
     )
 
-    rect_item = CropRectItem(crop_rect, on_crop_changed)
+    rect_item = CropRectItem(
+        crop_rect,
+        on_change=_apply_crop_from_scene_rect,
+        on_commit=lambda r: ( _apply_crop_from_scene_rect(r), on_crop_commit(blot) ) if callable(on_crop_commit) else _apply_crop_from_scene_rect(r)
+    )
     scene.addItem(rect_item)
+
+    return scene

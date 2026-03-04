@@ -257,6 +257,28 @@ class MainWindow(QMainWindow):
         self.workspace.save_project(self.current_project)
         # Later when legend affects rendering, we’ll also call refresh_previews()
 
+    def _on_crop_commit(self, blot: Blot):
+        """
+        Called when user releases the crop rectangle.
+        Regenerates cached crop preview and refreshes Final Result.
+        """
+        if not self.current_project:
+            return
+
+        # Persist the updated crop coordinates
+        self.workspace.save_project(self.current_project)
+
+        # Rebuild cached preview_crop.png for this blot
+        try:
+            self.workspace.ensure_blot_crop_preview(blot)
+        except Exception as e:
+            print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+
+        # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
+        panel_scene = build_panel_scene(self.current_project, self.workspace.root)
+        self.view.setScene(panel_scene)
+        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
     def _get_legend_suggestions(self) -> list[str]:
         return self.workspace.load_legend_suggestions()
 
@@ -287,10 +309,47 @@ class MainWindow(QMainWindow):
         if not self.current_project:
             return
 
-        panel_scene = build_panel_scene(self.current_project)
-        self.view.setScene(panel_scene)
-        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+        # Option 2: ensure cached crop previews exist before rendering
+        for blot in self.current_project.panel.blots:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot)
+            except Exception as e:
+                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
-        prov_scene = build_provenance_scene(self.current_project, self.workspace.root)
-        self.prov_view.setScene(prov_scene)
-        self.prov_view.fitInView(prov_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+        try:
+            panel_scene = build_panel_scene(self.current_project, self.workspace.root)
+            if panel_scene is None:
+                raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
+
+            self.view.setScene(panel_scene)
+            self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+            prov_scene = build_provenance_scene(
+                self.current_project,
+                self.workspace.root,
+                on_crop_commit=self._on_crop_commit
+)
+            if prov_scene is None:
+                raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
+
+            self.prov_view.setScene(prov_scene)
+            self.prov_view.fitInView(prov_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Render error", str(e))
+            return
+
+    def _on_crop_changed(self, blot):
+        if not self.current_project:
+            return
+        # persist crop
+        self.workspace.save_project(self.current_project)
+
+        # regenerate cached preview for this blot
+        try:
+            self.workspace.ensure_blot_crop_preview(blot)
+        except Exception as e:
+            print(f"[preview] failed after crop move: {e}")
+
+        # refresh both views
+        self.refresh_previews()

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from .models import Project
 import datetime, uuid
+from PySide6.QtGui import QImage
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -148,3 +149,57 @@ class Workspace:
         path = proj_dir / "project.json"
         path.write_text(json.dumps(project_data, indent=2), encoding="utf-8")
         return path
+    
+    def asset_original_file(self, sha256: str) -> Path:
+        """
+        Return the stored original file path for an asset sha256.
+        We store as assets/<sha>/original.<ext>
+        """
+        d = self.assets_dir / sha256
+        if not d.exists():
+            raise FileNotFoundError(f"Asset folder not found: {d}")
+        # find original.*
+        matches = list(d.glob("original.*"))
+        if not matches:
+            raise FileNotFoundError(f"No original.* found in {d}")
+        return matches[0]
+
+    def generate_crop_preview_png(self, sha256: str, crop: dict) -> Path:
+        """
+        Generate (or overwrite) a preview_crop.png for this asset sha256
+        using the crop rectangle (absolute pixel coords).
+        crop = {"x":..., "y":..., "w":..., "h":...}
+        """
+        self.ensure()
+        original_path = self.asset_original_file(sha256)
+
+        img = QImage(str(original_path))
+        if img.isNull():
+            raise ValueError(f"Could not load image as QImage: {original_path}")
+
+        x = int(round(float(crop.get("x", 0))))
+        y = int(round(float(crop.get("y", 0))))
+        w = int(round(float(crop.get("w", img.width()))))
+        h = int(round(float(crop.get("h", img.height()))))
+
+        # clamp to bounds
+        x = max(0, min(x, img.width() - 1))
+        y = max(0, min(y, img.height() - 1))
+        w = max(1, min(w, img.width() - x))
+        h = max(1, min(h, img.height() - y))
+
+        cropped = img.copy(x, y, w, h)
+
+        out_path = (self.assets_dir / sha256) / "preview_crop.png"
+        ok = cropped.save(str(out_path), "PNG")
+        if not ok:
+            raise IOError(f"Failed to save preview PNG: {out_path}")
+        return out_path
+    
+    def ensure_blot_crop_preview(self, blot) -> Path:
+        """
+        Ensure preview_crop.png exists and matches current crop.
+        v0.1 simple strategy: always regenerate when called.
+        """
+        crop_dict = blot.crop.model_dump() if hasattr(blot.crop, "model_dump") else dict(blot.crop)
+        return self.generate_crop_preview_png(blot.asset_sha256, crop_dict)

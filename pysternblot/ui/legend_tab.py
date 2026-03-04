@@ -253,7 +253,22 @@ class LegendRowEditor(QFrame):
     def _make_combo(self, initial: str) -> EditableHistoryCombo:
         cb = EditableHistoryCombo(self.get_suggestions())
         cb.setCurrentText(initial or "")
+
+        # Existing: commit (enter / focus-out depending on your widget)
         cb.committed.connect(lambda txt: self._commit_text(cb, txt))
+
+        # NEW: selecting an existing suggestion should refresh immediately
+        # (EditableHistoryCombo is a combo box -> it should have activated / currentIndexChanged)
+        try:
+            cb.activated.connect(lambda _idx=None: (self._sync_from_widgets(), self.on_row_changed()))
+        except Exception:
+            pass
+
+        try:
+            cb.currentIndexChanged.connect(lambda _idx=None: (self._sync_from_widgets(), self.on_row_changed()))
+        except Exception:
+            pass
+
         return cb
 
     def _commit_text(self, cb: EditableHistoryCombo, txt: str):
@@ -310,7 +325,21 @@ class LegendRowEditor(QFrame):
             cb = EditableHistoryCombo(self.get_suggestions())
             cb.setMinimumWidth(90)
             cb.setCurrentText(self.row.cells[i] or "")
+
+            # 1) commit (typing / enter / focus-out depending on your widget)
             cb.committed.connect(lambda txt, idx=i, cbox=cb: self._on_cell_committed(idx, cbox, txt))
+
+            # 2) NEW: selecting an item from dropdown should refresh immediately
+            def _on_pick(_=None, idx=i, cbox=cb):
+                self._sync_from_widgets()
+                self.on_row_changed()
+
+            # depending on how EditableHistoryCombo is implemented, one or both exist
+            if hasattr(cb, "activated"):
+                cb.activated.connect(_on_pick)
+            if hasattr(cb, "currentIndexChanged"):
+                cb.currentIndexChanged.connect(_on_pick)
+
             self._cell_combos.append(cb)
             self.cells_container.addWidget(cb, 1)
 

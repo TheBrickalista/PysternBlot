@@ -70,11 +70,6 @@ class DisplaySettings(BaseModel):
     overlay_alpha: float = 0.35
     overlay_visible: bool = True
 
-class LegendRow(BaseModel):
-    left: str = ""
-    cells: List[str] = Field(default_factory=list)
-    right: str = ""
-
 class LegendSettings(BaseModel):
     mode: Literal["protein", "dna"] = "protein"
     upper_rows: List[LegendRow] = Field(default_factory=list)
@@ -133,3 +128,9 @@ class Project(BaseModel):
     assets: Dict[str, AssetEntry] = {}
     marker_sets: List[dict] = []
     panel: Panel
+
+class LegendRow(BaseModel):
+    left: str = ""
+    cells: List[str] = Field(default_factory=list)
+    right: str = ""
+    underline: bool = False   # <- NEW

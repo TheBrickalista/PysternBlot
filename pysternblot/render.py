@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
@@ -145,6 +145,11 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             br = t.boundingRect()
             t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
 
+        # --- measure one text height once (and reuse) ---
+        tmp = scene.addText("Ag", font)
+        text_h = tmp.boundingRect().height()
+        scene.removeItem(tmp)
+
         # Left label (centered in ladder column)
         if row.left:
             _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
@@ -165,12 +170,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 span = int(getattr(g, "n_lanes", 1) or 1)
                 start = lane_cursor
                 end = lane_cursor + span
-                # center of that group span in lane units
                 cx = img_col_x + ((start + end) / 2.0) * lane_w
                 centers.append(cx)
                 lane_cursor = end
 
-            # if groups don't sum perfectly, keep within image
             centers = [min(max(img_col_x, c), img_col_x + img_col_w) for c in centers]
 
         # Case 3: evenly distribute across full image width
@@ -190,12 +193,72 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         if row.right:
             _add_text_left(row.right, right_col_x, y)
 
-        # row spacing
-        tmp = scene.addText("Ag", font)
-        h = tmp.boundingRect().height()
-        scene.removeItem(tmp)
-        return y + h + 6.0
+        # --- underline groups if requested for this row ---
+        underline_drawn = False
+        if bool(getattr(row, "underline", False)):
 
+            # slightly below the text row
+            underline_y = y + text_h + 4.0
+
+            pen = QPen(Qt.black, 2)
+            pen.setCapStyle(Qt.FlatCap)
+
+            gap_px = 40.0  # visible gap between segments
+            pad = gap_px / 2.0
+
+            # Prefer true header groups only if there are *multiple* groups
+            use_header_groups = bool(groups) and len(groups) > 1
+
+            if use_header_groups and n_lanes > 0:
+                # --- group-based segments using lane geometry ---
+                lane_w = img_col_w / float(n_lanes)
+                lane_cursor = 0
+
+                for g in groups:
+                    span = int(getattr(g, "n_lanes", 1) or 1)
+
+                    x_start = img_col_x + lane_cursor * lane_w
+                    x_end = img_col_x + (lane_cursor + span) * lane_w
+
+                    x1 = x_start + pad
+                    x2 = x_end - pad
+
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+
+                    lane_cursor += span
+
+            else:
+                # --- fallback: derive segments from *this row's* non-empty cells ---
+                blocks = [c for c in (cells or []) if (c or "").strip()]
+                n_blocks = len(blocks)
+
+                if n_blocks <= 1:
+                    # one block -> one underline across entire image column
+                    x1 = img_col_x + pad
+                    x2 = img_col_x + img_col_w - pad
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+                else:
+                    block_w = img_col_w / float(n_blocks)
+
+                    for i in range(n_blocks):
+                        x_start = img_col_x + i * block_w
+                        x_end = img_col_x + (i + 1) * block_w
+
+                        x1 = x_start + pad
+                        x2 = x_end - pad
+
+                        if x2 > x1 + 1.0:
+                            scene.addLine(x1, underline_y, x2, underline_y, pen)
+                            underline_drawn = True
+                # row spacing (account for underline)
+        extra = 14.0 if underline_drawn else 8.0
+        return y + text_h + extra
+    
+    
     # ---- title ----
     title = scene.addText(project.project.name, font)
     title.setDefaultTextColor(Qt.black)

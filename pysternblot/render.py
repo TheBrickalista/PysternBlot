@@ -304,7 +304,12 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
 
     return scene
 
-def build_provenance_scene(project: Project, workspace_root: Path, on_crop_commit=None) -> QGraphicsScene:
+def build_provenance_scene(
+    project: Project,
+    workspace_root: Path,
+    blot_id: str | None = None,
+    on_crop_commit=None
+) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
     v0.1: uses the first blot in the project.
@@ -317,7 +322,14 @@ def build_provenance_scene(project: Project, workspace_root: Path, on_crop_commi
         scene.addText("No blots in this project.", font)
         return scene
 
-    blot = project.panel.blots[0]
+    blot = None
+    if blot_id:
+        for b in project.panel.blots:
+            if b.id == blot_id:
+                blot = b
+                break
+    if blot is None:
+        blot = project.panel.blots[0]
 
     pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
     if pm.isNull():

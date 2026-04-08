@@ -8,8 +8,8 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.workspace = workspace
         self.current_project = None
+        self.active_blot_id = None
 
         self.setWindowTitle("Pystern Blot")
         self.resize(1100, 700)
@@ -47,8 +48,19 @@ class MainWindow(QMainWindow):
         # Provenance tab
         prov = QWidget()
         prov_l = QVBoxLayout(prov)
+
+        prov_top = QHBoxLayout()
+        prov_top.addWidget(QLabel("Blot"))
+        self.prov_blot_combo = QComboBox()
+        self.prov_blot_combo.currentIndexChanged.connect(self._on_active_blot_changed)
+        prov_top.addWidget(self.prov_blot_combo)
+        prov_top.addStretch(1)
+
+        prov_l.addLayout(prov_top)
+
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
+
         self.tabs.addTab(prov, "Provenance")
 
         # Legend tab
@@ -181,6 +193,8 @@ class MainWindow(QMainWindow):
 
             self.current_project.panel.blots.append(new_blot)
             self.current_project.panel.layout.order.append(blot_id)
+            self.active_blot_id = blot_id
+            self._populate_prov_blot_combo()
 
             self.workspace.save_project(self.current_project)
 
@@ -217,7 +231,9 @@ class MainWindow(QMainWindow):
             digest, dest = self.workspace.import_asset(path)
 
             # v0.1: attach to first blot (later we’ll support selecting which blot)
-            blot = self.current_project.panel.blots[0]
+            blot = self._get_active_blot()
+            if blot is None:
+                raise RuntimeError("No active blot available.")
             blot.overlay_asset_sha256 = digest
 
             # Optional: force overlay visible immediately
@@ -241,7 +257,8 @@ class MainWindow(QMainWindow):
         return self.current_project.panel.blots[0]
 
     def _sync_controls_from_project(self):
-        blot = self._first_blot()
+        self._populate_prov_blot_combo()
+        blot = self._get_active_blot()
         if not blot:
             return
         # Default values if fields aren’t present yet
@@ -323,6 +340,8 @@ class MainWindow(QMainWindow):
     def refresh_previews(self):
         if not self.current_project:
             return
+        
+        self._populate_prov_blot_combo()
 
         # Option 2: ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
@@ -342,8 +361,9 @@ class MainWindow(QMainWindow):
             prov_scene = build_provenance_scene(
                 self.current_project,
                 self.workspace.root,
+                blot_id=self.active_blot_id,
                 on_crop_commit=self._on_crop_commit
-)
+            )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
@@ -368,3 +388,42 @@ class MainWindow(QMainWindow):
 
         # refresh both views
         self.refresh_previews()
+
+    def _populate_prov_blot_combo(self):
+        self.prov_blot_combo.blockSignals(True)
+        self.prov_blot_combo.clear()
+
+        if not self.current_project or not self.current_project.panel.blots:
+            self.active_blot_id = None
+            self.prov_blot_combo.blockSignals(False)
+            return
+
+        for blot in self.current_project.panel.blots:
+            self.prov_blot_combo.addItem(blot.id, blot.id)
+
+        idx = -1
+        if self.active_blot_id is not None:
+            idx = self.prov_blot_combo.findData(self.active_blot_id)
+
+        if idx < 0:
+            idx = 0
+
+        self.prov_blot_combo.setCurrentIndex(idx)
+        self.active_blot_id = self.prov_blot_combo.currentData()
+
+        self.prov_blot_combo.blockSignals(False)
+
+    def _on_active_blot_changed(self, _idx: int):
+        if not self.current_project:
+            return
+        self.active_blot_id = self.prov_blot_combo.currentData()
+        self.refresh_previews()
+
+    def _get_active_blot(self):
+        if not self.current_project or not self.current_project.panel.blots:
+            return None
+        if self.active_blot_id:
+            for blot in self.current_project.panel.blots:
+                if blot.id == self.active_blot_id:
+                    return blot
+        return self.current_project.panel.blots[0]

@@ -289,6 +289,7 @@ class MainWindow(QMainWindow):
             rect = panel_scene.itemsBoundingRect()
             if rect.isValid() and not rect.isNull():
                 self.view.fitInView(rect, Qt.KeepAspectRatio)
+                
     def _on_crop_commit(self, blot: Blot):
         """
         Called when user releases the crop rectangle.
@@ -324,14 +325,14 @@ class MainWindow(QMainWindow):
             self.workspace.save_legend_suggestions(items)
 
     def toggle_overlay(self, checked: bool):
-        blot = self._first_blot()
+        blot = self._get_active_blot()
         if not blot:
             return
         blot.display.overlay_visible = bool(checked)
         self.refresh_previews()
 
     def change_overlay_alpha(self, value: int):
-        blot = self._first_blot()
+        blot = self._get_active_blot()
         if not blot:
             return
         blot.display.overlay_alpha = float(value) / 100.0
@@ -416,7 +417,17 @@ class MainWindow(QMainWindow):
     def _on_active_blot_changed(self, _idx: int):
         if not self.current_project:
             return
-        self.active_blot_id = self.prov_blot_combo.currentData()
+
+        prev_blot = self._get_active_blot()
+        blot_id = self.prov_blot_combo.currentData()
+        new_blot = next((b for b in self.current_project.panel.blots if b.id == blot_id), None)
+
+        if prev_blot and new_blot and prev_blot is not new_blot:
+            # keep same crop size, but allow independent position
+            new_blot.crop.w = prev_blot.crop.w
+            new_blot.crop.h = prev_blot.crop.h
+
+        self.active_blot_id = blot_id
         self.refresh_previews()
 
     def _get_active_blot(self):

@@ -14,9 +14,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
+from pathlib import Path
+
+
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..models import Blot
+from ..models import Blot, AssetEntry
 from .legend_tab import LegendTab
 
 class MainWindow(QMainWindow):
@@ -57,6 +60,9 @@ class MainWindow(QMainWindow):
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
+
+        self.prov_label = QLabel("Current blot: —")
+        prov_l.addWidget(self.prov_label)
 
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
@@ -163,6 +169,13 @@ class MainWindow(QMainWindow):
         try:
             digest, dest = self.workspace.import_asset(path)
 
+            self.current_project.assets[digest] = AssetEntry(
+            sha256=digest,
+            stored_original_path=str(dest),
+            original_source_path=str(path),
+            stored_preview_path=None,
+)
+
             blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
 
             new_blot_dict = {
@@ -195,6 +208,7 @@ class MainWindow(QMainWindow):
             self.current_project.panel.layout.order.append(blot_id)
             self.active_blot_id = blot_id
             self._populate_prov_blot_combo()
+            self._update_prov_label()
 
             self.workspace.save_project(self.current_project)
 
@@ -258,6 +272,7 @@ class MainWindow(QMainWindow):
 
     def _sync_controls_from_project(self):
         self._populate_prov_blot_combo()
+        self._update_prov_label()
         blot = self._get_active_blot()
         if not blot:
             return
@@ -289,7 +304,7 @@ class MainWindow(QMainWindow):
             rect = panel_scene.itemsBoundingRect()
             if rect.isValid() and not rect.isNull():
                 self.view.fitInView(rect, Qt.KeepAspectRatio)
-                
+
     def _on_crop_commit(self, blot: Blot):
         """
         Called when user releases the crop rectangle.
@@ -343,6 +358,7 @@ class MainWindow(QMainWindow):
             return
         
         self._populate_prov_blot_combo()
+        self._update_prov_label()
 
         # Option 2: ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
@@ -400,7 +416,11 @@ class MainWindow(QMainWindow):
             return
 
         for blot in self.current_project.panel.blots:
-            self.prov_blot_combo.addItem(blot.id, blot.id)
+            display_name = blot.id
+            asset = self.current_project.assets.get(blot.asset_sha256)
+            if asset and asset.original_source_path:
+                display_name = Path(asset.original_source_path).name
+            self.prov_blot_combo.addItem(display_name, blot.id)
 
         idx = -1
         if self.active_blot_id is not None:
@@ -428,6 +448,7 @@ class MainWindow(QMainWindow):
             new_blot.crop.h = prev_blot.crop.h
 
         self.active_blot_id = blot_id
+        self._update_prov_label()
         self.refresh_previews()
 
     def _get_active_blot(self):
@@ -438,3 +459,19 @@ class MainWindow(QMainWindow):
                 if blot.id == self.active_blot_id:
                     return blot
         return self.current_project.panel.blots[0]
+    
+    def _update_prov_label(self):
+        blot = self._get_active_blot()
+
+        if blot is None:
+            self.prov_label.setText("Current blot: —")
+            return
+
+        asset = self.current_project.assets.get(blot.asset_sha256)
+
+        if asset and asset.original_source_path:
+            name = Path(asset.original_source_path).name
+        else:
+            name = blot.id  # fallback
+
+        self.prov_label.setText(f"Current blot: {name}")

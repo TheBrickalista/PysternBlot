@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -57,6 +57,16 @@ class MainWindow(QMainWindow):
         self.prov_blot_combo = QComboBox()
         self.prov_blot_combo.currentIndexChanged.connect(self._on_active_blot_changed)
         prov_top.addWidget(self.prov_blot_combo)
+
+        # 👇 ADD HERE
+        self.prov_up_btn = QPushButton("Up")
+        self.prov_up_btn.clicked.connect(self._move_active_blot_up)
+        prov_top.addWidget(self.prov_up_btn)
+
+        self.prov_down_btn = QPushButton("Down")
+        self.prov_down_btn.clicked.connect(self._move_active_blot_down)
+        prov_top.addWidget(self.prov_down_btn)
+
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
@@ -170,10 +180,10 @@ class MainWindow(QMainWindow):
             digest, dest = self.workspace.import_asset(path)
 
             self.current_project.assets[digest] = AssetEntry(
-            sha256=digest,
-            stored_original_path=str(dest),
-            original_source_path=str(path),
-            stored_preview_path=None,
+                sha256=digest,
+                stored_original_path=str(dest),
+                original_source_path=str(path),
+                stored_preview_path=None,
 )
 
             blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
@@ -475,3 +485,38 @@ class MainWindow(QMainWindow):
             name = blot.id  # fallback
 
         self.prov_label.setText(f"Current blot: {name}")
+
+    def _move_active_blot_up(self):
+        if not self.current_project or not self.active_blot_id:
+            return
+
+        order = self.current_project.panel.layout.order
+        if self.active_blot_id not in order:
+            return
+
+        i = order.index(self.active_blot_id)
+        if i <= 0:
+            return
+
+        order[i - 1], order[i] = order[i], order[i - 1]
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+
+    def _move_active_blot_down(self):
+        if not self.current_project or not self.active_blot_id:
+            return
+
+        order = self.current_project.panel.layout.order
+        if self.active_blot_id not in order:
+            return
+
+        i = order.index(self.active_blot_id)
+        if i >= len(order) - 1:
+            return
+
+        order[i + 1], order[i] = order[i], order[i + 1]
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()

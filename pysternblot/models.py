@@ -69,6 +69,7 @@ class DisplaySettings(BaseModel):
     auto_contrast: bool = True
     overlay_alpha: float = 0.35
     overlay_visible: bool = True
+    rotation_deg: float = 0.0
 
 class LegendSettings(BaseModel):
     mode: Literal["protein", "dna"] = "protein"

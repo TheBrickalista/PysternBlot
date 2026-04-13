@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QScrollArea, QFrame
+    QScrollArea, QFrame, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -228,6 +228,12 @@ class LegendRowEditor(QFrame):
         self.n_cells.valueChanged.connect(self._on_n_cells_changed)
         header.addWidget(self.n_cells)
 
+        header.addSpacing(12)
+        self.underline_cb = QCheckBox("Underline")
+        self.underline_cb.setChecked(bool(getattr(self.row, "underline", False)))
+        self.underline_cb.toggled.connect(self._on_underline_toggled)
+        header.addWidget(self.underline_cb)
+
         # main row layout: Left | cells... | Right
         self.row_layout = QHBoxLayout()
         self.row_layout.setSpacing(8)
@@ -253,7 +259,18 @@ class LegendRowEditor(QFrame):
     def _make_combo(self, initial: str) -> EditableHistoryCombo:
         cb = EditableHistoryCombo(self.get_suggestions())
         cb.setCurrentText(initial or "")
+
         cb.committed.connect(lambda txt: self._commit_text(cb, txt))
+
+        def _on_pick(*_args):
+            self._sync_from_widgets()
+            self.on_row_changed()
+
+        if hasattr(cb, "activated"):
+            cb.activated.connect(_on_pick)
+        if hasattr(cb, "currentIndexChanged"):
+            cb.currentIndexChanged.connect(_on_pick)
+
         return cb
 
     def _commit_text(self, cb: EditableHistoryCombo, txt: str):
@@ -278,6 +295,9 @@ class LegendRowEditor(QFrame):
     def _sync_from_widgets(self):
         self.row.left = self.left_combo.currentText().strip()
         self.row.right = self.right_combo.currentText().strip()
+
+        # NEW: always sync underline state
+        self.row.underline = bool(self.underline_cb.isChecked())
 
         cells = []
         for cb in self._cell_combos:
@@ -310,7 +330,21 @@ class LegendRowEditor(QFrame):
             cb = EditableHistoryCombo(self.get_suggestions())
             cb.setMinimumWidth(90)
             cb.setCurrentText(self.row.cells[i] or "")
+
+            # 1) commit (typing / enter / focus-out depending on your widget)
             cb.committed.connect(lambda txt, idx=i, cbox=cb: self._on_cell_committed(idx, cbox, txt))
+
+            # 2) NEW: selecting an item from dropdown should refresh immediately
+            def _on_pick(_=None, idx=i, cbox=cb):
+                self._sync_from_widgets()
+                self.on_row_changed()
+
+            # depending on how EditableHistoryCombo is implemented, one or both exist
+            if hasattr(cb, "activated"):
+                cb.activated.connect(_on_pick)
+            if hasattr(cb, "currentIndexChanged"):
+                cb.currentIndexChanged.connect(_on_pick)
+
             self._cell_combos.append(cb)
             self.cells_container.addWidget(cb, 1)
 
@@ -322,4 +356,8 @@ class LegendRowEditor(QFrame):
             cb.setCurrentText(txt)
 
         self._sync_from_widgets()
+        self.on_row_changed()
+
+    def _on_underline_toggled(self, checked: bool):
+        self.row.underline = bool(checked)
         self.on_row_changed()

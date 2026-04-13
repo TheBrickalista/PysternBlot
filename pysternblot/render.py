@@ -10,10 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Project
+from .models import Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 
@@ -40,10 +40,13 @@ def _load_preview_crop_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
 
 def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     """
-    Final Result view = stacked cropped previews (preview_crop.png) + protein labels.
-    v0.1: keep it simple (no legends yet).
+    Final Result view = (optional) legend + stacked cropped previews + protein labels.
+    Alignment rules:
+      - left legend text centered in ladder column
+      - legend cells centered on lane centers across the image column
+      - right legend text left-aligned in protein column
+      - positions use QGraphicsTextItem.boundingRect() (more accurate than QFontMetrics)
     """
-    print("DEBUG: render.py build_panel_scene called from:", __file__)
     scene = QGraphicsScene()
     s = project.panel.style
     font = QFont(s.font_family, int(s.font_size_pt))
@@ -52,58 +55,261 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         scene.addText("No blots in this project.", font)
         return scene
 
-    # Starting position
+    # ---- layout constants ----
     x0, y0 = 20.0, 20.0
-
-    # Title (optional)
-    title = scene.addText(project.project.name, font)
-    title.setDefaultTextColor(Qt.black)
-    title.setPos(x0, y0)
-    y = y0 + 25
-
-    # Layout constants
     ladder_w = float(s.ladder_col_width_px)
-    gap = float(s.gap_between_blots_px)
+    gap_between_blots = float(s.gap_between_blots_px)
     protein_w = float(s.protein_col_width_px)
 
-    # Stack in the order specified by layout.order
+    left_col_x = x0
+    img_col_x = x0 + ladder_w
+    col_gap = 10.0  # gap between image and protein column
+
+    # ---- stack order ----
     order = list(getattr(project.panel.layout, "order", []))
     blot_by_id = {b.id: b for b in project.panel.blots}
     blots = [blot_by_id[i] for i in order if i in blot_by_id] or project.panel.blots
 
-    # Render each cropped blot
+    # ---- preload pixmaps (and compute max image width for consistent column layout) ----
+    pixmaps: list[QPixmap] = []
     for blot in blots:
         pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256)
-
-        # Fallback if preview doesn't exist (should not happen if you regenerate in refresh)
         if pm.isNull():
             pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+        pixmaps.append(pm)
 
+    max_w = max((pm.width() for pm in pixmaps if not pm.isNull()), default=0)
+    max_h = max((pm.height() for pm in pixmaps if not pm.isNull()), default=0)
+    if max_w <= 0 or max_h <= 0:
+        scene.addText("Could not load blot previews.", font).setPos(x0, y0)
+        return scene
+
+    img_col_w = float(max_w)
+    right_col_x = img_col_x + img_col_w + col_gap
+
+    # ---- helpers ----
+    def _add_text(text: str, x: float, y: float) -> None:
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        t.setPos(x, y)
+
+    def _add_text_centered(text: str, cx: float, y: float) -> None:
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(cx - br.width() / 2.0, y)
+
+    def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y: float) -> None:
+        # center text in a fixed-width column
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(col_x + (col_w - br.width()) / 2.0, y)
+
+    # ---- legend row renderer ----
+    def _draw_legend_row(row: LegendRow, y: float) -> float:
+        """
+        Returns next y.
+        Placement strategy:
+        1) if len(cells) == n_lanes -> per-lane centers
+        2) elif len(cells) == len(groups) -> per-group centers (group spans use n_lanes)
+        3) else -> evenly distribute across image width
+        """
+        # ----- lane/group geometry -----
+        hb = project.panel.lane_layout.header_block
+        groups = list(getattr(hb, "groups", []) or [])
+        n_lanes = int(hb.total_lanes() or 0)
+
+        cells = list(row.cells or [])
+        n_cells = len(cells)
+
+        if n_lanes <= 0:
+            # fallback: at least keep things on the image
+            n_lanes = max(1, n_cells)
+
+        # helper: accurate text centering using boundingRect (not QFontMetrics)
+        def _add_text_centered(text: str, cx: float, y0: float) -> None:
+            t = scene.addText(text, font)
+            t.setDefaultTextColor(Qt.black)
+            br = t.boundingRect()
+            t.setPos(cx - br.width() / 2.0, y0)
+
+        def _add_text_left(text: str, x: float, y0: float) -> None:
+            t = scene.addText(text, font)
+            t.setDefaultTextColor(Qt.black)
+            t.setPos(x, y0)
+
+        def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
+            t = scene.addText(text, font)
+            t.setDefaultTextColor(Qt.black)
+            br = t.boundingRect()
+            t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
+
+        # --- measure one text height once (and reuse) ---
+        tmp = scene.addText("Ag", font)
+        text_h = tmp.boundingRect().height()
+        scene.removeItem(tmp)
+
+        # Left label (centered in ladder column)
+        if row.left:
+            _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
+
+        # ----- compute centers for the "cells" across the image column -----
+        centers: list[float] = []
+
+        # Case 1: per-lane labels
+        if n_cells == n_lanes:
+            lane_w = img_col_w / float(n_lanes)
+            centers = [img_col_x + (i + 0.5) * lane_w for i in range(n_cells)]
+
+        # Case 2: per-group labels (best when n_cells == len(groups))
+        elif groups and n_cells == len(groups):
+            lane_w = img_col_w / float(n_lanes)
+            lane_cursor = 0
+            for g in groups:
+                span = int(getattr(g, "n_lanes", 1) or 1)
+                start = lane_cursor
+                end = lane_cursor + span
+                cx = img_col_x + ((start + end) / 2.0) * lane_w
+                centers.append(cx)
+                lane_cursor = end
+
+            centers = [min(max(img_col_x, c), img_col_x + img_col_w) for c in centers]
+
+        # Case 3: evenly distribute across full image width
+        else:
+            if n_cells > 0:
+                step = img_col_w / float(n_cells)
+                centers = [img_col_x + (i + 0.5) * step for i in range(n_cells)]
+
+        # draw center cells
+        for cx, txt in zip(centers, cells):
+            txt = (txt or "").strip()
+            if not txt:
+                continue
+            _add_text_centered(txt, cx, y)
+
+        # Right label (left aligned in protein column)
+        if row.right:
+            _add_text_left(row.right, right_col_x, y)
+
+        # --- underline groups if requested for this row ---
+        underline_drawn = False
+        if bool(getattr(row, "underline", False)):
+
+            # slightly below the text row
+            underline_y = y + text_h + 4.0
+
+            pen = QPen(Qt.black, 2)
+            pen.setCapStyle(Qt.FlatCap)
+
+            gap_px = 40.0  # visible gap between segments
+            pad = gap_px / 2.0
+
+            # Prefer true header groups only if there are *multiple* groups
+            use_header_groups = bool(groups) and len(groups) > 1
+
+            if use_header_groups and n_lanes > 0:
+                # --- group-based segments using lane geometry ---
+                lane_w = img_col_w / float(n_lanes)
+                lane_cursor = 0
+
+                for g in groups:
+                    span = int(getattr(g, "n_lanes", 1) or 1)
+
+                    x_start = img_col_x + lane_cursor * lane_w
+                    x_end = img_col_x + (lane_cursor + span) * lane_w
+
+                    x1 = x_start + pad
+                    x2 = x_end - pad
+
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+
+                    lane_cursor += span
+
+            else:
+                # --- fallback: derive segments from *this row's* non-empty cells ---
+                blocks = [c for c in (cells or []) if (c or "").strip()]
+                n_blocks = len(blocks)
+
+                if n_blocks <= 1:
+                    # one block -> one underline across entire image column
+                    x1 = img_col_x + pad
+                    x2 = img_col_x + img_col_w - pad
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+                else:
+                    block_w = img_col_w / float(n_blocks)
+
+                    for i in range(n_blocks):
+                        x_start = img_col_x + i * block_w
+                        x_end = img_col_x + (i + 1) * block_w
+
+                        x1 = x_start + pad
+                        x2 = x_end - pad
+
+                        if x2 > x1 + 1.0:
+                            scene.addLine(x1, underline_y, x2, underline_y, pen)
+                            underline_drawn = True
+                # row spacing (account for underline)
+        extra = 14.0 if underline_drawn else 8.0
+        return y + text_h + extra
+    
+    
+    # ---- title ----
+    title = scene.addText(project.project.name, font)
+    title.setDefaultTextColor(Qt.black)
+    title.setPos(x0, y0)
+
+    # title spacing
+    title_h = title.boundingRect().height()
+    y = y0 + title_h + 14.0
+
+    # ---- upper legend ----
+    legend = getattr(project.panel, "legend", None)
+    if legend and getattr(legend, "upper_rows", None):
+        for row in legend.upper_rows:
+            y = _draw_legend_row(row, y)
+        y += 10.0  # gap before first blot
+
+    # ---- blots ----
+    for blot, pm in zip(blots, pixmaps):
         if pm.isNull():
-            txt = scene.addText(f"Could not load image for blot: {blot.id}", font)
-            txt.setPos(x0, y)
-            y += 30
+            t = scene.addText(f"Could not load image for blot: {blot.id}", font)
+            t.setPos(x0, y)
+            y += t.boundingRect().height() + 8.0
             continue
 
-        # Image position: leave ladder column on left, protein label column on right
-        img_x = x0 + ladder_w
         img_item = scene.addPixmap(pm)
-        img_item.setPos(img_x, y)
+        img_item.setPos(img_col_x, y)
 
-        # Simple protein label on the right
+        # Protein label on the right (vertically centered)
         label = getattr(getattr(blot, "protein_label", None), "text", "")
         if label:
             t = scene.addText(label, font)
             t.setDefaultTextColor(Qt.black)
-            t.setPos(img_x + pm.width() + 10, y + pm.height() / 2 - 8)
+            br = t.boundingRect()
+            t.setPos(right_col_x, y + pm.height() / 2.0 - br.height() / 2.0)
 
-        # Next row
-        y += pm.height() + gap
+        y += pm.height() + gap_between_blots
+
+    # ---- lower legend ----
+    if legend and getattr(legend, "lower_rows", None):
+        y += 10.0
+        for row in legend.lower_rows:
+            y = _draw_legend_row(row, y)
 
     return scene
 
-
-def build_provenance_scene(project: Project, workspace_root: Path, on_crop_commit=None) -> QGraphicsScene:
+def build_provenance_scene(
+    project: Project,
+    workspace_root: Path,
+    blot_id: str | None = None,
+    on_crop_commit=None
+) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
     v0.1: uses the first blot in the project.
@@ -116,7 +322,14 @@ def build_provenance_scene(project: Project, workspace_root: Path, on_crop_commi
         scene.addText("No blots in this project.", font)
         return scene
 
-    blot = project.panel.blots[0]
+    blot = None
+    if blot_id:
+        for b in project.panel.blots:
+            if b.id == blot_id:
+                blot = b
+                break
+    if blot is None:
+        blot = project.panel.blots[0]
 
     pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
     if pm.isNull():

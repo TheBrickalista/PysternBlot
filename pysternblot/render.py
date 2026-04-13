@@ -308,7 +308,8 @@ def build_provenance_scene(
     project: Project,
     workspace_root: Path,
     blot_id: str | None = None,
-    on_crop_commit=None
+    on_crop_commit=None,
+    show_grid: bool = False,
 ) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
@@ -331,6 +332,8 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
+    rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+
     pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
     if pm.isNull():
         scene.addText(
@@ -345,6 +348,10 @@ def build_provenance_scene(
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 
+    # Phase 1: rotate display only, do not modify pixels
+    img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
+    img_item.setRotation(rotation_deg)
+
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
     overlay_visible = getattr(getattr(blot, "display", None), "overlay_visible", True)
@@ -357,6 +364,25 @@ def build_provenance_scene(
             ov_item.setOpacity(overlay_alpha)
             ov_item.setPos(x0, y0)
 
+            ov_item.setTransformOriginPoint(ov.width() / 2.0, ov.height() / 2.0)
+            ov_item.setRotation(rotation_deg)
+
+    # Optional grid overlay
+    if show_grid:
+        grid_step = 50.0
+        grid_pen = QPen(Qt.lightGray, 1, Qt.SolidLine)
+        grid_pen.setCosmetic(True)
+
+        gx = x0
+        while gx <= x0 + pm.width():
+            scene.addLine(gx, y0, gx, y0 + pm.height(), grid_pen)
+            gx += grid_step
+
+        gy = y0
+        while gy <= y0 + pm.height():
+            scene.addLine(x0, gy, x0 + pm.width(), gy, grid_pen)
+            gy += grid_step
+            
     # Crop box overlay (crop coords are in image pixel space)
     c = blot.crop
 

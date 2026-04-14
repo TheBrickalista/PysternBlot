@@ -234,8 +234,13 @@ class MainWindow(QMainWindow):
         logo_path = Path(__file__).parent.parent / "resources" / "pb_logo.png"
         if logo_path.exists():
             pm = QPixmap(str(logo_path))
-            pm = pm.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_label.setPixmap(pm)
+            if not pm.isNull():
+                pm = pm.scaledToWidth(380, Qt.SmoothTransformation)
+                logo_label.setPixmap(pm)
+            else:
+                logo_label.setText("Logo load failed")
+        else:
+            logo_label.setText("Logo not found")
 
         root.addWidget(logo_label)
 

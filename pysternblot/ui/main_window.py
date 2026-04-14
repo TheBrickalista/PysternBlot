@@ -144,6 +144,36 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        tb.addWidget(QLabel("Black"))
+        self.levels_black_slider = QSlider(Qt.Horizontal)
+        self.levels_black_slider.setRange(0, 255)
+        self.levels_black_slider.setValue(0)
+        self.levels_black_slider.setFixedWidth(120)
+        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
+        tb.addWidget(self.levels_black_slider)
+
+        tb.addWidget(QLabel("White"))
+        self.levels_white_slider = QSlider(Qt.Horizontal)
+        self.levels_white_slider.setRange(0, 255)
+        self.levels_white_slider.setValue(255)
+        self.levels_white_slider.setFixedWidth(120)
+        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
+        tb.addWidget(self.levels_white_slider)
+
+        tb.addWidget(QLabel("Gamma"))
+        self.levels_gamma_slider = QSlider(Qt.Horizontal)
+        self.levels_gamma_slider.setRange(10, 300)   # maps to 0.10 .. 3.00
+        self.levels_gamma_slider.setValue(100)
+        self.levels_gamma_slider.setFixedWidth(120)
+        self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
+        tb.addWidget(self.levels_gamma_slider)
+
+        self.invert_cb = QCheckBox("Invert")
+        self.invert_cb.toggled.connect(self._on_invert_toggled)
+        tb.addWidget(self.invert_cb)
+
+        tb.addSeparator()
+
         a_refresh = QAction("Refresh", self)
         a_refresh.triggered.connect(self.refresh_previews)
         tb.addAction(a_refresh)
@@ -225,7 +255,11 @@ class MainWindow(QMainWindow):
                     "gamma": 1.0,
                     "auto_contrast": True,
                     "overlay_alpha": 0.35,
-                    "overlay_visible": True
+                    "overlay_visible": True,
+                    "rotation_deg": 0.0,
+                    "levels_black": 0,
+                    "levels_white": 255,
+                    "levels_gamma": 1.0,
                 },
             }
 
@@ -315,6 +349,21 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb.blockSignals(True)
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
         self.prov_grid_cb.blockSignals(False)
+
+        self.levels_black_slider.blockSignals(True)
+        self.levels_white_slider.blockSignals(True)
+        self.levels_gamma_slider.blockSignals(True)
+        self.invert_cb.blockSignals(True)
+
+        self.levels_black_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_black", 0)))
+        self.levels_white_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_white", 255)))
+        self.levels_gamma_slider.setValue(int(round(float(getattr(getattr(blot, "display", None), "levels_gamma", 1.0)) * 100.0)))
+        self.invert_cb.setChecked(bool(getattr(getattr(blot, "display", None), "invert", False)))
+
+        self.levels_black_slider.blockSignals(False)
+        self.levels_white_slider.blockSignals(False)
+        self.levels_gamma_slider.blockSignals(False)
+        self.invert_cb.blockSignals(False)
 
         # Default values if fields aren’t present yet
         overlay_vis = getattr(getattr(blot, "display", None), "overlay_visible", True)
@@ -568,4 +617,33 @@ class MainWindow(QMainWindow):
 
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
+        self.refresh_previews()
+
+    def _on_levels_changed(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        black = int(self.levels_black_slider.value())
+        white = int(self.levels_white_slider.value())
+        gamma = float(self.levels_gamma_slider.value()) / 100.0
+
+        # keep valid interval
+        if white <= black:
+            return
+
+        blot.display.levels_black = black
+        blot.display.levels_white = white
+        blot.display.levels_gamma = gamma
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_invert_toggled(self, checked: bool):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        blot.display.invert = bool(checked)
+        self.workspace.save_project(self.current_project)
         self.refresh_previews()

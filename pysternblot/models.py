@@ -71,6 +71,10 @@ class DisplaySettings(BaseModel):
     overlay_visible: bool = True
     rotation_deg: float = 0.0
 
+    levels_black: int = 0      # 0..255
+    levels_white: int = 255    # 0..255
+    levels_gamma: float = 1.0
+
 class LegendRow(BaseModel):
     left: str = ""
     cells: List[str] = Field(default_factory=list)

@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform, QImage
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
@@ -29,14 +29,79 @@ def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
             return pm
     return QPixmap()
 
-def _load_rotated_display_pixmap(workspace_root: Path, sha256: str, rotation_deg: float = 0.0) -> QPixmap:
+def _apply_levels_to_qimage(
+    img: QImage,
+    black: int,
+    white: int,
+    gamma: float,
+    invert: bool,
+) -> QImage:
     """
-    Load original pixmap and rotate it with Qt.
-    Used for Provenance display so crop coordinates are in rotated-image space.
+    Apply black/white/gamma/invert to an 8-bit grayscale QImage.
+    Returns a new QImage.
     """
-    pm = _load_original_pixmap(workspace_root, sha256)
-    if pm.isNull():
+    img = img.convertToFormat(QImage.Format_Grayscale8)
+
+    if white <= black:
+        white = black + 1
+    if gamma <= 0:
+        gamma = 1.0
+
+    lut = []
+    denom = float(white - black)
+    inv_gamma = 1.0 / gamma
+
+    for i in range(256):
+        v = (i - black) / denom
+        if v < 0.0:
+            v = 0.0
+        elif v > 1.0:
+            v = 1.0
+
+        v = pow(v, inv_gamma)
+
+        if invert:
+            v = 1.0 - v
+
+        lut.append(int(round(v * 255.0)))
+
+    out = img.copy()
+    for y in range(out.height()):
+        line = out.scanLine(y)
+        buf = memoryview(line)[:out.bytesPerLine()]
+        for x in range(out.width()):
+            buf[x] = lut[buf[x]]
+
+    return out
+
+def _load_rotated_display_pixmap(
+    workspace_root: Path,
+    sha256: str,
+    rotation_deg: float = 0.0,
+    black: int = 0,
+    white: int = 255,
+    gamma: float = 1.0,
+    invert: bool = False,
+) -> QPixmap:
+    """
+    Load original image, apply levels, then rotate for Provenance display.
+    """
+    asset_dir = workspace_root / "assets" / sha256
+    original_path = None
+    for p in asset_dir.glob("original.*"):
+        original_path = p
+        break
+
+    if original_path is None:
         return QPixmap()
+
+    img = QImage(str(original_path))
+    if img.isNull():
+        return QPixmap()
+
+    img = _apply_levels_to_qimage(img, black, white, gamma, invert)
+
+    pm = QPixmap.fromImage(img)
 
     if abs(rotation_deg) < 1e-6:
         return pm
@@ -350,7 +415,21 @@ def build_provenance_scene(
 
     rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
 
-    pm = _load_rotated_display_pixmap(workspace_root, blot.asset_sha256, rotation_deg)
+    display = getattr(blot, "display", None)
+    black = int(getattr(display, "levels_black", 0))
+    white = int(getattr(display, "levels_white", 255))
+    gamma = float(getattr(display, "levels_gamma", 1.0))
+    invert = bool(getattr(display, "invert", False))
+
+    pm = _load_rotated_display_pixmap(
+        workspace_root,
+        blot.asset_sha256,
+        rotation_deg,
+        black=black,
+        white=white,
+        gamma=gamma,
+        invert=invert,
+    )
     if pm.isNull():
         scene.addText(
             "Could not load blot image from workspace assets.\n"
@@ -374,7 +453,15 @@ def build_provenance_scene(
     overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
     if overlay_sha and overlay_visible:
-        ov = _load_rotated_display_pixmap(workspace_root, overlay_sha, rotation_deg)
+        ov = _load_rotated_display_pixmap(
+            workspace_root,
+            overlay_sha,
+            rotation_deg,
+            black=black,
+            white=white,
+            gamma=gamma,
+            invert=invert,
+        )
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)
             ov_item.setOpacity(overlay_alpha)

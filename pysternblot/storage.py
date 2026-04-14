@@ -128,6 +128,7 @@ class Workspace:
                     "protein_col_width_px": 120,
                     "gap_between_blots_px": 12,
                     "border_enabled": True,
+                    "border_width_px": 1,
                 },
                 "lane_layout": {
                     "mode": "manual_n_lanes",

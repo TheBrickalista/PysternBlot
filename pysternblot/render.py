@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
@@ -28,6 +28,22 @@ def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
         if not pm.isNull():
             return pm
     return QPixmap()
+
+def _load_rotated_display_pixmap(workspace_root: Path, sha256: str, rotation_deg: float = 0.0) -> QPixmap:
+    """
+    Load original pixmap and rotate it with Qt.
+    Used for Provenance display so crop coordinates are in rotated-image space.
+    """
+    pm = _load_original_pixmap(workspace_root, sha256)
+    if pm.isNull():
+        return QPixmap()
+
+    if abs(rotation_deg) < 1e-6:
+        return pm
+
+    tr = QTransform()
+    tr.rotate(rotation_deg)
+    return pm.transformed(tr, Qt.SmoothTransformation)
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
     """
@@ -334,7 +350,7 @@ def build_provenance_scene(
 
     rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
 
-    pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+    pm = _load_rotated_display_pixmap(workspace_root, blot.asset_sha256, rotation_deg)
     if pm.isNull():
         scene.addText(
             "Could not load blot image from workspace assets.\n"
@@ -349,8 +365,8 @@ def build_provenance_scene(
     img_item.setPos(x0, y0)
 
     # Phase 1: rotate display only, do not modify pixels
-    img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
-    img_item.setRotation(rotation_deg)
+    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
+    #img_item.setRotation(rotation_deg)
 
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
@@ -358,14 +374,11 @@ def build_provenance_scene(
     overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
     if overlay_sha and overlay_visible:
-        ov = _load_original_pixmap(workspace_root, overlay_sha)
+        ov = _load_rotated_display_pixmap(workspace_root, overlay_sha, rotation_deg)
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)
             ov_item.setOpacity(overlay_alpha)
             ov_item.setPos(x0, y0)
-
-            ov_item.setTransformOriginPoint(ov.width() / 2.0, ov.height() / 2.0)
-            ov_item.setRotation(rotation_deg)
 
     # Optional grid overlay
     if show_grid:

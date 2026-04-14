@@ -367,6 +367,11 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         img_item = scene.addPixmap(pm)
         img_item.setPos(img_col_x, y)
 
+        if getattr(s, "border_enabled", True):
+            pen = QPen(Qt.black, float(getattr(s, "border_width_px", 1)))
+            pen.setCosmetic(True)
+            scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
+
         # Protein label on the right (vertically centered)
         label = getattr(getattr(blot, "protein_label", None), "text", "")
         if label:

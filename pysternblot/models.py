@@ -103,6 +103,7 @@ class Style(BaseModel):
     protein_col_width_px: int = 90
     gap_between_blots_px: int = 10
     border_enabled: bool = True
+    border_width_px: int = 1
 
 class Layout(BaseModel):
     stack_mode: Literal["vertical_stack"] = "vertical_stack"

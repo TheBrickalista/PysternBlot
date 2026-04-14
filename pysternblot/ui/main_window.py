@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -171,6 +171,19 @@ class MainWindow(QMainWindow):
         self.invert_cb = QCheckBox("Invert")
         self.invert_cb.toggled.connect(self._on_invert_toggled)
         tb.addWidget(self.invert_cb)
+
+        tb.addSeparator()
+
+        self.border_cb = QCheckBox("Outline")
+        self.border_cb.toggled.connect(self._on_border_toggled)
+        tb.addWidget(self.border_cb)
+
+        tb.addWidget(QLabel("Width"))
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(1, 10)
+        self.border_width_spin.setValue(1)
+        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
+        tb.addWidget(self.border_width_spin)
 
         tb.addSeparator()
 
@@ -371,6 +384,15 @@ class MainWindow(QMainWindow):
 
         self.a_overlay.setChecked(bool(overlay_vis))
         self.alpha_slider.setValue(int(round(overlay_alpha * 100)))
+
+        self.border_cb.blockSignals(True)
+        self.border_width_spin.blockSignals(True)
+
+        self.border_cb.setChecked(bool(getattr(self.current_project.panel.style, "border_enabled", True)))
+        self.border_width_spin.setValue(int(getattr(self.current_project.panel.style, "border_width_px", 1)))
+
+        self.border_cb.blockSignals(False)
+        self.border_width_spin.blockSignals(False)
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -647,3 +669,17 @@ class MainWindow(QMainWindow):
         blot.display.invert = bool(checked)
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_border_toggled(self, checked: bool):
+        if not self.current_project:
+            return
+        self.current_project.panel.style.border_enabled = bool(checked)
+        self.workspace.save_project(self.current_project)
+        self._refresh_final_only(fit=True)
+
+    def _on_border_width_changed(self, value: int):
+        if not self.current_project:
+            return
+        self.current_project.panel.style.border_width_px = int(value)
+        self.workspace.save_project(self.current_project)
+        self._refresh_final_only(fit=True)

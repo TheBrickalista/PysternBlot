@@ -128,6 +128,7 @@ class Workspace:
                     "protein_col_width_px": 120,
                     "gap_between_blots_px": 12,
                     "border_enabled": True,
+                    "border_width_px": 1,
                 },
                 "lane_layout": {
                     "mode": "manual_n_lanes",
@@ -210,6 +211,14 @@ class Workspace:
         if img.isNull():
             raise ValueError(f"Could not load image as QImage: {original_path}")
 
+        display = getattr(blot, "display", None)
+        black = int(getattr(display, "levels_black", 0))
+        white = int(getattr(display, "levels_white", 255))
+        gamma = float(getattr(display, "levels_gamma", 1.0))
+        invert = bool(getattr(display, "invert", False))
+
+        img = self._apply_levels_to_qimage(img, black, white, gamma, invert)
+
         rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
         if abs(rotation_deg) > 1e-6:
             tr = QTransform()
@@ -241,3 +250,49 @@ class Workspace:
             raise IOError(f"Failed to save preview PNG: {out_path}")
 
         return out_path
+    
+    def _apply_levels_to_qimage(
+        self,
+        img: QImage,
+        black: int,
+        white: int,
+        gamma: float,
+        invert: bool,
+    ) -> QImage:
+        """
+        Apply black/white/gamma/invert to an 8-bit grayscale QImage.
+        Returns a new QImage.
+        """
+        img = img.convertToFormat(QImage.Format_Grayscale8)
+
+        if white <= black:
+            white = black + 1
+        if gamma <= 0:
+            gamma = 1.0
+
+        lut = []
+        denom = float(white - black)
+        inv_gamma = 1.0 / gamma
+
+        for i in range(256):
+            v = (i - black) / denom
+            if v < 0.0:
+                v = 0.0
+            elif v > 1.0:
+                v = 1.0
+
+            v = pow(v, inv_gamma)
+
+            if invert:
+                v = 1.0 - v
+
+            lut.append(int(round(v * 255.0)))
+
+        out = img.copy()
+        for y in range(out.height()):
+            line = out.scanLine(y)
+            buf = memoryview(line)[:out.bytesPerLine()]
+            for x in range(out.width()):
+                buf[x] = lut[buf[x]]
+
+        return out

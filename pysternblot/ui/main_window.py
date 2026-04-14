@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -91,6 +91,57 @@ class MainWindow(QMainWindow):
         self.prov_label = QLabel("Current blot: —")
         prov_l.addWidget(self.prov_label)
 
+        adjust_row = QHBoxLayout()
+
+        self.overlay_cb = QCheckBox("Overlay")
+        self.overlay_cb.toggled.connect(self.toggle_overlay)
+        adjust_row.addWidget(self.overlay_cb)
+
+        adjust_row.addWidget(QLabel("Alpha"))
+        self.alpha_slider = QSlider(Qt.Horizontal)
+        self.alpha_slider.setMinimum(0)
+        self.alpha_slider.setMaximum(100)
+        self.alpha_slider.setValue(35)
+        self.alpha_slider.setFixedWidth(120)
+        self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
+        adjust_row.addWidget(self.alpha_slider)
+
+        adjust_row.addSpacing(16)
+
+        self.invert_cb = QCheckBox("Invert")
+        self.invert_cb.toggled.connect(self._on_invert_toggled)
+        adjust_row.addWidget(self.invert_cb)
+
+        adjust_row.addSpacing(16)
+
+        adjust_row.addWidget(QLabel("Black"))
+        self.levels_black_slider = QSlider(Qt.Horizontal)
+        self.levels_black_slider.setRange(0, 255)
+        self.levels_black_slider.setValue(0)
+        self.levels_black_slider.setFixedWidth(120)
+        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_black_slider)
+
+        adjust_row.addWidget(QLabel("White"))
+        self.levels_white_slider = QSlider(Qt.Horizontal)
+        self.levels_white_slider.setRange(0, 255)
+        self.levels_white_slider.setValue(255)
+        self.levels_white_slider.setFixedWidth(120)
+        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_white_slider)
+
+        adjust_row.addWidget(QLabel("Gamma"))
+        self.levels_gamma_slider = QSlider(Qt.Horizontal)
+        self.levels_gamma_slider.setRange(10, 300)
+        self.levels_gamma_slider.setValue(100)
+        self.levels_gamma_slider.setFixedWidth(120)
+        self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_gamma_slider)
+
+        adjust_row.addStretch(1)
+        prov_l.addLayout(adjust_row)
+
+
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
 
@@ -123,24 +174,19 @@ class MainWindow(QMainWindow):
         a_import_mem.triggered.connect(self.import_membrane)
         tb.addAction(a_import_mem)
 
+
         tb.addSeparator()
 
-        # Overlay toggle (membrane overlay on provenance view)
-        self.a_overlay = QAction("Overlay", self)
-        self.a_overlay.setCheckable(True)
-        self.a_overlay.setChecked(True)
-        self.a_overlay.triggered.connect(self.toggle_overlay)
-        tb.addAction(self.a_overlay)
+        self.border_cb = QCheckBox("Outline")
+        self.border_cb.toggled.connect(self._on_border_toggled)
+        tb.addWidget(self.border_cb)
 
-        # Overlay alpha slider (0–100 mapped to 0.0–1.0)
-        tb.addWidget(QLabel(" alpha "))
-        self.alpha_slider = QSlider(Qt.Horizontal)
-        self.alpha_slider.setMinimum(0)
-        self.alpha_slider.setMaximum(100)
-        self.alpha_slider.setValue(35)
-        self.alpha_slider.setFixedWidth(120)
-        self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
-        tb.addWidget(self.alpha_slider)
+        tb.addWidget(QLabel("Width"))
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(1, 10)
+        self.border_width_spin.setValue(1)
+        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
+        tb.addWidget(self.border_width_spin)
 
         tb.addSeparator()
 
@@ -225,7 +271,11 @@ class MainWindow(QMainWindow):
                     "gamma": 1.0,
                     "auto_contrast": True,
                     "overlay_alpha": 0.35,
-                    "overlay_visible": True
+                    "overlay_visible": True,
+                    "rotation_deg": 0.0,
+                    "levels_black": 0,
+                    "levels_white": 255,
+                    "levels_gamma": 1.0,
                 },
             }
 
@@ -316,12 +366,42 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
         self.prov_grid_cb.blockSignals(False)
 
+        self.levels_black_slider.blockSignals(True)
+        self.levels_white_slider.blockSignals(True)
+        self.levels_gamma_slider.blockSignals(True)
+        self.invert_cb.blockSignals(True)
+
+        self.levels_black_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_black", 0)))
+        self.levels_white_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_white", 255)))
+        self.levels_gamma_slider.setValue(int(round(float(getattr(getattr(blot, "display", None), "levels_gamma", 1.0)) * 100.0)))
+        self.invert_cb.setChecked(bool(getattr(getattr(blot, "display", None), "invert", False)))
+
+        self.levels_black_slider.blockSignals(False)
+        self.levels_white_slider.blockSignals(False)
+        self.levels_gamma_slider.blockSignals(False)
+        self.invert_cb.blockSignals(False)
+
         # Default values if fields aren’t present yet
         overlay_vis = getattr(getattr(blot, "display", None), "overlay_visible", True)
         overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
-        self.a_overlay.setChecked(bool(overlay_vis))
+        self.overlay_cb.blockSignals(True)
+        self.alpha_slider.blockSignals(True)
+
+        self.overlay_cb.setChecked(bool(overlay_vis))
         self.alpha_slider.setValue(int(round(overlay_alpha * 100)))
+
+        self.overlay_cb.blockSignals(False)
+        self.alpha_slider.blockSignals(False)
+
+        self.border_cb.blockSignals(True)
+        self.border_width_spin.blockSignals(True)
+
+        self.border_cb.setChecked(bool(getattr(self.current_project.panel.style, "border_enabled", True)))
+        self.border_width_spin.setValue(int(getattr(self.current_project.panel.style, "border_width_px", 1)))
+
+        self.border_cb.blockSignals(False)
+        self.border_width_spin.blockSignals(False)
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -569,3 +649,46 @@ class MainWindow(QMainWindow):
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
         self.refresh_previews()
+
+    def _on_levels_changed(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        black = int(self.levels_black_slider.value())
+        white = int(self.levels_white_slider.value())
+        gamma = float(self.levels_gamma_slider.value()) / 100.0
+
+        # keep valid interval
+        if white <= black:
+            return
+
+        blot.display.levels_black = black
+        blot.display.levels_white = white
+        blot.display.levels_gamma = gamma
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_invert_toggled(self, checked: bool):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        blot.display.invert = bool(checked)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_border_toggled(self, checked: bool):
+        if not self.current_project:
+            return
+        self.current_project.panel.style.border_enabled = bool(checked)
+        self.workspace.save_project(self.current_project)
+        self._refresh_final_only(fit=True)
+
+    def _on_border_width_changed(self, value: int):
+        if not self.current_project:
+            return
+        self.current_project.panel.style.border_width_px = int(value)
+        self.workspace.save_project(self.current_project)
+        self._refresh_final_only(fit=True)

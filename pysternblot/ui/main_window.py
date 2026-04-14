@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         if logo_path.exists():
             pm = QPixmap(str(logo_path))
             if not pm.isNull():
-                pm = pm.scaledToWidth(380, Qt.SmoothTransformation)
+                pm = pm.scaledToWidth(500, Qt.SmoothTransformation)
                 logo_label.setPixmap(pm)
             else:
                 logo_label.setText("Logo load failed")

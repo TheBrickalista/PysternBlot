@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
     QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy 
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
 
 from pathlib import Path
@@ -223,9 +223,21 @@ class MainWindow(QMainWindow):
         home = QWidget()
         root = QVBoxLayout(home)
         root.setContentsMargins(30, 30, 30, 30)
-        root.setSpacing(20)
+        root.setSpacing(14)
 
         root.addStretch(1)
+
+        # --- Logo ---
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignCenter)
+
+        logo_path = Path(__file__).parent.parent / "resources" / "pb_logo.png"
+        if logo_path.exists():
+            pm = QPixmap(str(logo_path))
+            pm = pm.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(pm)
+
+        root.addWidget(logo_label)
 
         # Title block
         title_wrap = QWidget()

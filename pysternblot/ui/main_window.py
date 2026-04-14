@@ -91,6 +91,57 @@ class MainWindow(QMainWindow):
         self.prov_label = QLabel("Current blot: —")
         prov_l.addWidget(self.prov_label)
 
+        adjust_row = QHBoxLayout()
+
+        self.overlay_cb = QCheckBox("Overlay")
+        self.overlay_cb.toggled.connect(self.toggle_overlay)
+        adjust_row.addWidget(self.overlay_cb)
+
+        adjust_row.addWidget(QLabel("Alpha"))
+        self.alpha_slider = QSlider(Qt.Horizontal)
+        self.alpha_slider.setMinimum(0)
+        self.alpha_slider.setMaximum(100)
+        self.alpha_slider.setValue(35)
+        self.alpha_slider.setFixedWidth(120)
+        self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
+        adjust_row.addWidget(self.alpha_slider)
+
+        adjust_row.addSpacing(16)
+
+        self.invert_cb = QCheckBox("Invert")
+        self.invert_cb.toggled.connect(self._on_invert_toggled)
+        adjust_row.addWidget(self.invert_cb)
+
+        adjust_row.addSpacing(16)
+
+        adjust_row.addWidget(QLabel("Black"))
+        self.levels_black_slider = QSlider(Qt.Horizontal)
+        self.levels_black_slider.setRange(0, 255)
+        self.levels_black_slider.setValue(0)
+        self.levels_black_slider.setFixedWidth(120)
+        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_black_slider)
+
+        adjust_row.addWidget(QLabel("White"))
+        self.levels_white_slider = QSlider(Qt.Horizontal)
+        self.levels_white_slider.setRange(0, 255)
+        self.levels_white_slider.setValue(255)
+        self.levels_white_slider.setFixedWidth(120)
+        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_white_slider)
+
+        adjust_row.addWidget(QLabel("Gamma"))
+        self.levels_gamma_slider = QSlider(Qt.Horizontal)
+        self.levels_gamma_slider.setRange(10, 300)
+        self.levels_gamma_slider.setValue(100)
+        self.levels_gamma_slider.setFixedWidth(120)
+        self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
+        adjust_row.addWidget(self.levels_gamma_slider)
+
+        adjust_row.addStretch(1)
+        prov_l.addLayout(adjust_row)
+
+
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
 
@@ -123,54 +174,6 @@ class MainWindow(QMainWindow):
         a_import_mem.triggered.connect(self.import_membrane)
         tb.addAction(a_import_mem)
 
-        tb.addSeparator()
-
-        # Overlay toggle (membrane overlay on provenance view)
-        self.a_overlay = QAction("Overlay", self)
-        self.a_overlay.setCheckable(True)
-        self.a_overlay.setChecked(True)
-        self.a_overlay.triggered.connect(self.toggle_overlay)
-        tb.addAction(self.a_overlay)
-
-        # Overlay alpha slider (0–100 mapped to 0.0–1.0)
-        tb.addWidget(QLabel(" alpha "))
-        self.alpha_slider = QSlider(Qt.Horizontal)
-        self.alpha_slider.setMinimum(0)
-        self.alpha_slider.setMaximum(100)
-        self.alpha_slider.setValue(35)
-        self.alpha_slider.setFixedWidth(120)
-        self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
-        tb.addWidget(self.alpha_slider)
-
-        tb.addSeparator()
-
-        tb.addWidget(QLabel("Black"))
-        self.levels_black_slider = QSlider(Qt.Horizontal)
-        self.levels_black_slider.setRange(0, 255)
-        self.levels_black_slider.setValue(0)
-        self.levels_black_slider.setFixedWidth(120)
-        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
-        tb.addWidget(self.levels_black_slider)
-
-        tb.addWidget(QLabel("White"))
-        self.levels_white_slider = QSlider(Qt.Horizontal)
-        self.levels_white_slider.setRange(0, 255)
-        self.levels_white_slider.setValue(255)
-        self.levels_white_slider.setFixedWidth(120)
-        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
-        tb.addWidget(self.levels_white_slider)
-
-        tb.addWidget(QLabel("Gamma"))
-        self.levels_gamma_slider = QSlider(Qt.Horizontal)
-        self.levels_gamma_slider.setRange(10, 300)   # maps to 0.10 .. 3.00
-        self.levels_gamma_slider.setValue(100)
-        self.levels_gamma_slider.setFixedWidth(120)
-        self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
-        tb.addWidget(self.levels_gamma_slider)
-
-        self.invert_cb = QCheckBox("Invert")
-        self.invert_cb.toggled.connect(self._on_invert_toggled)
-        tb.addWidget(self.invert_cb)
 
         tb.addSeparator()
 
@@ -382,8 +385,14 @@ class MainWindow(QMainWindow):
         overlay_vis = getattr(getattr(blot, "display", None), "overlay_visible", True)
         overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
-        self.a_overlay.setChecked(bool(overlay_vis))
+        self.overlay_cb.blockSignals(True)
+        self.alpha_slider.blockSignals(True)
+
+        self.overlay_cb.setChecked(bool(overlay_vis))
         self.alpha_slider.setValue(int(round(overlay_alpha * 100)))
+
+        self.overlay_cb.blockSignals(False)
+        self.alpha_slider.blockSignals(False)
 
         self.border_cb.blockSignals(True)
         self.border_width_spin.blockSignals(True)

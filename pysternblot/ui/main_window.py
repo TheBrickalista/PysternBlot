@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self.workspace = workspace
         self.current_project = None
         self.active_blot_id = None
+        self.prov_grid_visible = False
 
         self.setWindowTitle("Pystern Blot")
         self.resize(1100, 700)
@@ -66,6 +67,22 @@ class MainWindow(QMainWindow):
         self.prov_down_btn = QPushButton("Down")
         self.prov_down_btn.clicked.connect(self._move_active_blot_down)
         prov_top.addWidget(self.prov_down_btn)
+
+        prov_top.addWidget(QLabel("Rotate"))
+
+        self.prov_rotate_dial = QDial()
+        self.prov_rotate_dial.setRange(-100, 100)   # maps to -10.0° to +10.0°
+        self.prov_rotate_dial.setSingleStep(1)
+        self.prov_rotate_dial.setNotchesVisible(True)
+        self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
+        prov_top.addWidget(self.prov_rotate_dial)
+
+        self.prov_rotate_label = QLabel("0.0°")
+        prov_top.addWidget(self.prov_rotate_label)
+
+        self.prov_grid_cb = QCheckBox("Grid")
+        self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
+        prov_top.addWidget(self.prov_grid_cb)
 
         prov_top.addStretch(1)
 
@@ -286,6 +303,19 @@ class MainWindow(QMainWindow):
         blot = self._get_active_blot()
         if not blot:
             return
+        
+        rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(rotation_deg * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+
+        self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+
+        self.prov_grid_cb.blockSignals(True)
+        self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
+        self.prov_grid_cb.blockSignals(False)
+
         # Default values if fields aren’t present yet
         overlay_vis = getattr(getattr(blot, "display", None), "overlay_visible", True)
         overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
@@ -386,11 +416,12 @@ class MainWindow(QMainWindow):
             self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = build_provenance_scene(
-                self.current_project,
-                self.workspace.root,
-                blot_id=self.active_blot_id,
-                on_crop_commit=self._on_crop_commit
-            )
+            self.current_project,
+            self.workspace.root,
+            blot_id=self.active_blot_id,
+            on_crop_commit=self._on_crop_commit,
+            show_grid=self.prov_grid_visible
+        )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
@@ -519,4 +550,22 @@ class MainWindow(QMainWindow):
         order[i + 1], order[i] = order[i], order[i + 1]
 
         self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_rotation_changed(self, value: int):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        # Map dial integer to degrees
+        rotation_deg = float(value) / 10.0
+        blot.display.rotation_deg = rotation_deg
+
+        self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+
+    def _on_prov_grid_toggled(self, checked: bool):
+        self.prov_grid_visible = bool(checked)
         self.refresh_previews()

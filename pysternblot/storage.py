@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from .models import Project
 import datetime, uuid
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QTransform
+from PySide6.QtCore import Qt
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -198,8 +199,45 @@ class Workspace:
     
     def ensure_blot_crop_preview(self, blot) -> Path:
         """
-        Ensure preview_crop.png exists and matches current crop.
-        v0.1 simple strategy: always regenerate when called.
+        Generate/update assets/<sha256>/preview_crop.png from the blot settings.
+        Rotation is applied first, then crop is taken in rotated-image space.
         """
-        crop_dict = blot.crop.model_dump() if hasattr(blot.crop, "model_dump") else dict(blot.crop)
-        return self.generate_crop_preview_png(blot.asset_sha256, crop_dict)
+        self.ensure()
+
+        original_path = self.asset_original_file(blot.asset_sha256)
+
+        img = QImage(str(original_path))
+        if img.isNull():
+            raise ValueError(f"Could not load image as QImage: {original_path}")
+
+        rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+        if abs(rotation_deg) > 1e-6:
+            tr = QTransform()
+            tr.rotate(rotation_deg)
+            img = img.transformed(tr, Qt.SmoothTransformation)
+
+        c = blot.crop
+        x = int(round(float(c.x)))
+        y = int(round(float(c.y)))
+        w = int(round(float(c.w)))
+        h = int(round(float(c.h)))
+
+        if w < 1:
+            w = 1
+        if h < 1:
+            h = 1
+
+        # Clamp crop to rotated image bounds
+        x = max(0, min(x, img.width() - 1))
+        y = max(0, min(y, img.height() - 1))
+        w = min(w, img.width() - x)
+        h = min(h, img.height() - y)
+
+        cropped = img.copy(x, y, w, h)
+
+        out_path = (self.assets_dir / blot.asset_sha256) / "preview_crop.png"
+        ok = cropped.save(str(out_path), "PNG")
+        if not ok:
+            raise IOError(f"Failed to save preview PNG: {out_path}")
+
+        return out_path

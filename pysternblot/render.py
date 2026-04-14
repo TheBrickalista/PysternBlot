@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
@@ -28,6 +28,22 @@ def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
         if not pm.isNull():
             return pm
     return QPixmap()
+
+def _load_rotated_display_pixmap(workspace_root: Path, sha256: str, rotation_deg: float = 0.0) -> QPixmap:
+    """
+    Load original pixmap and rotate it with Qt.
+    Used for Provenance display so crop coordinates are in rotated-image space.
+    """
+    pm = _load_original_pixmap(workspace_root, sha256)
+    if pm.isNull():
+        return QPixmap()
+
+    if abs(rotation_deg) < 1e-6:
+        return pm
+
+    tr = QTransform()
+    tr.rotate(rotation_deg)
+    return pm.transformed(tr, Qt.SmoothTransformation)
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
     """
@@ -308,7 +324,8 @@ def build_provenance_scene(
     project: Project,
     workspace_root: Path,
     blot_id: str | None = None,
-    on_crop_commit=None
+    on_crop_commit=None,
+    show_grid: bool = False,
 ) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
@@ -331,7 +348,9 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
-    pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+    rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+
+    pm = _load_rotated_display_pixmap(workspace_root, blot.asset_sha256, rotation_deg)
     if pm.isNull():
         scene.addText(
             "Could not load blot image from workspace assets.\n"
@@ -345,18 +364,38 @@ def build_provenance_scene(
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 
+    # Phase 1: rotate display only, do not modify pixels
+    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
+    #img_item.setRotation(rotation_deg)
+
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
     overlay_visible = getattr(getattr(blot, "display", None), "overlay_visible", True)
     overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
     if overlay_sha and overlay_visible:
-        ov = _load_original_pixmap(workspace_root, overlay_sha)
+        ov = _load_rotated_display_pixmap(workspace_root, overlay_sha, rotation_deg)
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)
             ov_item.setOpacity(overlay_alpha)
             ov_item.setPos(x0, y0)
 
+    # Optional grid overlay
+    if show_grid:
+        grid_step = 50.0
+        grid_pen = QPen(Qt.lightGray, 1, Qt.SolidLine)
+        grid_pen.setCosmetic(True)
+
+        gx = x0
+        while gx <= x0 + pm.width():
+            scene.addLine(gx, y0, gx, y0 + pm.height(), grid_pen)
+            gx += grid_step
+
+        gy = y0
+        while gy <= y0 + pm.height():
+            scene.addLine(x0, gy, x0 + pm.width(), gy, grid_pen)
+            gy += grid_step
+            
     # Crop box overlay (crop coords are in image pixel space)
     c = blot.crop
 

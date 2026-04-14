@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame 
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy 
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
@@ -35,6 +35,10 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
+
+        # Home tab
+        home = self._build_home_tab()
+        self.tabs.addTab(home, "Home")
 
         # Library tab (placeholder)
         lib = QWidget()
@@ -214,6 +218,81 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.legend_tab, "Legend")
 
         self._toolbar()
+
+    def _build_home_tab(self) -> QWidget:
+        home = QWidget()
+        root = QVBoxLayout(home)
+        root.setContentsMargins(30, 30, 30, 30)
+        root.setSpacing(20)
+
+        root.addStretch(1)
+
+        # Title block
+        title_wrap = QWidget()
+        title_layout = QVBoxLayout(title_wrap)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(8)
+
+        title = QLabel("Pystern Blot")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
+        title_layout.addWidget(title)
+
+        subtitle = QLabel("Organize, crop and assemble publication-ready blot panels")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 13px; color: #666666;")
+        title_layout.addWidget(subtitle)
+
+        root.addWidget(title_wrap)
+
+        # Button row
+        btn_row_wrap = QWidget()
+        btn_row = QHBoxLayout(btn_row_wrap)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(18)
+
+        btn_row.addStretch(1)
+
+        new_btn = self._make_home_button("New Project", self.new_project)
+        open_btn = self._make_home_button("Open Project", self.open_project)
+        import_btn = self._make_home_button("Import Blot", self.import_blot)
+
+        btn_row.addWidget(new_btn)
+        btn_row.addWidget(open_btn)
+        btn_row.addWidget(import_btn)
+
+        btn_row.addStretch(1)
+
+        root.addWidget(btn_row_wrap)
+
+        root.addStretch(2)
+
+        return home
+    
+    def _make_home_button(self, text: str, slot) -> QPushButton:
+        btn = QPushButton(text)
+        btn.clicked.connect(slot)
+        btn.setMinimumSize(170, 80)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #f4f4f4;
+                border: 1px solid #d2d2d2;
+                border-radius: 10px;
+                padding: 12px 18px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #222222;
+            }
+            QPushButton:hover {
+                background: #ebebeb;
+                border: 1px solid #bfbfbf;
+            }
+            QPushButton:pressed {
+                background: #e0e0e0;
+            }
+        """)
+        return btn
 
     def _toolbar(self):
         tb = QToolBar("Main")

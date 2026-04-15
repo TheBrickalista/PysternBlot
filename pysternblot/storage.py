@@ -42,6 +42,11 @@ class Workspace:
         if not sugg.exists():
             sugg.write_text('{"items":[]}\n', encoding="utf-8")
 
+        # Protein label suggestions history (editable dropdown memory)
+        protein_sugg = self.presets_dir / "protein_label_suggestions.json"
+        if not protein_sugg.exists():
+            protein_sugg.write_text('{"items":[]}\n', encoding="utf-8")
+
     def import_asset(self, src_path: str) -> tuple[str, Path]:
         self.ensure()
         src = Path(src_path)
@@ -90,6 +95,38 @@ class Workspace:
     def save_legend_suggestions(self, items: list[str]) -> None:
         self.ensure()
         path = self.presets_dir / "legend_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+
+    def load_protein_label_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "protein_label_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_protein_label_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "protein_label_suggestions.json"
         seen = set()
         out = []
         for s in items:

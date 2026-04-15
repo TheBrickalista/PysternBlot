@@ -614,9 +614,10 @@ class MainWindow(QMainWindow):
         self.protein_label_combo.blockSignals(True)
         self.protein_label_combo.clear()
 
-        # temporary suggestion source: current blot labels in the project
-        protein_suggestions = []
-        seen = set()
+        protein_suggestions = self._get_protein_label_suggestions()
+
+        # also include labels already present in current project if missing
+        seen = set(protein_suggestions)
         for b in self.current_project.panel.blots:
             txt = str(getattr(getattr(b, "protein_label", None), "text", "") or "").strip()
             if txt and txt not in seen:
@@ -683,6 +684,18 @@ class MainWindow(QMainWindow):
         if txt not in items:
             items.append(txt)
             self.workspace.save_legend_suggestions(items)
+
+    def _get_protein_label_suggestions(self) -> list[str]:
+        return self.workspace.load_protein_label_suggestions()
+
+    def _add_protein_label_suggestion(self, txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return
+        items = self.workspace.load_protein_label_suggestions()
+        if txt not in items:
+            items.append(txt)
+            self.workspace.save_protein_label_suggestions(items)
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
@@ -1013,6 +1026,8 @@ class MainWindow(QMainWindow):
 
         text = self.protein_label_combo.currentText().strip()
         blot.protein_label.text = text
+
+        self._add_protein_label_suggestion(text)
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()

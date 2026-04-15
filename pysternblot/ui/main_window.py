@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
         row3.addWidget(black_lbl)
 
         self.levels_black_slider = QSlider(Qt.Horizontal)
-        self.levels_black_slider.setRange(0, 255)
+        self.levels_black_slider.setRange(0, 65535)
         self.levels_black_slider.setValue(0)
         self.levels_black_slider.setFixedWidth(180)
         self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
@@ -231,13 +231,13 @@ class MainWindow(QMainWindow):
         row3.addWidget(white_lbl)
 
         self.levels_white_slider = QSlider(Qt.Horizontal)
-        self.levels_white_slider.setRange(0, 255)
-        self.levels_white_slider.setValue(255)
+        self.levels_white_slider.setRange(0, 65535)
+        self.levels_white_slider.setValue(65535)
         self.levels_white_slider.setFixedWidth(180)
         self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
         row3.addWidget(self.levels_white_slider)
 
-        self.white_value_lbl = QLabel("255")
+        self.white_value_lbl = QLabel("65535")
         self.white_value_lbl.setMinimumWidth(30)
         row3.addWidget(self.white_value_lbl)
 
@@ -467,14 +467,14 @@ class MainWindow(QMainWindow):
                 },
                 "protein_label": {"text": "Protein", "align": "center"},
                 "display": {
-                    "invert": False,
+                    "invert": True,
                     "gamma": 1.0,
                     "auto_contrast": True,
                     "overlay_alpha": 0.35,
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
                     "levels_black": 0,
-                    "levels_white": 255,
+                    "levels_white": 65535,
                     "levels_gamma": 1.0,
                 },
             }
@@ -573,12 +573,12 @@ class MainWindow(QMainWindow):
         self.invert_cb.blockSignals(True)
 
         self.levels_black_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_black", 0)))
-        self.levels_white_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_white", 255)))
+        self.levels_white_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_white", 65535)))
         self.levels_gamma_slider.setValue(int(round(float(getattr(getattr(blot, "display", None), "levels_gamma", 1.0)) * 100.0)))
         self.invert_cb.setChecked(bool(getattr(getattr(blot, "display", None), "invert", False)))
 
         self.black_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_black", 0))))
-        self.white_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_white", 255))))
+        self.white_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_white", 65535))))
         self.gamma_value_lbl.setText(f"{float(getattr(getattr(blot, 'display', None), 'levels_gamma', 1.0)):.2f}")
 
         self.levels_black_slider.blockSignals(False)
@@ -798,16 +798,9 @@ class MainWindow(QMainWindow):
         if not self.current_project:
             return
 
-        prev_blot = self._get_active_blot()
         blot_id = self.prov_blot_combo.currentData()
-        new_blot = next((b for b in self.current_project.panel.blots if b.id == blot_id), None)
-
-        if prev_blot and new_blot and prev_blot is not new_blot:
-            # keep same crop size, but allow independent position
-            new_blot.crop.w = prev_blot.crop.w
-            new_blot.crop.h = prev_blot.crop.h
-
         self.active_blot_id = blot_id
+
         self._update_prov_label()
         self._sync_controls_from_project()
         self.refresh_previews()
@@ -903,7 +896,7 @@ class MainWindow(QMainWindow):
 
         if white <= black:
             if sender is self.levels_black_slider:
-                white = min(255, black + 1)
+                white = min(65535, black + 1)
                 self.levels_white_slider.blockSignals(True)
                 self.levels_white_slider.setValue(white)
                 self.levels_white_slider.blockSignals(False)

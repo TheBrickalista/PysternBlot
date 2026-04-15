@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem 
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
 
 from pathlib import Path
@@ -36,10 +36,42 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        # Library tab (placeholder)
+        # Home tab
+        home = self._build_home_tab()
+        self.tabs.addTab(home, "Home")
+
+        # Library tab
         lib = QWidget()
         lib_l = QVBoxLayout(lib)
-        lib_l.addWidget(QLabel("Library (skeleton): Open a project.json to preview."))
+        lib_l.setContentsMargins(16, 16, 16, 16)
+        lib_l.setSpacing(10)
+
+        lib_top = QHBoxLayout()
+        lib_title = QLabel("Projects")
+        lib_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        lib_top.addWidget(lib_title)
+
+        lib_top.addStretch(1)
+
+        self.lib_refresh_btn = QPushButton("Refresh Library")
+        self.lib_refresh_btn.clicked.connect(self.refresh_library)
+        lib_top.addWidget(self.lib_refresh_btn)
+
+        lib_l.addLayout(lib_top)
+
+        self.library_table = QTableWidget()
+        self.library_table.setColumnCount(6)
+        self.library_table.setHorizontalHeaderLabels([
+            "Name", "Project ID", "Created", "Modified", "# Blots", "Path"
+        ])
+        self.library_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.library_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.library_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.library_table.setAlternatingRowColors(True)
+        self.library_table.cellDoubleClicked.connect(self._open_project_from_library)
+
+        lib_l.addWidget(self.library_table)
+
         self.tabs.addTab(lib, "Library")
 
         # Final Result tab
@@ -84,6 +116,17 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_top.addWidget(self.prov_grid_cb)
 
+        prov_top.addSpacing(16)
+
+        prov_top.addWidget(QLabel("Protein"))
+        self.protein_label_combo = QComboBox()
+        self.protein_label_combo.setEditable(True)
+        self.protein_label_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.protein_label_combo.setMinimumWidth(180)
+        self.protein_label_combo.lineEdit().editingFinished.connect(self._on_protein_label_changed)
+        self.protein_label_combo.activated.connect(self._on_protein_label_changed)
+        prov_top.addWidget(self.protein_label_combo)
+
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
@@ -91,56 +134,117 @@ class MainWindow(QMainWindow):
         self.prov_label = QLabel("Current blot: —")
         prov_l.addWidget(self.prov_label)
 
-        adjust_row = QHBoxLayout()
+        # --- Display controls frame ---
+        display_frame = QFrame()
+        display_frame.setFrameShape(QFrame.StyledPanel)
+        display_frame.setStyleSheet("""
+            QFrame {
+                background: #f4f4f4;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+        display_layout = QVBoxLayout(display_frame)
+        display_layout.setContentsMargins(10, 8, 10, 10)
+        display_layout.setSpacing(8)
+
+        display_title = QLabel("Display")
+        display_title.setStyleSheet("font-weight: 600; color: #333333;")
+        display_layout.addWidget(display_title)
+
+        # Row 1: Overlay + Alpha
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
 
         self.overlay_cb = QCheckBox("Overlay")
         self.overlay_cb.toggled.connect(self.toggle_overlay)
-        adjust_row.addWidget(self.overlay_cb)
+        row1.addWidget(self.overlay_cb)
 
-        adjust_row.addWidget(QLabel("Alpha"))
+        alpha_lbl = QLabel("Alpha")
+        alpha_lbl.setMinimumWidth(45)
+        row1.addWidget(alpha_lbl)
+
         self.alpha_slider = QSlider(Qt.Horizontal)
         self.alpha_slider.setMinimum(0)
         self.alpha_slider.setMaximum(100)
         self.alpha_slider.setValue(35)
-        self.alpha_slider.setFixedWidth(120)
+        self.alpha_slider.setFixedWidth(160)
         self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
-        adjust_row.addWidget(self.alpha_slider)
+        row1.addWidget(self.alpha_slider)
 
-        adjust_row.addSpacing(16)
+        self.alpha_value_lbl = QLabel("35")
+        self.alpha_value_lbl.setMinimumWidth(30)
+        row1.addWidget(self.alpha_value_lbl)
+
+        row1.addStretch(1)
+        display_layout.addLayout(row1)
+
+        # Row 2: Invert + Gamma
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
 
         self.invert_cb = QCheckBox("Invert")
         self.invert_cb.toggled.connect(self._on_invert_toggled)
-        adjust_row.addWidget(self.invert_cb)
+        row2.addWidget(self.invert_cb)
 
-        adjust_row.addSpacing(16)
+        gamma_lbl = QLabel("Gamma")
+        gamma_lbl.setMinimumWidth(45)
+        row2.addWidget(gamma_lbl)
 
-        adjust_row.addWidget(QLabel("Black"))
-        self.levels_black_slider = QSlider(Qt.Horizontal)
-        self.levels_black_slider.setRange(0, 255)
-        self.levels_black_slider.setValue(0)
-        self.levels_black_slider.setFixedWidth(120)
-        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
-        adjust_row.addWidget(self.levels_black_slider)
-
-        adjust_row.addWidget(QLabel("White"))
-        self.levels_white_slider = QSlider(Qt.Horizontal)
-        self.levels_white_slider.setRange(0, 255)
-        self.levels_white_slider.setValue(255)
-        self.levels_white_slider.setFixedWidth(120)
-        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
-        adjust_row.addWidget(self.levels_white_slider)
-
-        adjust_row.addWidget(QLabel("Gamma"))
         self.levels_gamma_slider = QSlider(Qt.Horizontal)
         self.levels_gamma_slider.setRange(10, 300)
         self.levels_gamma_slider.setValue(100)
-        self.levels_gamma_slider.setFixedWidth(120)
+        self.levels_gamma_slider.setFixedWidth(160)
         self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
-        adjust_row.addWidget(self.levels_gamma_slider)
+        row2.addWidget(self.levels_gamma_slider)
 
-        adjust_row.addStretch(1)
-        prov_l.addLayout(adjust_row)
+        self.gamma_value_lbl = QLabel("1.00")
+        self.gamma_value_lbl.setMinimumWidth(40)
+        row2.addWidget(self.gamma_value_lbl)
 
+        row2.addStretch(1)
+        display_layout.addLayout(row2)
+
+        # Row 3: Black + White
+        row3 = QHBoxLayout()
+        row3.setSpacing(10)
+
+        black_lbl = QLabel("Black")
+        black_lbl.setMinimumWidth(45)
+        row3.addWidget(black_lbl)
+
+        self.levels_black_slider = QSlider(Qt.Horizontal)
+        self.levels_black_slider.setRange(0, 255)
+        self.levels_black_slider.setValue(0)
+        self.levels_black_slider.setFixedWidth(180)
+        self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
+        row3.addWidget(self.levels_black_slider)
+
+        self.black_value_lbl = QLabel("0")
+        self.black_value_lbl.setMinimumWidth(30)
+        row3.addWidget(self.black_value_lbl)
+
+        row3.addSpacing(16)
+
+        white_lbl = QLabel("White")
+        white_lbl.setMinimumWidth(45)
+        row3.addWidget(white_lbl)
+
+        self.levels_white_slider = QSlider(Qt.Horizontal)
+        self.levels_white_slider.setRange(0, 255)
+        self.levels_white_slider.setValue(255)
+        self.levels_white_slider.setFixedWidth(180)
+        self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
+        row3.addWidget(self.levels_white_slider)
+
+        self.white_value_lbl = QLabel("255")
+        self.white_value_lbl.setMinimumWidth(30)
+        row3.addWidget(self.white_value_lbl)
+
+        row3.addStretch(1)
+        display_layout.addLayout(row3)
+
+        prov_l.addWidget(display_frame)
 
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
@@ -153,6 +257,100 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.legend_tab, "Legend")
 
         self._toolbar()
+
+        self.refresh_library()
+
+    def _build_home_tab(self) -> QWidget:
+        home = QWidget()
+        root = QVBoxLayout(home)
+        root.setContentsMargins(30, 30, 30, 30)
+        root.setSpacing(14)
+
+        root.addStretch(1)
+
+        # --- Logo ---
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignCenter)
+
+        logo_path = Path(__file__).parent.parent / "resources" / "pb_logo.png"
+        if logo_path.exists():
+            pm = QPixmap(str(logo_path))
+            if not pm.isNull():
+                pm = pm.scaledToWidth(500, Qt.SmoothTransformation)
+                logo_label.setPixmap(pm)
+            else:
+                logo_label.setText("Logo load failed")
+        else:
+            logo_label.setText("Logo not found")
+
+        root.addWidget(logo_label)
+
+        # Title block
+        title_wrap = QWidget()
+        title_layout = QVBoxLayout(title_wrap)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(8)
+
+        title = QLabel("Pystern Blot")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
+        title_layout.addWidget(title)
+
+        subtitle = QLabel("Organize, crop and assemble publication-ready blot panels")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 13px; color: #666666;")
+        title_layout.addWidget(subtitle)
+
+        root.addWidget(title_wrap)
+
+        # Button row
+        btn_row_wrap = QWidget()
+        btn_row = QHBoxLayout(btn_row_wrap)
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(18)
+
+        btn_row.addStretch(1)
+
+        new_btn = self._make_home_button("New Project", self.new_project)
+        open_btn = self._make_home_button("Open Project", self.open_project)
+        import_btn = self._make_home_button("Import Blot", self.import_blot)
+
+        btn_row.addWidget(new_btn)
+        btn_row.addWidget(open_btn)
+        btn_row.addWidget(import_btn)
+
+        btn_row.addStretch(1)
+
+        root.addWidget(btn_row_wrap)
+
+        root.addStretch(2)
+
+        return home
+    
+    def _make_home_button(self, text: str, slot) -> QPushButton:
+        btn = QPushButton(text)
+        btn.clicked.connect(slot)
+        btn.setMinimumSize(170, 80)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #f4f4f4;
+                border: 1px solid #d2d2d2;
+                border-radius: 10px;
+                padding: 12px 18px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #222222;
+            }
+            QPushButton:hover {
+                background: #ebebeb;
+                border: 1px solid #bfbfbf;
+            }
+            QPushButton:pressed {
+                background: #e0e0e0;
+            }
+        """)
+        return btn
 
     def _toolbar(self):
         tb = QToolBar("Main")
@@ -203,6 +401,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -217,6 +416,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -332,6 +532,7 @@ class MainWindow(QMainWindow):
 
             self.workspace.save_project(self.current_project)
             self.refresh_previews()
+            self.refresh_library()
 
             QMessageBox.information(
                 self,
@@ -376,6 +577,10 @@ class MainWindow(QMainWindow):
         self.levels_gamma_slider.setValue(int(round(float(getattr(getattr(blot, "display", None), "levels_gamma", 1.0)) * 100.0)))
         self.invert_cb.setChecked(bool(getattr(getattr(blot, "display", None), "invert", False)))
 
+        self.black_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_black", 0))))
+        self.white_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_white", 255))))
+        self.gamma_value_lbl.setText(f"{float(getattr(getattr(blot, 'display', None), 'levels_gamma', 1.0)):.2f}")
+
         self.levels_black_slider.blockSignals(False)
         self.levels_white_slider.blockSignals(False)
         self.levels_gamma_slider.blockSignals(False)
@@ -390,6 +595,7 @@ class MainWindow(QMainWindow):
 
         self.overlay_cb.setChecked(bool(overlay_vis))
         self.alpha_slider.setValue(int(round(overlay_alpha * 100)))
+        self.alpha_value_lbl.setText(str(int(round(overlay_alpha * 100))))
 
         self.overlay_cb.blockSignals(False)
         self.alpha_slider.blockSignals(False)
@@ -402,6 +608,26 @@ class MainWindow(QMainWindow):
 
         self.border_cb.blockSignals(False)
         self.border_width_spin.blockSignals(False)
+
+        protein_text = str(getattr(getattr(blot, "protein_label", None), "text", "") or "")
+
+        self.protein_label_combo.blockSignals(True)
+        self.protein_label_combo.clear()
+
+        protein_suggestions = self._get_protein_label_suggestions()
+
+        # also include labels already present in current project if missing
+        seen = set(protein_suggestions)
+        for b in self.current_project.panel.blots:
+            txt = str(getattr(getattr(b, "protein_label", None), "text", "") or "").strip()
+            if txt and txt not in seen:
+                protein_suggestions.append(txt)
+                seen.add(txt)
+
+        self.protein_label_combo.addItems(protein_suggestions)
+        self.protein_label_combo.setEditText(protein_text)
+
+        self.protein_label_combo.blockSignals(False)
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -459,6 +685,18 @@ class MainWindow(QMainWindow):
             items.append(txt)
             self.workspace.save_legend_suggestions(items)
 
+    def _get_protein_label_suggestions(self) -> list[str]:
+        return self.workspace.load_protein_label_suggestions()
+
+    def _add_protein_label_suggestion(self, txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return
+        items = self.workspace.load_protein_label_suggestions()
+        if txt not in items:
+            items.append(txt)
+            self.workspace.save_protein_label_suggestions(items)
+
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
         if not blot:
@@ -471,6 +709,7 @@ class MainWindow(QMainWindow):
         if not blot:
             return
         blot.display.overlay_alpha = float(value) / 100.0
+        self.alpha_value_lbl.setText(str(value))
         self.refresh_previews()
 
     def refresh_previews(self):
@@ -570,6 +809,7 @@ class MainWindow(QMainWindow):
 
         self.active_blot_id = blot_id
         self._update_prov_label()
+        self._sync_controls_from_project()
         self.refresh_previews()
 
     def _get_active_blot(self):
@@ -659,13 +899,27 @@ class MainWindow(QMainWindow):
         white = int(self.levels_white_slider.value())
         gamma = float(self.levels_gamma_slider.value()) / 100.0
 
-        # keep valid interval
+        sender = self.sender()
+
         if white <= black:
-            return
+            if sender is self.levels_black_slider:
+                white = min(255, black + 1)
+                self.levels_white_slider.blockSignals(True)
+                self.levels_white_slider.setValue(white)
+                self.levels_white_slider.blockSignals(False)
+            else:
+                black = max(0, white - 1)
+                self.levels_black_slider.blockSignals(True)
+                self.levels_black_slider.setValue(black)
+                self.levels_black_slider.blockSignals(False)
 
         blot.display.levels_black = black
         blot.display.levels_white = white
         blot.display.levels_gamma = gamma
+
+        self.black_value_lbl.setText(str(black))
+        self.white_value_lbl.setText(str(white))
+        self.gamma_value_lbl.setText(f"{gamma:.2f}")
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
@@ -692,3 +946,88 @@ class MainWindow(QMainWindow):
         self.current_project.panel.style.border_width_px = int(value)
         self.workspace.save_project(self.current_project)
         self._refresh_final_only(fit=True)
+
+    def refresh_library(self):
+        """
+        Scan workspace/projects/*/project.json and populate the Library table.
+        """
+        self.library_table.setRowCount(0)
+
+        projects_root = self.workspace.projects_dir
+        if not projects_root.exists():
+            return
+
+        rows = []
+
+        for project_json in sorted(projects_root.glob("*/project.json")):
+            try:
+                project = self.workspace.load_project(str(project_json))
+
+                name = getattr(project.project, "name", "")
+                project_id = getattr(project.project, "id", "")
+                created = getattr(project.project, "created_utc", "")
+                modified = getattr(project.project, "modified_utc", "")
+                n_blots = len(getattr(project.panel, "blots", []) or [])
+
+                rows.append({
+                    "name": name,
+                    "project_id": project_id,
+                    "created": created,
+                    "modified": modified,
+                    "n_blots": n_blots,
+                    "path": str(project_json),
+                })
+
+            except Exception as e:
+                print(f"[library] failed to read {project_json}: {e}")
+
+        # Sort by modified descending
+        rows.sort(key=lambda r: r["modified"], reverse=True)
+
+        self.library_table.setRowCount(len(rows))
+
+        for row_idx, row in enumerate(rows):
+            self.library_table.setItem(row_idx, 0, QTableWidgetItem(str(row["name"])))
+            self.library_table.setItem(row_idx, 1, QTableWidgetItem(str(row["project_id"])))
+            self.library_table.setItem(row_idx, 2, QTableWidgetItem(str(row["created"])))
+            self.library_table.setItem(row_idx, 3, QTableWidgetItem(str(row["modified"])))
+            self.library_table.setItem(row_idx, 4, QTableWidgetItem(str(row["n_blots"])))
+            self.library_table.setItem(row_idx, 5, QTableWidgetItem(str(row["path"])))
+
+        self.library_table.resizeColumnsToContents()
+        self.library_table.setColumnWidth(5, 360)  # path column
+
+    def _open_project_from_library(self, row: int, _column: int):
+        item = self.library_table.item(row, 5)  # path column
+        if item is None:
+            return
+
+        path = item.text().strip()
+        if not path:
+            return
+
+        try:
+            self.current_project = self.workspace.load_project(path)
+            self._sync_controls_from_project()
+            self.legend_tab.bind(
+                self.current_project,
+                self._get_legend_suggestions,
+                self._add_legend_suggestion
+            )
+            self.refresh_previews()
+            self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
+        except Exception as e:
+            QMessageBox.critical(self, "Error opening project", str(e))
+
+    def _on_protein_label_changed(self, *_args):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        text = self.protein_label_combo.currentText().strip()
+        blot.protein_label.text = text
+
+        self._add_protein_label_suggestion(text)
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()

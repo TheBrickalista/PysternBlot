@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QScrollArea, QFrame, QCheckBox
+    QScrollArea, QFrame, QCheckBox, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -229,6 +229,21 @@ class LegendRowEditor(QFrame):
         header.addWidget(self.n_cells)
 
         header.addSpacing(12)
+
+        header.addWidget(QLabel("Font"))
+        self.font_size_spin = QDoubleSpinBox()
+        self.font_size_spin.setRange(6.0, 30.0)
+        self.font_size_spin.setSingleStep(0.5)
+        self.font_size_spin.setDecimals(1)
+
+        current_font_size = getattr(self.row, "font_size_pt", None)
+        if current_font_size is None:
+            current_font_size = 10.0   # fallback default for editor display
+        self.font_size_spin.setValue(float(current_font_size))
+        self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
+        header.addWidget(self.font_size_spin)
+
+        header.addSpacing(12)
         self.underline_cb = QCheckBox("Underline")
         self.underline_cb.setChecked(bool(getattr(self.row, "underline", False)))
         self.underline_cb.toggled.connect(self._on_underline_toggled)
@@ -360,4 +375,8 @@ class LegendRowEditor(QFrame):
 
     def _on_underline_toggled(self, checked: bool):
         self.row.underline = bool(checked)
+        self.on_row_changed()
+
+    def _on_font_size_changed(self, value: float):
+        self.row.font_size_pt = float(value)
         self.on_row_changed()

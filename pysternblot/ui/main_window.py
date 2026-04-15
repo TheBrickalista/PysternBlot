@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy 
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem 
 )
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
@@ -40,10 +40,38 @@ class MainWindow(QMainWindow):
         home = self._build_home_tab()
         self.tabs.addTab(home, "Home")
 
-        # Library tab (placeholder)
+        # Library tab
         lib = QWidget()
         lib_l = QVBoxLayout(lib)
-        lib_l.addWidget(QLabel("Library (skeleton): Open a project.json to preview."))
+        lib_l.setContentsMargins(16, 16, 16, 16)
+        lib_l.setSpacing(10)
+
+        lib_top = QHBoxLayout()
+        lib_title = QLabel("Projects")
+        lib_title.setStyleSheet("font-size: 16px; font-weight: 600;")
+        lib_top.addWidget(lib_title)
+
+        lib_top.addStretch(1)
+
+        self.lib_refresh_btn = QPushButton("Refresh Library")
+        self.lib_refresh_btn.clicked.connect(self.refresh_library)
+        lib_top.addWidget(self.lib_refresh_btn)
+
+        lib_l.addLayout(lib_top)
+
+        self.library_table = QTableWidget()
+        self.library_table.setColumnCount(6)
+        self.library_table.setHorizontalHeaderLabels([
+            "Name", "Project ID", "Created", "Modified", "# Blots", "Path"
+        ])
+        self.library_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.library_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.library_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.library_table.setAlternatingRowColors(True)
+        self.library_table.cellDoubleClicked.connect(self._open_project_from_library)
+
+        lib_l.addWidget(self.library_table)
+
         self.tabs.addTab(lib, "Library")
 
         # Final Result tab
@@ -219,6 +247,8 @@ class MainWindow(QMainWindow):
 
         self._toolbar()
 
+        self.refresh_library()
+
     def _build_home_tab(self) -> QWidget:
         home = QWidget()
         root = QVBoxLayout(home)
@@ -360,6 +390,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -374,6 +405,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -489,6 +521,7 @@ class MainWindow(QMainWindow):
 
             self.workspace.save_project(self.current_project)
             self.refresh_previews()
+            self.refresh_library()
 
             QMessageBox.information(
                 self,
@@ -869,3 +902,75 @@ class MainWindow(QMainWindow):
         self.current_project.panel.style.border_width_px = int(value)
         self.workspace.save_project(self.current_project)
         self._refresh_final_only(fit=True)
+
+    def refresh_library(self):
+        """
+        Scan workspace/projects/*/project.json and populate the Library table.
+        """
+        self.library_table.setRowCount(0)
+
+        projects_root = self.workspace.projects_dir
+        if not projects_root.exists():
+            return
+
+        rows = []
+
+        for project_json in sorted(projects_root.glob("*/project.json")):
+            try:
+                project = self.workspace.load_project(str(project_json))
+
+                name = getattr(project.project, "name", "")
+                project_id = getattr(project.project, "id", "")
+                created = getattr(project.project, "created_utc", "")
+                modified = getattr(project.project, "modified_utc", "")
+                n_blots = len(getattr(project.panel, "blots", []) or [])
+
+                rows.append({
+                    "name": name,
+                    "project_id": project_id,
+                    "created": created,
+                    "modified": modified,
+                    "n_blots": n_blots,
+                    "path": str(project_json),
+                })
+
+            except Exception as e:
+                print(f"[library] failed to read {project_json}: {e}")
+
+        # Sort by modified descending
+        rows.sort(key=lambda r: r["modified"], reverse=True)
+
+        self.library_table.setRowCount(len(rows))
+
+        for row_idx, row in enumerate(rows):
+            self.library_table.setItem(row_idx, 0, QTableWidgetItem(str(row["name"])))
+            self.library_table.setItem(row_idx, 1, QTableWidgetItem(str(row["project_id"])))
+            self.library_table.setItem(row_idx, 2, QTableWidgetItem(str(row["created"])))
+            self.library_table.setItem(row_idx, 3, QTableWidgetItem(str(row["modified"])))
+            self.library_table.setItem(row_idx, 4, QTableWidgetItem(str(row["n_blots"])))
+            self.library_table.setItem(row_idx, 5, QTableWidgetItem(str(row["path"])))
+
+        self.library_table.resizeColumnsToContents()
+        self.library_table.setColumnWidth(5, 360)  # path column
+
+    def _open_project_from_library(self, row: int, _column: int):
+        item = self.library_table.item(row, 5)  # path column
+        if item is None:
+            return
+
+        path = item.text().strip()
+        if not path:
+            return
+
+        try:
+            self.current_project = self.workspace.load_project(path)
+            self._sync_controls_from_project()
+            self.legend_tab.bind(
+                self.current_project,
+                self._get_legend_suggestions,
+                self._add_legend_suggestion
+            )
+            self.refresh_previews()
+            self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
+        except Exception as e:
+            QMessageBox.critical(self, "Error opening project", str(e))

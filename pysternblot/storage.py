@@ -14,6 +14,14 @@ import datetime, uuid
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtCore import Qt
 
+from .image_utils import (
+    load_image_uint16,
+    apply_levels_uint16,
+    rotate_uint16,
+    crop_uint16,
+    save_uint16_tiff,
+)
+
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -203,64 +211,48 @@ class Workspace:
             raise FileNotFoundError(f"No original.* found in {d}")
         return matches[0]
 
-    def generate_crop_preview_png(self, sha256: str, crop: dict) -> Path:
+    def generate_crop_preview_tiff(self, sha256: str, crop: dict) -> Path:
         """
-        Generate (or overwrite) a preview_crop.png for this asset sha256
+        Generate (or overwrite) a 16-bit preview_crop.tif for this asset sha256
         using the crop rectangle (absolute pixel coords).
-        crop = {"x":..., "y":..., "w":..., "h":...}
         """
         self.ensure()
         original_path = self.asset_original_file(sha256)
 
-        img = QImage(str(original_path))
-        if img.isNull():
-            raise ValueError(f"Could not load image as QImage: {original_path}")
+        img = load_image_uint16(original_path)
 
         x = int(round(float(crop.get("x", 0))))
         y = int(round(float(crop.get("y", 0))))
-        w = int(round(float(crop.get("w", img.width()))))
-        h = int(round(float(crop.get("h", img.height()))))
+        w = int(round(float(crop.get("w", img.shape[1]))))
+        h = int(round(float(crop.get("h", img.shape[0]))))
 
-        # clamp to bounds
-        x = max(0, min(x, img.width() - 1))
-        y = max(0, min(y, img.height() - 1))
-        w = max(1, min(w, img.width() - x))
-        h = max(1, min(h, img.height() - y))
+        cropped = crop_uint16(img, x, y, w, h)
 
-        cropped = img.copy(x, y, w, h)
-
-        out_path = (self.assets_dir / sha256) / "preview_crop.png"
-        ok = cropped.save(str(out_path), "PNG")
-        if not ok:
-            raise IOError(f"Failed to save preview PNG: {out_path}")
+        out_path = (self.assets_dir / sha256) / "preview_crop.tif"
+        save_uint16_tiff(cropped, out_path)
         return out_path
     
     def ensure_blot_crop_preview(self, blot) -> Path:
         """
-        Generate/update assets/<sha256>/preview_crop.png from the blot settings.
+        Generate/update assets/<sha256>/preview_crop.tif from the blot settings.
         Rotation is applied first, then crop is taken in rotated-image space.
+        All processing stays in 16-bit.
         """
         self.ensure()
 
         original_path = self.asset_original_file(blot.asset_sha256)
-
-        img = QImage(str(original_path))
-        if img.isNull():
-            raise ValueError(f"Could not load image as QImage: {original_path}")
+        img = load_image_uint16(original_path)
 
         display = getattr(blot, "display", None)
         black = int(getattr(display, "levels_black", 0))
-        white = int(getattr(display, "levels_white", 255))
+        white = int(getattr(display, "levels_white", 65535))
         gamma = float(getattr(display, "levels_gamma", 1.0))
         invert = bool(getattr(display, "invert", False))
 
-        img = self._apply_levels_to_qimage(img, black, white, gamma, invert)
+        img = apply_levels_uint16(img, black, white, gamma, invert)
 
-        rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
-        if abs(rotation_deg) > 1e-6:
-            tr = QTransform()
-            tr.rotate(rotation_deg)
-            img = img.transformed(tr, Qt.SmoothTransformation)
+        rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
+        img = rotate_uint16(img, rotation_deg)
 
         c = blot.crop
         x = int(round(float(c.x)))
@@ -268,68 +260,11 @@ class Workspace:
         w = int(round(float(c.w)))
         h = int(round(float(c.h)))
 
-        if w < 1:
-            w = 1
-        if h < 1:
-            h = 1
+        cropped = crop_uint16(img, x, y, w, h)
 
-        # Clamp crop to rotated image bounds
-        x = max(0, min(x, img.width() - 1))
-        y = max(0, min(y, img.height() - 1))
-        w = min(w, img.width() - x)
-        h = min(h, img.height() - y)
-
-        cropped = img.copy(x, y, w, h)
-
-        out_path = (self.assets_dir / blot.asset_sha256) / "preview_crop.png"
-        ok = cropped.save(str(out_path), "PNG")
-        if not ok:
-            raise IOError(f"Failed to save preview PNG: {out_path}")
+        out_path = (self.assets_dir / blot.asset_sha256) / "preview_crop.tif"
+        save_uint16_tiff(cropped, out_path)
 
         return out_path
     
-    def _apply_levels_to_qimage(
-        self,
-        img: QImage,
-        black: int,
-        white: int,
-        gamma: float,
-        invert: bool,
-    ) -> QImage:
-        """
-        Apply black/white/gamma/invert to an 8-bit grayscale QImage.
-        Returns a new QImage.
-        """
-        img = img.convertToFormat(QImage.Format_Grayscale8)
-
-        if white <= black:
-            white = black + 1
-        if gamma <= 0:
-            gamma = 1.0
-
-        lut = []
-        denom = float(white - black)
-        inv_gamma = 1.0 / gamma
-
-        for i in range(256):
-            v = (i - black) / denom
-            if v < 0.0:
-                v = 0.0
-            elif v > 1.0:
-                v = 1.0
-
-            v = pow(v, inv_gamma)
-
-            if invert:
-                v = 1.0 - v
-
-            lut.append(int(round(v * 255.0)))
-
-        out = img.copy()
-        for y in range(out.height()):
-            line = out.scanLine(y)
-            buf = memoryview(line)[:out.bytesPerLine()]
-            for x in range(out.width()):
-                buf[x] = lut[buf[x]]
-
-        return out
+    

@@ -116,6 +116,17 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_top.addWidget(self.prov_grid_cb)
 
+        prov_top.addSpacing(16)
+
+        prov_top.addWidget(QLabel("Protein"))
+        self.protein_label_combo = QComboBox()
+        self.protein_label_combo.setEditable(True)
+        self.protein_label_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.protein_label_combo.setMinimumWidth(180)
+        self.protein_label_combo.lineEdit().editingFinished.connect(self._on_protein_label_changed)
+        self.protein_label_combo.activated.connect(self._on_protein_label_changed)
+        prov_top.addWidget(self.protein_label_combo)
+
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
@@ -598,6 +609,25 @@ class MainWindow(QMainWindow):
         self.border_cb.blockSignals(False)
         self.border_width_spin.blockSignals(False)
 
+        protein_text = str(getattr(getattr(blot, "protein_label", None), "text", "") or "")
+
+        self.protein_label_combo.blockSignals(True)
+        self.protein_label_combo.clear()
+
+        # temporary suggestion source: current blot labels in the project
+        protein_suggestions = []
+        seen = set()
+        for b in self.current_project.panel.blots:
+            txt = str(getattr(getattr(b, "protein_label", None), "text", "") or "").strip()
+            if txt and txt not in seen:
+                protein_suggestions.append(txt)
+                seen.add(txt)
+
+        self.protein_label_combo.addItems(protein_suggestions)
+        self.protein_label_combo.setEditText(protein_text)
+
+        self.protein_label_combo.blockSignals(False)
+
     def _on_legend_changed(self):
         if not self.current_project:
             return
@@ -766,6 +796,7 @@ class MainWindow(QMainWindow):
 
         self.active_blot_id = blot_id
         self._update_prov_label()
+        self._sync_controls_from_project()
         self.refresh_previews()
 
     def _get_active_blot(self):
@@ -974,3 +1005,14 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
         except Exception as e:
             QMessageBox.critical(self, "Error opening project", str(e))
+
+    def _on_protein_label_changed(self, *_args):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        text = self.protein_label_combo.currentText().strip()
+        blot.protein_label.text = text
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()

@@ -340,14 +340,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         return y + text_h + extra
     
     
-    # ---- title ----
-    title = scene.addText(project.project.name, font)
-    title.setDefaultTextColor(Qt.black)
-    title.setPos(x0, y0)
-
-    # title spacing
-    title_h = title.boundingRect().height()
-    y = y0 + title_h + 14.0
+    # No figure title
+    y = y0
 
     # ---- upper legend ----
     legend = getattr(project.panel, "legend", None)

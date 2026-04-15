@@ -196,6 +196,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         2) elif len(cells) == len(groups) -> per-group centers (group spans use n_lanes)
         3) else -> evenly distribute across image width
         """
+        
+        row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
+        row_font = QFont(s.font_family, int(row_font_size))
+
         # ----- lane/group geometry -----
         hb = project.panel.lane_layout.header_block
         groups = list(getattr(hb, "groups", []) or [])
@@ -210,24 +214,24 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
 
         # helper: accurate text centering using boundingRect (not QFontMetrics)
         def _add_text_centered(text: str, cx: float, y0: float) -> None:
-            t = scene.addText(text, font)
+            t = scene.addText(text, row_font)
             t.setDefaultTextColor(Qt.black)
             br = t.boundingRect()
             t.setPos(cx - br.width() / 2.0, y0)
 
         def _add_text_left(text: str, x: float, y0: float) -> None:
-            t = scene.addText(text, font)
+            t = scene.addText(text, row_font)
             t.setDefaultTextColor(Qt.black)
             t.setPos(x, y0)
 
         def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
-            t = scene.addText(text, font)
+            t = scene.addText(text, row_font)
             t.setDefaultTextColor(Qt.black)
             br = t.boundingRect()
             t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
 
         # --- measure one text height once (and reuse) ---
-        tmp = scene.addText("Ag", font)
+        tmp = scene.addText("Ag", row_font)
         text_h = tmp.boundingRect().height()
         scene.removeItem(tmp)
 

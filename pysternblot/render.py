@@ -10,43 +10,357 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform, QImage
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Project
+from .models import Project, LegendRow
+from .ui.crop_rect_item import CropRectItem
+
+import numpy as np
+
+from .image_utils import (
+    load_image_uint16,
+    apply_levels_uint16,
+    rotate_uint16,
+    uint16_to_qpixmap,
+)
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
     """
-    Loads assets/<sha256>/original.* using Qt image plugins.
-    Note: Qt may fail on some 16-bit TIFFs. If you hit that, tell me and we’ll switch loader.
+    Load assets/<sha256>/original.* as true 16-bit grayscale.
     """
     asset_dir = workspace_root / "assets" / sha256
     for p in asset_dir.glob("original.*"):
-        pm = QPixmap(str(p))
-        if not pm.isNull():
-            return pm
+        try:
+            arr = load_image_uint16(p)
+            return uint16_to_qpixmap(arr)
+        except Exception:
+            continue
     return QPixmap()
 
 
-def build_panel_scene(project: Project) -> QGraphicsScene:
-    """Current placeholder panel scene (kept simple for now)."""
+
+def _load_rotated_display_pixmap(
+    workspace_root: Path,
+    sha256: str,
+    rotation_deg: float = 0.0,
+    black: int = 0,
+    white: int = 65535,
+    gamma: float = 1.0,
+    invert: bool = False,
+) -> QPixmap:
+    """
+    Load original image, apply levels in 16-bit, then rotate in 16-bit.
+    """
+    asset_dir = workspace_root / "assets" / sha256
+    original_path = None
+    for p in asset_dir.glob("original.*"):
+        original_path = p
+        break
+
+    if original_path is None:
+        return QPixmap()
+
+    try:
+        img = load_image_uint16(original_path)
+        img = apply_levels_uint16(img, black, white, gamma, invert)
+        img = rotate_uint16(img, rotation_deg)
+        return uint16_to_qpixmap(img)
+    except Exception:
+        return QPixmap()
+
+def _load_preview_crop_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
+    """
+    Loads assets/<sha256>/preview_crop.tif as true 16-bit grayscale.
+    """
+    p = workspace_root / "assets" / sha256 / "preview_crop.tif"
+    if not p.exists():
+        return QPixmap()
+
+    try:
+        arr = load_image_uint16(p)
+        return uint16_to_qpixmap(arr)
+    except Exception:
+        return QPixmap()
+
+
+def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
+    """
+    Final Result view = (optional) legend + stacked cropped previews + protein labels.
+    Alignment rules:
+      - left legend text centered in ladder column
+      - legend cells centered on lane centers across the image column
+      - right legend text left-aligned in protein column
+      - positions use QGraphicsTextItem.boundingRect() (more accurate than QFontMetrics)
+    """
     scene = QGraphicsScene()
     s = project.panel.style
     font = QFont(s.font_family, int(s.font_size_pt))
 
-    t = scene.addText(project.project.name, font)
-    t.setDefaultTextColor(Qt.black)
-    t.setPos(10, 10)
+    if not project.panel.blots:
+        scene.addText("No blots in this project.", font)
+        return scene
 
-    top = s.top_header_height_px
-    w = s.ladder_col_width_px + 600 + s.protein_col_width_px
-    h = top + 2 * 250 + s.gap_between_blots_px
-    scene.addRect(QRectF(10, 40, w, h))
+    # ---- layout constants ----
+    x0, y0 = 20.0, 20.0
+    ladder_w = float(s.ladder_col_width_px)
+    gap_between_blots = float(s.gap_between_blots_px)
+    protein_w = float(s.protein_col_width_px)
+
+    left_col_x = x0
+    img_col_x = x0 + ladder_w
+    col_gap = 10.0  # gap between image and protein column
+
+    # ---- stack order ----
+    order = list(getattr(project.panel.layout, "order", []))
+    blot_by_id = {b.id: b for b in project.panel.blots}
+    blots = [blot_by_id[i] for i in order if i in blot_by_id] or project.panel.blots
+
+    # ---- preload pixmaps (and compute max image width for consistent column layout) ----
+    pixmaps: list[QPixmap] = []
+    for blot in blots:
+        pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256)
+        if pm.isNull():
+            pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+        pixmaps.append(pm)
+
+    max_w = max((pm.width() for pm in pixmaps if not pm.isNull()), default=0)
+    max_h = max((pm.height() for pm in pixmaps if not pm.isNull()), default=0)
+    if max_w <= 0 or max_h <= 0:
+        scene.addText("Could not load blot previews.", font).setPos(x0, y0)
+        return scene
+
+    img_col_w = float(max_w)
+    right_col_x = img_col_x + img_col_w + col_gap
+
+    # ---- helpers ----
+    def _add_text(text: str, x: float, y: float) -> None:
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        t.setPos(x, y)
+
+    def _add_text_centered(text: str, cx: float, y: float) -> None:
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(cx - br.width() / 2.0, y)
+
+    def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y: float) -> None:
+        # center text in a fixed-width column
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(col_x + (col_w - br.width()) / 2.0, y)
+
+    # ---- legend row renderer ----
+    def _draw_legend_row(row: LegendRow, y: float) -> float:
+        """
+        Returns next y.
+        Placement strategy:
+        1) if len(cells) == n_lanes -> per-lane centers
+        2) elif len(cells) == len(groups) -> per-group centers (group spans use n_lanes)
+        3) else -> evenly distribute across image width
+        """
+        
+        row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
+        row_font = QFont(s.font_family, int(row_font_size))
+
+        # ----- lane/group geometry -----
+        hb = project.panel.lane_layout.header_block
+        groups = list(getattr(hb, "groups", []) or [])
+        n_lanes = int(hb.total_lanes() or 0)
+
+        cells = list(row.cells or [])
+        n_cells = len(cells)
+
+        if n_lanes <= 0:
+            # fallback: at least keep things on the image
+            n_lanes = max(1, n_cells)
+
+        # helper: accurate text centering using boundingRect (not QFontMetrics)
+        def _add_text_centered(text: str, cx: float, y0: float) -> None:
+            t = scene.addText(text, row_font)
+            t.setDefaultTextColor(Qt.black)
+            br = t.boundingRect()
+            t.setPos(cx - br.width() / 2.0, y0)
+
+        def _add_text_left(text: str, x: float, y0: float) -> None:
+            t = scene.addText(text, row_font)
+            t.setDefaultTextColor(Qt.black)
+            t.setPos(x, y0)
+
+        def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
+            t = scene.addText(text, row_font)
+            t.setDefaultTextColor(Qt.black)
+            br = t.boundingRect()
+            t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
+
+        # --- measure one text height once (and reuse) ---
+        tmp = scene.addText("Ag", row_font)
+        text_h = tmp.boundingRect().height()
+        scene.removeItem(tmp)
+
+        # Left label (centered in ladder column)
+        if row.left:
+            _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
+
+        # ----- compute centers for the "cells" across the image column -----
+        centers: list[float] = []
+
+        # Case 1: per-lane labels
+        if n_cells == n_lanes:
+            lane_w = img_col_w / float(n_lanes)
+            centers = [img_col_x + (i + 0.5) * lane_w for i in range(n_cells)]
+
+        # Case 2: per-group labels (best when n_cells == len(groups))
+        elif groups and n_cells == len(groups):
+            lane_w = img_col_w / float(n_lanes)
+            lane_cursor = 0
+            for g in groups:
+                span = int(getattr(g, "n_lanes", 1) or 1)
+                start = lane_cursor
+                end = lane_cursor + span
+                cx = img_col_x + ((start + end) / 2.0) * lane_w
+                centers.append(cx)
+                lane_cursor = end
+
+            centers = [min(max(img_col_x, c), img_col_x + img_col_w) for c in centers]
+
+        # Case 3: evenly distribute across full image width
+        else:
+            if n_cells > 0:
+                step = img_col_w / float(n_cells)
+                centers = [img_col_x + (i + 0.5) * step for i in range(n_cells)]
+
+        # draw center cells
+        for cx, txt in zip(centers, cells):
+            txt = (txt or "").strip()
+            if not txt:
+                continue
+            _add_text_centered(txt, cx, y)
+
+        # Right label (left aligned in protein column)
+        if row.right:
+            _add_text_left(row.right, right_col_x, y)
+
+        # --- underline groups if requested for this row ---
+        underline_drawn = False
+        if bool(getattr(row, "underline", False)):
+
+            # slightly below the text row
+            underline_y = y + text_h + 4.0
+
+            pen = QPen(Qt.black, 2)
+            pen.setCapStyle(Qt.FlatCap)
+
+            gap_px = 40.0  # visible gap between segments
+            pad = gap_px / 2.0
+
+            # Prefer true header groups only if there are *multiple* groups
+            use_header_groups = bool(groups) and len(groups) > 1
+
+            if use_header_groups and n_lanes > 0:
+                # --- group-based segments using lane geometry ---
+                lane_w = img_col_w / float(n_lanes)
+                lane_cursor = 0
+
+                for g in groups:
+                    span = int(getattr(g, "n_lanes", 1) or 1)
+
+                    x_start = img_col_x + lane_cursor * lane_w
+                    x_end = img_col_x + (lane_cursor + span) * lane_w
+
+                    x1 = x_start + pad
+                    x2 = x_end - pad
+
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+
+                    lane_cursor += span
+
+            else:
+                # --- fallback: derive segments from *this row's* non-empty cells ---
+                blocks = [c for c in (cells or []) if (c or "").strip()]
+                n_blocks = len(blocks)
+
+                if n_blocks <= 1:
+                    # one block -> one underline across entire image column
+                    x1 = img_col_x + pad
+                    x2 = img_col_x + img_col_w - pad
+                    if x2 > x1 + 1.0:
+                        scene.addLine(x1, underline_y, x2, underline_y, pen)
+                        underline_drawn = True
+                else:
+                    block_w = img_col_w / float(n_blocks)
+
+                    for i in range(n_blocks):
+                        x_start = img_col_x + i * block_w
+                        x_end = img_col_x + (i + 1) * block_w
+
+                        x1 = x_start + pad
+                        x2 = x_end - pad
+
+                        if x2 > x1 + 1.0:
+                            scene.addLine(x1, underline_y, x2, underline_y, pen)
+                            underline_drawn = True
+                # row spacing (account for underline)
+        extra = 14.0 if underline_drawn else 8.0
+        return y + text_h + extra
+    
+    
+    # No figure title
+    y = y0
+
+    # ---- upper legend ----
+    legend = getattr(project.panel, "legend", None)
+    if legend and getattr(legend, "upper_rows", None):
+        for row in legend.upper_rows:
+            y = _draw_legend_row(row, y)
+        y += 10.0  # gap before first blot
+
+    # ---- blots ----
+    for blot, pm in zip(blots, pixmaps):
+        if pm.isNull():
+            t = scene.addText(f"Could not load image for blot: {blot.id}", font)
+            t.setPos(x0, y)
+            y += t.boundingRect().height() + 8.0
+            continue
+
+        img_item = scene.addPixmap(pm)
+        img_item.setPos(img_col_x, y)
+
+        if getattr(s, "border_enabled", True):
+            pen = QPen(Qt.black, float(getattr(s, "border_width_px", 1)))
+            pen.setCosmetic(True)
+            scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
+
+        # Protein label on the right (vertically centered)
+        label = getattr(getattr(blot, "protein_label", None), "text", "")
+        if label:
+            t = scene.addText(label, font)
+            t.setDefaultTextColor(Qt.black)
+            br = t.boundingRect()
+            t.setPos(right_col_x, y + pm.height() / 2.0 - br.height() / 2.0)
+
+        y += pm.height() + gap_between_blots
+
+    # ---- lower legend ----
+    if legend and getattr(legend, "lower_rows", None):
+        y += 10.0
+        for row in legend.lower_rows:
+            y = _draw_legend_row(row, y)
+
     return scene
 
-
-def build_provenance_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
+def build_provenance_scene(
+    project: Project,
+    workspace_root: Path,
+    blot_id: str | None = None,
+    on_crop_commit=None,
+    show_grid: bool = False,
+) -> QGraphicsScene:
     """
     Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
     v0.1: uses the first blot in the project.
@@ -59,9 +373,32 @@ def build_provenance_scene(project: Project, workspace_root: Path) -> QGraphicsS
         scene.addText("No blots in this project.", font)
         return scene
 
-    blot = project.panel.blots[0]
+    blot = None
+    if blot_id:
+        for b in project.panel.blots:
+            if b.id == blot_id:
+                blot = b
+                break
+    if blot is None:
+        blot = project.panel.blots[0]
 
-    pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+    rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+
+    display = getattr(blot, "display", None)
+    black = int(getattr(display, "levels_black", 0))
+    white = int(getattr(display, "levels_white", 65535))
+    gamma = float(getattr(display, "levels_gamma", 1.0))
+    invert = bool(getattr(display, "invert", False))
+
+    pm = _load_rotated_display_pixmap(
+        workspace_root,
+        blot.asset_sha256,
+        rotation_deg,
+        black=black,
+        white=white,
+        gamma=gamma,
+        invert=invert,
+    )
     if pm.isNull():
         scene.addText(
             "Could not load blot image from workspace assets.\n"
@@ -75,26 +412,81 @@ def build_provenance_scene(project: Project, workspace_root: Path) -> QGraphicsS
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 
+    # Phase 1: rotate display only, do not modify pixels
+    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
+    #img_item.setRotation(rotation_deg)
+
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
     overlay_visible = getattr(getattr(blot, "display", None), "overlay_visible", True)
     overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
 
     if overlay_sha and overlay_visible:
-        ov = _load_original_pixmap(workspace_root, overlay_sha)
+        ov = _load_rotated_display_pixmap(
+            workspace_root,
+            overlay_sha,
+            rotation_deg,
+            black=black,
+            white=white,
+            gamma=gamma,
+            invert=invert,
+        )
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)
             ov_item.setOpacity(overlay_alpha)
             ov_item.setPos(x0, y0)
 
-    # Crop box overlay (assumes crop coords are in image pixel space)
-    c = blot.crop
-    crop_rect = QRectF(x0 + float(c.x), y0 + float(c.y), float(c.w), float(c.h))
-    scene.addRect(crop_rect)
+    # Optional grid overlay
+    if show_grid:
+        grid_step = 50.0
+        grid_pen = QPen(Qt.lightGray, 1, Qt.SolidLine)
+        grid_pen.setCosmetic(True)
 
-    # Footer label
-    label = getattr(getattr(blot, "protein_label", None), "text", "Blot")
-    footer = scene.addText(f"Provenance: {label}", font)
-    footer.setPos(x0, y0 + pm.height() + 10)
+        gx = x0
+        while gx <= x0 + pm.width():
+            scene.addLine(gx, y0, gx, y0 + pm.height(), grid_pen)
+            gx += grid_step
+
+        gy = y0
+        while gy <= y0 + pm.height():
+            scene.addLine(x0, gy, x0 + pm.width(), gy, grid_pen)
+            gy += grid_step
+            
+    # Crop box overlay (crop coords are in image pixel space)
+    c = blot.crop
+
+    def _apply_crop_from_scene_rect(scene_rect: QRectF) -> None:
+        # Convert scene coords -> image pixel coords
+        x = float(scene_rect.x() - x0)
+        y = float(scene_rect.y() - y0)
+        w = float(scene_rect.width())
+        h = float(scene_rect.height())
+
+        # Optional: clamp into image bounds (recommended)
+        if w < 1: w = 1
+        if h < 1: h = 1
+        if x < 0: x = 0
+        if y < 0: y = 0
+        if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
+        if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
+
+        blot.crop.x = x
+        blot.crop.y = y
+        blot.crop.w = w
+        blot.crop.h = h
+
+    crop_rect = QRectF(
+        x0 + float(c.x),
+        y0 + float(c.y),
+        float(c.w),
+        float(c.h)
+    )
+
+    rect_item = CropRectItem(
+        crop_rect,
+        on_change=_apply_crop_from_scene_rect,
+        on_commit=lambda r: ( _apply_crop_from_scene_rect(r), on_crop_commit(blot) ) if callable(on_crop_commit) else _apply_crop_from_scene_rect(r)
+    )
+    scene.addItem(rect_item)
 
     return scene

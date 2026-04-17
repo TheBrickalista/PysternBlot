@@ -11,6 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from .models import Project
 import datetime, uuid
+from PySide6.QtGui import QImage, QTransform
+from PySide6.QtCore import Qt
+
+from .image_utils import (
+    load_image_uint16,
+    apply_levels_uint16,
+    rotate_uint16,
+    crop_uint16,
+    save_uint16_tiff,
+)
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -27,10 +37,23 @@ class Workspace:
     def assets_dir(self) -> Path: return self.root / "assets"
     @property
     def projects_dir(self) -> Path: return self.root / "projects"
+    @property
+    def presets_dir(self) -> Path: return self.root / "presets"
 
     def ensure(self) -> None:
         self.assets_dir.mkdir(parents=True, exist_ok=True)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.presets_dir.mkdir(parents=True, exist_ok=True)
+
+        # Legend suggestions history (editable dropdown memory)
+        sugg = self.presets_dir / "legend_suggestions.json"
+        if not sugg.exists():
+            sugg.write_text('{"items":[]}\n', encoding="utf-8")
+
+        # Protein label suggestions history (editable dropdown memory)
+        protein_sugg = self.presets_dir / "protein_label_suggestions.json"
+        if not protein_sugg.exists():
+            protein_sugg.write_text('{"items":[]}\n', encoding="utf-8")
 
     def import_asset(self, src_path: str) -> tuple[str, Path]:
         self.ensure()
@@ -55,6 +78,71 @@ class Workspace:
     def load_project(self, project_json_path: str) -> Project:
         data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
         return Project.model_validate(data)
+    
+    def load_legend_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "legend_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            # unique + stable order
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_legend_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "legend_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+
+    def load_protein_label_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "protein_label_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_protein_label_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "protein_label_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
         
     def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
         """
@@ -85,6 +173,7 @@ class Workspace:
                     "protein_col_width_px": 120,
                     "gap_between_blots_px": 12,
                     "border_enabled": True,
+                    "border_width_px": 1,
                 },
                 "lane_layout": {
                     "mode": "manual_n_lanes",
@@ -98,6 +187,7 @@ class Workspace:
                 },
                 "blots": [],
                 "layout": {"stack_mode": "vertical_stack", "order": []},
+                "legend": {"mode": "protein", "upper_rows": [], "lower_rows": []},
             },
         }
 
@@ -106,3 +196,75 @@ class Workspace:
         path = proj_dir / "project.json"
         path.write_text(json.dumps(project_data, indent=2), encoding="utf-8")
         return path
+    
+    def asset_original_file(self, sha256: str) -> Path:
+        """
+        Return the stored original file path for an asset sha256.
+        We store as assets/<sha>/original.<ext>
+        """
+        d = self.assets_dir / sha256
+        if not d.exists():
+            raise FileNotFoundError(f"Asset folder not found: {d}")
+        # find original.*
+        matches = list(d.glob("original.*"))
+        if not matches:
+            raise FileNotFoundError(f"No original.* found in {d}")
+        return matches[0]
+
+    def generate_crop_preview_tiff(self, sha256: str, crop: dict) -> Path:
+        """
+        Generate (or overwrite) a 16-bit preview_crop.tif for this asset sha256
+        using the crop rectangle (absolute pixel coords).
+        """
+        self.ensure()
+        original_path = self.asset_original_file(sha256)
+
+        img = load_image_uint16(original_path)
+
+        x = int(round(float(crop.get("x", 0))))
+        y = int(round(float(crop.get("y", 0))))
+        w = int(round(float(crop.get("w", img.shape[1]))))
+        h = int(round(float(crop.get("h", img.shape[0]))))
+
+        cropped = crop_uint16(img, x, y, w, h)
+
+        out_path = (self.assets_dir / sha256) / "preview_crop.tif"
+        save_uint16_tiff(cropped, out_path)
+        return out_path
+    
+    def ensure_blot_crop_preview(self, blot) -> Path:
+        """
+        Generate/update assets/<sha256>/preview_crop.tif from the blot settings.
+        Rotation is applied first, then crop is taken in rotated-image space.
+        All processing stays in 16-bit.
+        """
+        self.ensure()
+
+        original_path = self.asset_original_file(blot.asset_sha256)
+        img = load_image_uint16(original_path)
+
+        display = getattr(blot, "display", None)
+        black = int(getattr(display, "levels_black", 0))
+        white = int(getattr(display, "levels_white", 65535))
+        gamma = float(getattr(display, "levels_gamma", 1.0))
+        invert = bool(getattr(display, "invert", False))
+
+        img = apply_levels_uint16(img, black, white, gamma, invert)
+
+        rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
+        img = rotate_uint16(img, rotation_deg)
+
+        c = blot.crop
+        x = int(round(float(c.x)))
+        y = int(round(float(c.y)))
+        w = int(round(float(c.w)))
+        h = int(round(float(c.h)))
+
+        cropped = crop_uint16(img, x, y, w, h)
+
+        out_path = (self.assets_dir / blot.asset_sha256) / "preview_crop.tif"
+        save_uint16_tiff(cropped, out_path)
+
+        return out_path
+    
+    

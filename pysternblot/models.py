@@ -69,6 +69,23 @@ class DisplaySettings(BaseModel):
     auto_contrast: bool = True
     overlay_alpha: float = 0.35
     overlay_visible: bool = True
+    rotation_deg: float = 0.0
+
+    levels_black: int = 0      # 0..65535
+    levels_white: int = 65535  # 0..65535
+    levels_gamma: float = 1.0
+
+class LegendRow(BaseModel):
+    left: str = ""
+    cells: List[str] = Field(default_factory=list)
+    right: str = ""
+    underline: bool = False   
+    font_size_pt: float | None = None # <- NEW
+
+class LegendSettings(BaseModel):
+    mode: Literal["protein", "dna"] = "protein"
+    upper_rows: List[LegendRow] = Field(default_factory=list)
+    lower_rows: List[LegendRow] = Field(default_factory=list)
 
 class Blot(BaseModel):
     id: str
@@ -87,6 +104,7 @@ class Style(BaseModel):
     protein_col_width_px: int = 90
     gap_between_blots_px: int = 10
     border_enabled: bool = True
+    border_width_px: int = 1
 
 class Layout(BaseModel):
     stack_mode: Literal["vertical_stack"] = "vertical_stack"
@@ -102,6 +120,7 @@ class Panel(BaseModel):
     lane_layout: LaneLayout
     blots: List[Blot]
     layout: Layout
+    legend: LegendSettings = Field(default_factory=LegendSettings)
 
 class AssetEntry(BaseModel):
     sha256: str
@@ -122,3 +141,5 @@ class Project(BaseModel):
     assets: Dict[str, AssetEntry] = {}
     marker_sets: List[dict] = []
     panel: Panel
+
+

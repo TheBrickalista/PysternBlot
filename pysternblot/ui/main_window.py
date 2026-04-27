@@ -151,6 +151,14 @@ class MainWindow(QMainWindow):
         self.protein_label_combo.activated.connect(self._on_protein_label_changed)
         prov_top.addWidget(self.protein_label_combo)
 
+        prov_top.addWidget(QLabel("Size"))
+
+        self.protein_font_size_spin = QSpinBox()
+        self.protein_font_size_spin.setRange(4, 48)
+        self.protein_font_size_spin.setValue(9)
+        self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
+        prov_top.addWidget(self.protein_font_size_spin)
+
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
@@ -471,7 +479,7 @@ class MainWindow(QMainWindow):
                     ],
                     "show_ticks": True
                 },
-                "protein_label": {"text": "Protein", "align": "center"},
+                "protein_label": {"text": "Protein", "align": "center", "font_size_pt": None,},
                 "display": {
                     "invert": True,
                     "gamma": 1.0,
@@ -634,6 +642,14 @@ class MainWindow(QMainWindow):
         self.protein_label_combo.setEditText(protein_text)
 
         self.protein_label_combo.blockSignals(False)
+
+        protein_font_size = getattr(getattr(blot, "protein_label", None), "font_size_pt", None)
+        if protein_font_size is None:
+            protein_font_size = getattr(self.current_project.panel.style, "font_size_pt", 9)
+
+        self.protein_font_size_spin.blockSignals(True)
+        self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
+        self.protein_font_size_spin.blockSignals(False)
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1027,6 +1043,16 @@ class MainWindow(QMainWindow):
         blot.protein_label.text = text
 
         self._add_protein_label_suggestion(text)
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_protein_font_size_changed(self, value: int):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        blot.protein_label.font_size_pt = float(value)
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()

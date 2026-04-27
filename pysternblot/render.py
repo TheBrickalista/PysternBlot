@@ -337,9 +337,17 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
         # Protein label on the right (vertically centered)
-        label = getattr(getattr(blot, "protein_label", None), "text", "")
+        protein_label = getattr(blot, "protein_label", None)
+        label = getattr(protein_label, "text", "")
+
         if label:
-            t = scene.addText(label, font)
+            protein_font_size = getattr(protein_label, "font_size_pt", None)
+            if protein_font_size is None:
+                protein_font_size = s.font_size_pt
+
+            protein_font = QFont(s.font_family, int(protein_font_size))
+
+            t = scene.addText(label, protein_font)
             t.setDefaultTextColor(Qt.black)
             br = t.boundingRect()
             t.setPos(right_col_x, y + pm.height() / 2.0 - br.height() / 2.0)

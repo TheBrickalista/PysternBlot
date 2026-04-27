@@ -77,10 +77,34 @@ class MainWindow(QMainWindow):
         # Final Result tab
         final = QWidget()
         final_l = QVBoxLayout(final)
+
+        final_top = QHBoxLayout()
+
+        self.border_cb = QCheckBox("Outline")
+        self.border_cb.toggled.connect(self._on_border_toggled)
+        final_top.addWidget(self.border_cb)
+
+        final_top.addWidget(QLabel("Width"))
+
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(1, 10)
+        self.border_width_spin.setValue(1)
+        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
+        final_top.addWidget(self.border_width_spin)
+
+        self.final_refresh_btn = QPushButton("Refresh")
+        self.final_refresh_btn.clicked.connect(self.refresh_previews)
+        final_top.addWidget(self.final_refresh_btn)
+
+        final_top.addStretch(1)
+
+        final_l.addLayout(final_top)
+
         self.view = QGraphicsView()
         final_l.addWidget(self.view)
-        self.tabs.addTab(final, "Final Result")
 
+        self.tabs.addTab(final, "Final Result")
+        
         # Provenance tab
         prov = QWidget()
         prov_l = QVBoxLayout(prov)
@@ -126,6 +150,14 @@ class MainWindow(QMainWindow):
         self.protein_label_combo.lineEdit().editingFinished.connect(self._on_protein_label_changed)
         self.protein_label_combo.activated.connect(self._on_protein_label_changed)
         prov_top.addWidget(self.protein_label_combo)
+
+        prov_top.addWidget(QLabel("Size"))
+
+        self.protein_font_size_spin = QSpinBox()
+        self.protein_font_size_spin.setRange(4, 48)
+        self.protein_font_size_spin.setValue(9)
+        self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
+        prov_top.addWidget(self.protein_font_size_spin)
 
         prov_top.addStretch(1)
 
@@ -373,24 +405,6 @@ class MainWindow(QMainWindow):
         tb.addAction(a_import_mem)
 
 
-        tb.addSeparator()
-
-        self.border_cb = QCheckBox("Outline")
-        self.border_cb.toggled.connect(self._on_border_toggled)
-        tb.addWidget(self.border_cb)
-
-        tb.addWidget(QLabel("Width"))
-        self.border_width_spin = QSpinBox()
-        self.border_width_spin.setRange(1, 10)
-        self.border_width_spin.setValue(1)
-        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
-        tb.addWidget(self.border_width_spin)
-
-        tb.addSeparator()
-
-        a_refresh = QAction("Refresh", self)
-        a_refresh.triggered.connect(self.refresh_previews)
-        tb.addAction(a_refresh)
 
     def open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open project.json", "", "JSON (*.json)")
@@ -465,7 +479,7 @@ class MainWindow(QMainWindow):
                     ],
                     "show_ticks": True
                 },
-                "protein_label": {"text": "Protein", "align": "center"},
+                "protein_label": {"text": "Protein", "align": "center", "font_size_pt": None,},
                 "display": {
                     "invert": True,
                     "gamma": 1.0,
@@ -628,6 +642,14 @@ class MainWindow(QMainWindow):
         self.protein_label_combo.setEditText(protein_text)
 
         self.protein_label_combo.blockSignals(False)
+
+        protein_font_size = getattr(getattr(blot, "protein_label", None), "font_size_pt", None)
+        if protein_font_size is None:
+            protein_font_size = getattr(self.current_project.panel.style, "font_size_pt", 9)
+
+        self.protein_font_size_spin.blockSignals(True)
+        self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
+        self.protein_font_size_spin.blockSignals(False)
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1021,6 +1043,16 @@ class MainWindow(QMainWindow):
         blot.protein_label.text = text
 
         self._add_protein_label_suggestion(text)
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_protein_font_size_changed(self, value: int):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        blot.protein_label.font_size_pt = float(value)
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()

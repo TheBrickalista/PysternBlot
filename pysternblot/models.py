@@ -62,6 +62,7 @@ class Ladder(BaseModel):
 class ProteinLabel(BaseModel):
     text: str
     align: Literal["center"] = "center"
+    font_size_pt: float | None = None
 
 class DisplaySettings(BaseModel):
     invert: bool = False

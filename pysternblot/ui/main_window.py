@@ -77,10 +77,34 @@ class MainWindow(QMainWindow):
         # Final Result tab
         final = QWidget()
         final_l = QVBoxLayout(final)
+
+        final_top = QHBoxLayout()
+
+        self.border_cb = QCheckBox("Outline")
+        self.border_cb.toggled.connect(self._on_border_toggled)
+        final_top.addWidget(self.border_cb)
+
+        final_top.addWidget(QLabel("Width"))
+
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(1, 10)
+        self.border_width_spin.setValue(1)
+        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
+        final_top.addWidget(self.border_width_spin)
+
+        self.final_refresh_btn = QPushButton("Refresh")
+        self.final_refresh_btn.clicked.connect(self.refresh_previews)
+        final_top.addWidget(self.final_refresh_btn)
+
+        final_top.addStretch(1)
+
+        final_l.addLayout(final_top)
+
         self.view = QGraphicsView()
         final_l.addWidget(self.view)
-        self.tabs.addTab(final, "Final Result")
 
+        self.tabs.addTab(final, "Final Result")
+        
         # Provenance tab
         prov = QWidget()
         prov_l = QVBoxLayout(prov)
@@ -373,24 +397,6 @@ class MainWindow(QMainWindow):
         tb.addAction(a_import_mem)
 
 
-        tb.addSeparator()
-
-        self.border_cb = QCheckBox("Outline")
-        self.border_cb.toggled.connect(self._on_border_toggled)
-        tb.addWidget(self.border_cb)
-
-        tb.addWidget(QLabel("Width"))
-        self.border_width_spin = QSpinBox()
-        self.border_width_spin.setRange(1, 10)
-        self.border_width_spin.setValue(1)
-        self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
-        tb.addWidget(self.border_width_spin)
-
-        tb.addSeparator()
-
-        a_refresh = QAction("Refresh", self)
-        a_refresh.triggered.connect(self.refresh_previews)
-        tb.addAction(a_refresh)
 
     def open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open project.json", "", "JSON (*.json)")

@@ -15,12 +15,14 @@ from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
 
 from pathlib import Path
+import uuid
 
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..models import Blot, AssetEntry
+from ..models import Blot, AssetEntry, MarkerSet, MarkerBand, MarkerSetLibrary
 from .legend_tab import LegendTab
+
 
 class MainWindow(QMainWindow):
     def __init__(self, workspace: Workspace):
@@ -71,6 +73,77 @@ class MainWindow(QMainWindow):
         self.library_table.cellDoubleClicked.connect(self._open_project_from_library)
 
         lib_l.addWidget(self.library_table)
+
+                # --- Protein ladder presets ---
+        ladder_frame = QFrame()
+        ladder_frame.setFrameShape(QFrame.StyledPanel)
+        ladder_frame.setStyleSheet("""
+            QFrame {
+                background: #f7f7f7;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+
+        ladder_l = QVBoxLayout(ladder_frame)
+        ladder_l.setContentsMargins(10, 10, 10, 10)
+        ladder_l.setSpacing(8)
+
+        ladder_title = QLabel("Protein ladder presets")
+        ladder_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        ladder_l.addWidget(ladder_title)
+
+        ladder_top = QHBoxLayout()
+
+        ladder_top.addWidget(QLabel("Preset"))
+
+        self.marker_set_combo = QComboBox()
+        self.marker_set_combo.setMinimumWidth(260)
+        self.marker_set_combo.currentIndexChanged.connect(self._on_marker_set_selected)
+        ladder_top.addWidget(self.marker_set_combo)
+
+        self.marker_set_new_btn = QPushButton("New")
+        self.marker_set_new_btn.clicked.connect(self._new_marker_set)
+        ladder_top.addWidget(self.marker_set_new_btn)
+
+        self.marker_set_duplicate_btn = QPushButton("Duplicate")
+        self.marker_set_duplicate_btn.clicked.connect(self._duplicate_marker_set)
+        ladder_top.addWidget(self.marker_set_duplicate_btn)
+
+        self.marker_set_delete_btn = QPushButton("Delete")
+        self.marker_set_delete_btn.clicked.connect(self._delete_marker_set)
+        ladder_top.addWidget(self.marker_set_delete_btn)
+
+        self.marker_set_save_btn = QPushButton("Save")
+        self.marker_set_save_btn.clicked.connect(self._save_marker_set_from_ui)
+        ladder_top.addWidget(self.marker_set_save_btn)
+
+        ladder_top.addStretch(1)
+
+        ladder_l.addLayout(ladder_top)
+
+        self.marker_set_table = QTableWidget()
+        self.marker_set_table.setColumnCount(4)
+        self.marker_set_table.setHorizontalHeaderLabels([
+            "kDa", "Label", "Visible", "Highlight"
+        ])
+        self.marker_set_table.setAlternatingRowColors(True)
+        ladder_l.addWidget(self.marker_set_table)
+
+        ladder_buttons = QHBoxLayout()
+
+        self.marker_band_add_btn = QPushButton("Add band")
+        self.marker_band_add_btn.clicked.connect(self._add_marker_band_row)
+        ladder_buttons.addWidget(self.marker_band_add_btn)
+
+        self.marker_band_remove_btn = QPushButton("Remove selected band")
+        self.marker_band_remove_btn.clicked.connect(self._remove_selected_marker_band_row)
+        ladder_buttons.addWidget(self.marker_band_remove_btn)
+
+        ladder_buttons.addStretch(1)
+        ladder_l.addLayout(ladder_buttons)
+
+        lib_l.addWidget(ladder_frame)
 
         self.tabs.addTab(lib, "Library")
 
@@ -291,6 +364,8 @@ class MainWindow(QMainWindow):
         self._toolbar()
 
         self.refresh_library()
+
+        self.refresh_marker_sets()
 
     def _build_home_tab(self) -> QWidget:
         home = QWidget()
@@ -1011,6 +1086,208 @@ class MainWindow(QMainWindow):
 
         self.library_table.resizeColumnsToContents()
         self.library_table.setColumnWidth(5, 360)  # path column
+
+    def refresh_marker_sets(self):
+        self.marker_set_combo.blockSignals(True)
+        self.marker_set_combo.clear()
+
+        self.marker_set_library = self.workspace.load_marker_sets()
+
+        for marker_set in self.marker_set_library.items:
+            self.marker_set_combo.addItem(marker_set.name, marker_set.id)
+
+        self.marker_set_combo.blockSignals(False)
+
+        if self.marker_set_combo.count() > 0:
+            self.marker_set_combo.setCurrentIndex(0)
+            self._populate_marker_set_table(self.marker_set_library.items[0])
+        else:
+            self.marker_set_table.setRowCount(0)
+
+    def _get_selected_marker_set(self):
+        marker_set_id = self.marker_set_combo.currentData()
+        if not marker_set_id:
+            return None
+
+        for marker_set in self.marker_set_library.items:
+            if marker_set.id == marker_set_id:
+                return marker_set
+
+        return None
+
+    def _on_marker_set_selected(self, _idx: int):
+        marker_set = self._get_selected_marker_set()
+        if marker_set is None:
+            self.marker_set_table.setRowCount(0)
+            return
+
+        self._populate_marker_set_table(marker_set)
+
+    def _populate_marker_set_table(self, marker_set: MarkerSet):
+        self.marker_set_table.blockSignals(True)
+        self.marker_set_table.setRowCount(len(marker_set.bands))
+
+        for row, band in enumerate(marker_set.bands):
+            self.marker_set_table.setItem(row, 0, QTableWidgetItem(str(band.kda)))
+            self.marker_set_table.setItem(row, 1, QTableWidgetItem(str(band.label or "")))
+
+            visible_item = QTableWidgetItem()
+            visible_item.setFlags(visible_item.flags() | Qt.ItemIsUserCheckable)
+            visible_item.setCheckState(Qt.Checked if band.visible else Qt.Unchecked)
+            self.marker_set_table.setItem(row, 2, visible_item)
+
+            highlight_item = QTableWidgetItem()
+            highlight_item.setFlags(highlight_item.flags() | Qt.ItemIsUserCheckable)
+            highlight_item.setCheckState(Qt.Checked if band.highlight else Qt.Unchecked)
+            self.marker_set_table.setItem(row, 3, highlight_item)
+
+        self.marker_set_table.blockSignals(False)
+        self.marker_set_table.resizeColumnsToContents()
+
+    def _marker_set_from_table(self, existing: MarkerSet) -> MarkerSet:
+        bands = []
+
+        for row in range(self.marker_set_table.rowCount()):
+            kda_item = self.marker_set_table.item(row, 0)
+            label_item = self.marker_set_table.item(row, 1)
+            visible_item = self.marker_set_table.item(row, 2)
+            highlight_item = self.marker_set_table.item(row, 3)
+
+            if kda_item is None:
+                continue
+
+            txt = kda_item.text().strip()
+            if not txt:
+                continue
+
+            kda = float(txt)
+            label = label_item.text().strip() if label_item else ""
+
+            bands.append(
+                MarkerBand(
+                    kda=kda,
+                    label=label or None,
+                    visible=visible_item.checkState() == Qt.Checked if visible_item else True,
+                    highlight=highlight_item.checkState() == Qt.Checked if highlight_item else False,
+                )
+            )
+
+        bands.sort(key=lambda b: b.kda, reverse=True)
+
+        return MarkerSet(
+            id=existing.id,
+            name=existing.name,
+            unit=existing.unit,
+            bands=bands,
+        )
+
+    def _save_marker_set_from_ui(self):
+        marker_set = self._get_selected_marker_set()
+        if marker_set is None:
+            return
+
+        try:
+            updated = self._marker_set_from_table(marker_set)
+        except Exception as e:
+            QMessageBox.critical(self, "Invalid ladder preset", str(e))
+            return
+
+        for i, item in enumerate(self.marker_set_library.items):
+            if item.id == updated.id:
+                self.marker_set_library.items[i] = updated
+                break
+
+        self.workspace.save_marker_sets(self.marker_set_library)
+        self.refresh_marker_sets()
+
+    def _new_marker_set(self):
+        name, ok = QInputDialog.getText(self, "New protein ladder", "Preset name:")
+        if not ok or not name.strip():
+            return
+
+        new_set = MarkerSet(
+            id=f"marker_set_{uuid.uuid4().hex[:8]}",
+            name=name.strip(),
+            unit="kDa",
+            bands=[]
+        )
+
+        self.marker_set_library.items.append(new_set)
+        self.workspace.save_marker_sets(self.marker_set_library)
+        self.refresh_marker_sets()
+
+        idx = self.marker_set_combo.findData(new_set.id)
+        if idx >= 0:
+            self.marker_set_combo.setCurrentIndex(idx)
+
+    def _duplicate_marker_set(self):
+        marker_set = self._get_selected_marker_set()
+        if marker_set is None:
+            return
+
+        new_set = marker_set.model_copy(deep=True)
+        new_set.id = f"marker_set_{uuid.uuid4().hex[:8]}"
+        new_set.name = f"{marker_set.name} copy"
+
+        self.marker_set_library.items.append(new_set)
+        self.workspace.save_marker_sets(self.marker_set_library)
+        self.refresh_marker_sets()
+
+        idx = self.marker_set_combo.findData(new_set.id)
+        if idx >= 0:
+            self.marker_set_combo.setCurrentIndex(idx)
+
+    def _delete_marker_set(self):
+        marker_set = self._get_selected_marker_set()
+        if marker_set is None:
+            return
+
+        if len(self.marker_set_library.items) <= 1:
+            QMessageBox.information(
+                self,
+                "Cannot delete",
+                "Keep at least one protein ladder preset."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete protein ladder preset",
+            f"Delete '{marker_set.name}'?"
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        self.marker_set_library.items = [
+            item for item in self.marker_set_library.items
+            if item.id != marker_set.id
+        ]
+
+        self.workspace.save_marker_sets(self.marker_set_library)
+        self.refresh_marker_sets()
+
+    def _add_marker_band_row(self):
+        row = self.marker_set_table.rowCount()
+        self.marker_set_table.insertRow(row)
+
+        self.marker_set_table.setItem(row, 0, QTableWidgetItem(""))
+        self.marker_set_table.setItem(row, 1, QTableWidgetItem(""))
+
+        visible_item = QTableWidgetItem()
+        visible_item.setFlags(visible_item.flags() | Qt.ItemIsUserCheckable)
+        visible_item.setCheckState(Qt.Checked)
+        self.marker_set_table.setItem(row, 2, visible_item)
+
+        highlight_item = QTableWidgetItem()
+        highlight_item.setFlags(highlight_item.flags() | Qt.ItemIsUserCheckable)
+        highlight_item.setCheckState(Qt.Unchecked)
+        self.marker_set_table.setItem(row, 3, highlight_item)
+
+    def _remove_selected_marker_band_row(self):
+        row = self.marker_set_table.currentRow()
+        if row >= 0:
+            self.marker_set_table.removeRow(row)
 
     def _open_project_from_library(self, row: int, _column: int):
         item = self.library_table.item(row, 5)  # path column

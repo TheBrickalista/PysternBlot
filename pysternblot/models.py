@@ -52,6 +52,23 @@ class LadderFit(BaseModel):
     b: float
     model: Literal["y=a*log10(kDa)+b"] = "y=a*log10(kDa)+b"
 
+class MarkerBand(BaseModel):
+    kda: float = Field(gt=0)
+    label: Optional[str] = None
+    visible: bool = True
+    highlight: bool = False
+
+
+class MarkerSet(BaseModel):
+    id: str
+    name: str
+    unit: str = "kDa"
+    bands: List[MarkerBand] = Field(default_factory=list)
+
+
+class MarkerSetLibrary(BaseModel):
+    items: List[MarkerSet] = Field(default_factory=list)
+
 class Ladder(BaseModel):
     lane_index: int = Field(ge=0)
     marker_set_id: str
@@ -140,7 +157,7 @@ class ProjectMeta(BaseModel):
 class Project(BaseModel):
     project: ProjectMeta
     assets: Dict[str, AssetEntry] = {}
-    marker_sets: List[dict] = []
+    marker_sets: List[MarkerSet] = Field(default_factory=list)
     panel: Panel
 
 

@@ -252,7 +252,7 @@ class Workspace:
         img = apply_levels_uint16(img, black, white, gamma, invert)
 
         rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
-        img = rotate_uint16(img, rotation_deg)
+        img = rotate_uint16(img, rotation_deg, expand=False)
 
         c = blot.crop
         x = int(round(float(c.x)))
@@ -262,7 +262,7 @@ class Workspace:
 
         cropped = crop_uint16(img, x, y, w, h)
 
-        out_path = (self.assets_dir / blot.asset_sha256) / "preview_crop.tif"
+        out_path = (self.assets_dir / blot.asset_sha256) / f"preview_crop_{blot.id}.tif"
         save_uint16_tiff(cropped, out_path)
 
         return out_path

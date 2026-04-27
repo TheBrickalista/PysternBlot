@@ -20,7 +20,11 @@ import uuid
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..models import Blot, AssetEntry, MarkerSet, MarkerBand, MarkerSetLibrary
+from ..models import (
+    Blot, AssetEntry,
+    MarkerSet, MarkerBand, MarkerSetLibrary,
+    OverlayLadder, LadderBandAssignment,
+)
 from .legend_tab import LegendTab
 
 
@@ -351,6 +355,66 @@ class MainWindow(QMainWindow):
 
         prov_l.addWidget(display_frame)
 
+        # --- Overlay ladder annotation ---
+        overlay_ladder_frame = QFrame()
+        overlay_ladder_frame.setFrameShape(QFrame.StyledPanel)
+        overlay_ladder_frame.setStyleSheet("""
+            QFrame {
+                background: #f4f4f4;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+
+        overlay_ladder_l = QVBoxLayout(overlay_ladder_frame)
+        overlay_ladder_l.setContentsMargins(10, 8, 10, 10)
+        overlay_ladder_l.setSpacing(8)
+
+        overlay_ladder_title = QLabel("Overlay ladder annotation")
+        overlay_ladder_title.setStyleSheet("font-weight: 600; color: #333333;")
+        overlay_ladder_l.addWidget(overlay_ladder_title)
+
+        overlay_ladder_top = QHBoxLayout()
+        overlay_ladder_top.addWidget(QLabel("Preset"))
+
+        self.overlay_ladder_combo = QComboBox()
+        self.overlay_ladder_combo.setMinimumWidth(260)
+        overlay_ladder_top.addWidget(self.overlay_ladder_combo)
+
+        self.overlay_ladder_show_labels_cb = QCheckBox("Show labels")
+        self.overlay_ladder_show_labels_cb.setChecked(True)
+        overlay_ladder_top.addWidget(self.overlay_ladder_show_labels_cb)
+
+        self.overlay_ladder_only_highlight_cb = QCheckBox("Only highlighted")
+        overlay_ladder_top.addWidget(self.overlay_ladder_only_highlight_cb)
+
+        overlay_ladder_top.addStretch(1)
+        overlay_ladder_l.addLayout(overlay_ladder_top)
+
+        self.overlay_ladder_table = QTableWidget()
+        self.overlay_ladder_table.setColumnCount(2)
+        self.overlay_ladder_table.setHorizontalHeaderLabels(["y px", "kDa"])
+        self.overlay_ladder_table.setAlternatingRowColors(True)
+        overlay_ladder_l.addWidget(self.overlay_ladder_table)
+
+        overlay_ladder_buttons = QHBoxLayout()
+
+        self.overlay_ladder_add_btn = QPushButton("Add assignment")
+        self.overlay_ladder_add_btn.clicked.connect(self._add_overlay_ladder_assignment)
+        overlay_ladder_buttons.addWidget(self.overlay_ladder_add_btn)
+
+        self.overlay_ladder_remove_btn = QPushButton("Remove selected")
+        self.overlay_ladder_remove_btn.clicked.connect(self._remove_overlay_ladder_assignment)
+        overlay_ladder_buttons.addWidget(self.overlay_ladder_remove_btn)
+
+        self.overlay_ladder_save_btn = QPushButton("Save ladder")
+        self.overlay_ladder_save_btn.clicked.connect(self._save_overlay_ladder_assignment)
+        overlay_ladder_buttons.addWidget(self.overlay_ladder_save_btn)
+
+        overlay_ladder_buttons.addStretch(1)
+        overlay_ladder_l.addLayout(overlay_ladder_buttons)
+
+        prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = QGraphicsView()
         prov_l.addWidget(self.prov_view)
 
@@ -490,6 +554,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
@@ -505,6 +570,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
         except Exception as e:
@@ -725,6 +791,8 @@ class MainWindow(QMainWindow):
         self.protein_font_size_spin.blockSignals(True)
         self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
         self.protein_font_size_spin.blockSignals(False)
+
+        self._refresh_overlay_ladder_ui()
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1096,6 +1164,15 @@ class MainWindow(QMainWindow):
         for marker_set in self.marker_set_library.items:
             self.marker_set_combo.addItem(marker_set.name, marker_set.id)
 
+        if hasattr(self, "overlay_ladder_combo"):
+            self.overlay_ladder_combo.blockSignals(True)
+            self.overlay_ladder_combo.clear()
+
+            for marker_set in self.marker_set_library.items:
+                self.overlay_ladder_combo.addItem(marker_set.name, marker_set.id)
+
+            self.overlay_ladder_combo.blockSignals(False)
+
         self.marker_set_combo.blockSignals(False)
 
         if self.marker_set_combo.count() > 0:
@@ -1288,6 +1365,95 @@ class MainWindow(QMainWindow):
         row = self.marker_set_table.currentRow()
         if row >= 0:
             self.marker_set_table.removeRow(row)
+
+    def _refresh_overlay_ladder_ui(self):
+        blot = self._get_active_blot()
+        if blot is None or not hasattr(self, "overlay_ladder_table"):
+            return
+
+        self.overlay_ladder_table.setRowCount(0)
+
+        if getattr(blot, "overlay_ladder", None) is None:
+            self.overlay_ladder_show_labels_cb.setChecked(True)
+            self.overlay_ladder_only_highlight_cb.setChecked(False)
+            return
+
+        ladder = blot.overlay_ladder
+
+        idx = self.overlay_ladder_combo.findData(ladder.marker_set_id)
+        if idx >= 0:
+            self.overlay_ladder_combo.setCurrentIndex(idx)
+
+        self.overlay_ladder_show_labels_cb.setChecked(bool(ladder.show_labels))
+        self.overlay_ladder_only_highlight_cb.setChecked(bool(ladder.show_only_highlighted))
+
+        self.overlay_ladder_table.setRowCount(len(ladder.bands))
+
+        for row, assignment in enumerate(ladder.bands):
+            self.overlay_ladder_table.setItem(row, 0, QTableWidgetItem(str(assignment.y_px)))
+            self.overlay_ladder_table.setItem(row, 1, QTableWidgetItem(str(assignment.kda)))
+
+        self.overlay_ladder_table.resizeColumnsToContents()
+
+    def _add_overlay_ladder_assignment(self):
+        row = self.overlay_ladder_table.rowCount()
+        self.overlay_ladder_table.insertRow(row)
+        self.overlay_ladder_table.setItem(row, 0, QTableWidgetItem(""))
+        self.overlay_ladder_table.setItem(row, 1, QTableWidgetItem(""))
+
+    def _remove_overlay_ladder_assignment(self):
+        row = self.overlay_ladder_table.currentRow()
+        if row >= 0:
+            self.overlay_ladder_table.removeRow(row)
+
+    def _save_overlay_ladder_assignment(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        if not marker_set_id:
+            QMessageBox.warning(self, "No ladder preset", "Please select a ladder preset.")
+            return
+
+        assignments = []
+
+        try:
+            for row in range(self.overlay_ladder_table.rowCount()):
+                y_item = self.overlay_ladder_table.item(row, 0)
+                kda_item = self.overlay_ladder_table.item(row, 1)
+
+                if y_item is None or kda_item is None:
+                    continue
+
+                y_txt = y_item.text().strip()
+                kda_txt = kda_item.text().strip()
+
+                if not y_txt or not kda_txt:
+                    continue
+
+                assignments.append(
+                    LadderBandAssignment(
+                        y_px=float(y_txt),
+                        kda=float(kda_txt),
+                    )
+                )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Invalid ladder assignment", str(e))
+            return
+
+        assignments.sort(key=lambda a: a.y_px)
+
+        blot.overlay_ladder = OverlayLadder(
+            marker_set_id=marker_set_id,
+            bands=assignments,
+            show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
+            show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
 
     def _open_project_from_library(self, row: int, _column: int):
         item = self.library_table.item(row, 5)  # path column

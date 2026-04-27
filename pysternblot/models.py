@@ -113,6 +113,7 @@ class Blot(BaseModel):
     ladder: Ladder
     protein_label: ProteinLabel
     display: DisplaySettings = DisplaySettings()
+    overlay_ladder: Optional[OverlayLadder] = None
 
 class Style(BaseModel):
     font_family: str = "Arial"
@@ -160,4 +161,15 @@ class Project(BaseModel):
     marker_sets: List[MarkerSet] = Field(default_factory=list)
     panel: Panel
 
+class LadderBandAssignment(BaseModel):
+    y_px: float
+    kda: float
+
+
+class OverlayLadder(BaseModel):
+    marker_set_id: str
+    bands: List[LadderBandAssignment] = Field(default_factory=list)
+    side: Literal["left", "right"] = "left"
+    show_labels: bool = True
+    show_only_highlighted: bool = False
 

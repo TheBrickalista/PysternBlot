@@ -65,16 +65,16 @@ def _load_rotated_display_pixmap(
     try:
         img = load_image_uint16(original_path)
         img = apply_levels_uint16(img, black, white, gamma, invert)
-        img = rotate_uint16(img, rotation_deg)
+        img = rotate_uint16(img, rotation_deg, expand=False)
         return uint16_to_qpixmap(img)
     except Exception:
         return QPixmap()
 
-def _load_preview_crop_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
+def _load_preview_crop_pixmap(workspace_root: Path, sha256: str, blot_id: str) -> QPixmap:
     """
     Loads assets/<sha256>/preview_crop.tif as true 16-bit grayscale.
     """
-    p = workspace_root / "assets" / sha256 / "preview_crop.tif"
+    p = workspace_root / "assets" / sha256 / f"preview_crop_{blot_id}.tif"
     if not p.exists():
         return QPixmap()
 
@@ -120,7 +120,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
     for blot in blots:
-        pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256)
+        pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256, blot.id)
         if pm.isNull():
             pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
         pixmaps.append(pm)

@@ -76,12 +76,27 @@ def apply_levels_uint16(
     return np.ascontiguousarray(out)
 
 
-def rotate_uint16(img: np.ndarray, rotation_deg: float) -> np.ndarray:
+def rotate_uint16(
+    img: np.ndarray,
+    rotation_deg: float,
+    expand: bool = False,
+) -> np.ndarray:
     """
     Rotate a uint16 grayscale image while preserving high bit depth.
 
     Uses Pillow in 32-bit integer mode ("I") for the transform, then clips
     back to uint16. No 8-bit conversion is involved.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        2D uint16 grayscale image.
+    rotation_deg : float
+        Rotation angle in degrees.
+    expand : bool
+        If True, Pillow expands the output canvas to contain the whole rotated
+        image. If False, the output canvas keeps the original width/height and
+        overflowing corners are clipped.
     """
     if img.dtype != np.uint16:
         raise TypeError(f"Expected uint16 image, got {img.dtype}")
@@ -89,13 +104,12 @@ def rotate_uint16(img: np.ndarray, rotation_deg: float) -> np.ndarray:
     if abs(float(rotation_deg)) < 1e-6:
         return np.ascontiguousarray(img)
 
-    # Promote to Pillow's 32-bit integer mode for safer geometric transforms
     pil = Image.fromarray(img.astype(np.int32), mode="I")
 
     rotated = pil.rotate(
         float(rotation_deg),
         resample=Image.Resampling.BICUBIC,
-        expand=True,
+        expand=bool(expand),
         fillcolor=0,
     )
 

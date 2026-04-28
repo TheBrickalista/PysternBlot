@@ -497,4 +497,59 @@ def build_provenance_scene(
     )
     scene.addItem(rect_item)
 
+    # --- Overlay ladder annotations ---
+    ladder = getattr(blot, "overlay_ladder", None)
+
+    if ladder is not None and getattr(ladder, "bands", None):
+        marker_library = getattr(project, "marker_sets", []) or []
+
+        marker_set = next(
+            (ms for ms in marker_library if ms.id == ladder.marker_set_id),
+            None
+        )
+
+        tick_pen = QPen(Qt.black)
+        tick_pen.setCosmetic(True)
+
+        highlight_pen = QPen(Qt.black)
+        highlight_pen.setWidth(3)
+        highlight_pen.setCosmetic(True)
+
+        label_font = QFont(s.font_family, int(s.font_size_pt))
+
+        # For now, draw on the left of the image.
+        tick_x0 = x0 - 45.0
+        tick_x1 = x0 - 10.0
+        label_x = x0 - 85.0
+
+        for assignment in ladder.bands:
+            y = y0 + float(assignment.y_px)
+            kda = float(assignment.kda)
+
+            preset_band = None
+            if marker_set is not None:
+                preset_band = next(
+                    (b for b in marker_set.bands if abs(float(b.kda) - kda) < 0.001),
+                    None
+                )
+
+            if bool(getattr(ladder, "show_only_highlighted", False)):
+                if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                    continue
+
+            is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
+            pen = highlight_pen if is_highlighted else tick_pen
+
+            scene.addLine(tick_x0, y, tick_x1, y, pen)
+
+            if bool(getattr(ladder, "show_labels", True)):
+                label = getattr(preset_band, "label", None) if preset_band else None
+                if not label:
+                    label = f"{kda:g}"
+
+                text_item = scene.addText(str(label), label_font)
+                text_item.setDefaultTextColor(Qt.black)
+                br = text_item.boundingRect()
+                text_item.setPos(label_x, y - br.height() / 2.0)
+
     return scene

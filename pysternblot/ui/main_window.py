@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QDialog
 )
 from PySide6.QtGui import QAction, QPixmap
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from pathlib import Path
 import uuid
@@ -35,6 +35,10 @@ class MainWindow(QMainWindow):
         self.current_project = None
         self.active_blot_id = None
         self.prov_grid_visible = False
+
+        self.pending_overlay_ladder_kda = None
+        self.overlay_ladder_dialog = None
+        self.overlay_ladder_assignment_table = None
 
         self.setWindowTitle("Pystern Blot")
         self.resize(1100, 700)
@@ -399,6 +403,7 @@ class MainWindow(QMainWindow):
 
         prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = QGraphicsView()
+        self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 
         self.tabs.addTab(prov, "Provenance")
@@ -1416,116 +1421,99 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No ladder preset", "Please select a ladder preset.")
             return
 
+        marker_set = None
+        for ms in self.marker_set_library.items:
+            if ms.id == marker_set_id:
+                marker_set = ms
+                break
+
+        if marker_set is None:
+            QMessageBox.warning(self, "Missing ladder preset", "Selected ladder preset was not found.")
+            return
+
+        if self.overlay_ladder_dialog is not None:
+            self.overlay_ladder_dialog.raise_()
+            self.overlay_ladder_dialog.activateWindow()
+            return
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Overlay ladder assignments")
-        dialog.resize(420, 520)
+        dialog.resize(620, 520)
+        dialog.setModal(False)
+
+        self.overlay_ladder_dialog = dialog
 
         root = QVBoxLayout(dialog)
 
-        title = QLabel("Assign overlay bands")
+        title = QLabel("Assign overlay ladder bands")
         title.setStyleSheet("font-size: 14px; font-weight: 600;")
         root.addWidget(title)
 
-        info = QLabel("Enter the y-position of each visible overlay ladder band and assign its kDa value.")
+        info = QLabel(
+            "Click Select next to a ladder band, then click the corresponding band "
+            "on the provenance image."
+        )
         info.setWordWrap(True)
         root.addWidget(info)
 
         table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(["y px", "kDa"])
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["kDa", "Label", "Highlight", "Assigned y px", "Action"])
         table.setAlternatingRowColors(True)
         root.addWidget(table)
 
-        existing_bands = []
-        if getattr(blot, "overlay_ladder", None) is not None:
-            existing_bands = list(blot.overlay_ladder.bands)
-
-        table.setRowCount(len(existing_bands))
-
-        for row, assignment in enumerate(existing_bands):
-            table.setItem(row, 0, QTableWidgetItem(str(assignment.y_px)))
-            table.setItem(row, 1, QTableWidgetItem(str(assignment.kda)))
-
-        table.resizeColumnsToContents()
+        self.overlay_ladder_assignment_table = table
 
         btns = QHBoxLayout()
 
-        add_btn = QPushButton("Add assignment")
-        btns.addWidget(add_btn)
+        clear_btn = QPushButton("Clear selected assignment")
+        btns.addWidget(clear_btn)
 
-        remove_btn = QPushButton("Remove selected")
-        btns.addWidget(remove_btn)
+        close_btn = QPushButton("Close")
+        btns.addWidget(close_btn)
 
         btns.addStretch(1)
-
-        save_btn = QPushButton("Save")
-        btns.addWidget(save_btn)
-
-        cancel_btn = QPushButton("Cancel")
-        btns.addWidget(cancel_btn)
-
         root.addLayout(btns)
 
-        def add_row():
-            row = table.rowCount()
-            table.insertRow(row)
-            table.setItem(row, 0, QTableWidgetItem(""))
-            table.setItem(row, 1, QTableWidgetItem(""))
-
-        def remove_row():
+        def clear_selected():
             row = table.currentRow()
-            if row >= 0:
-                table.removeRow(row)
-
-        def save_dialog():
-            assignments = []
-
-            try:
-                for row in range(table.rowCount()):
-                    y_item = table.item(row, 0)
-                    kda_item = table.item(row, 1)
-
-                    if y_item is None or kda_item is None:
-                        continue
-
-                    y_txt = y_item.text().strip()
-                    kda_txt = kda_item.text().strip()
-
-                    if not y_txt or not kda_txt:
-                        continue
-
-                    assignments.append(
-                        LadderBandAssignment(
-                            y_px=float(y_txt),
-                            kda=float(kda_txt),
-                        )
-                    )
-
-            except Exception as e:
-                QMessageBox.critical(dialog, "Invalid ladder assignment", str(e))
+            if row < 0:
                 return
 
-            assignments.sort(key=lambda a: a.y_px)
+            kda_item = table.item(row, 0)
+            if kda_item is None:
+                return
 
-            blot.overlay_ladder = OverlayLadder(
-                marker_set_id=marker_set_id,
-                bands=assignments,
-                show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
-                show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
-            )
+            kda = float(kda_item.text())
+
+            blot = self._get_active_blot()
+            if blot is None or getattr(blot, "overlay_ladder", None) is None:
+                return
+
+            blot.overlay_ladder.bands = [
+                b for b in blot.overlay_ladder.bands
+                if abs(float(b.kda) - kda) > 0.001
+            ]
 
             self.workspace.save_project(self.current_project)
             self.refresh_previews()
-            self._refresh_overlay_ladder_ui()
+            self._populate_overlay_ladder_assignment_table()
 
-            dialog.accept()
+        def close_dialog():
+            self.pending_overlay_ladder_kda = None
+            dialog.close()
 
-        add_btn.clicked.connect(add_row)
-        remove_btn.clicked.connect(remove_row)
-        save_btn.clicked.connect(save_dialog)
-        cancel_btn.clicked.connect(dialog.reject)
+        def on_destroyed():
+            self.pending_overlay_ladder_kda = None
+            self.overlay_ladder_dialog = None
+            self.overlay_ladder_assignment_table = None
 
-        dialog.exec()
+        clear_btn.clicked.connect(clear_selected)
+        close_btn.clicked.connect(close_dialog)
+        dialog.destroyed.connect(on_destroyed)
+
+        self._populate_overlay_ladder_assignment_table()
+        dialog.show()
 
     def _open_project_from_library(self, row: int, _column: int):
         item = self.library_table.item(row, 5)  # path column
@@ -1571,3 +1559,119 @@ class MainWindow(QMainWindow):
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+    
+    def eventFilter(self, obj, event):
+        if obj is self.prov_view.viewport() and event.type() == QEvent.MouseButtonPress:
+            if self.pending_overlay_ladder_kda is not None:
+                pos = event.position().toPoint()
+                scene_pos = self.prov_view.mapToScene(pos)
+
+                # In render.py provenance image starts at x0=10, y0=10
+                image_y = float(scene_pos.y() - 10.0)
+
+                self._assign_pending_overlay_ladder_band(image_y)
+                return True
+
+        return super().eventFilter(obj, event)
+    
+    def _assign_pending_overlay_ladder_band(self, image_y: float):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        kda = self.pending_overlay_ladder_kda
+        if kda is None:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        if not marker_set_id:
+            return
+
+        existing = []
+        if getattr(blot, "overlay_ladder", None) is not None:
+            existing = [
+                b for b in blot.overlay_ladder.bands
+                if abs(float(b.kda) - float(kda)) > 0.001
+            ]
+
+        existing.append(
+            LadderBandAssignment(
+                y_px=float(image_y),
+                kda=float(kda),
+            )
+        )
+
+        existing.sort(key=lambda b: b.y_px)
+
+        blot.overlay_ladder = OverlayLadder(
+            marker_set_id=marker_set_id,
+            bands=existing,
+            show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
+            show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        self.pending_overlay_ladder_kda = None
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+        self._refresh_overlay_ladder_ui()
+
+        if self.overlay_ladder_dialog is not None:
+            self._populate_overlay_ladder_assignment_table()
+
+    def _populate_overlay_ladder_assignment_table(self):
+        table = self.overlay_ladder_assignment_table
+        if table is None:
+            return
+
+        blot = self._get_active_blot()
+        if blot is None:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        marker_set = None
+
+        for ms in self.marker_set_library.items:
+            if ms.id == marker_set_id:
+                marker_set = ms
+                break
+
+        if marker_set is None:
+            table.setRowCount(0)
+            return
+
+        assigned_by_kda = {}
+        if getattr(blot, "overlay_ladder", None) is not None:
+            for assignment in blot.overlay_ladder.bands:
+                assigned_by_kda[float(assignment.kda)] = float(assignment.y_px)
+
+        table.setRowCount(len(marker_set.bands))
+
+        for row, band in enumerate(marker_set.bands):
+            kda = float(band.kda)
+
+            table.setItem(row, 0, QTableWidgetItem(f"{kda:g}"))
+            table.setItem(row, 1, QTableWidgetItem(str(band.label or "")))
+            table.setItem(row, 2, QTableWidgetItem("yes" if band.highlight else ""))
+            table.setItem(
+                row,
+                3,
+                QTableWidgetItem(
+                    f"{assigned_by_kda[kda]:.1f}" if kda in assigned_by_kda else "—"
+                )
+            )
+
+            btn = QPushButton("Select")
+            btn.clicked.connect(lambda _checked=False, value=kda: self._select_overlay_ladder_kda(value))
+            table.setCellWidget(row, 4, btn)
+
+        table.resizeColumnsToContents()
+
+    def _select_overlay_ladder_kda(self, kda: float):
+        self.pending_overlay_ladder_kda = float(kda)
+
+        QMessageBox.information(
+            self,
+            "Select band on image",
+            f"Now click the corresponding {kda:g} kDa band on the provenance image."
+        )

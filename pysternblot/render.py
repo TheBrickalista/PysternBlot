@@ -336,6 +336,75 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             pen.setCosmetic(True)
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
+        # --- MW marker annotations on final cropped panel ---
+        ladder = getattr(blot, "overlay_ladder", None)
+
+        if ladder is not None and getattr(ladder, "bands", None):
+            marker_library = getattr(project, "marker_sets", []) or []
+
+            marker_set = next(
+                (ms for ms in marker_library if ms.id == ladder.marker_set_id),
+                None
+            )
+
+            marker_font = QFont(s.font_family, 24)
+            marker_font.setBold(True)
+
+            marker_pen = QPen(Qt.black)
+            marker_pen.setWidth(5)
+            marker_pen.setCosmetic(True)
+
+            marker_highlight_pen = QPen(Qt.black)
+            marker_highlight_pen.setWidth(8)
+            marker_highlight_pen.setCosmetic(True)
+
+            crop_y = float(getattr(blot.crop, "y", 0.0))
+            crop_h_scene = float(pm.height())
+
+            tick_x0 = img_col_x - 80.0
+            tick_x1 = img_col_x - 15.0
+
+            for assignment in ladder.bands:
+                marker_y_in_crop = float(assignment.y_px) - crop_y
+
+                # Use actual rendered crop height, not blot.crop.h
+                if marker_y_in_crop < 0 or marker_y_in_crop > crop_h_scene:
+                    continue
+
+                kda = float(assignment.kda)
+
+                preset_band = None
+                if marker_set is not None:
+                    preset_band = next(
+                        (b for b in marker_set.bands if abs(float(b.kda) - kda) < 0.001),
+                        None
+                    )
+
+                # If marker_set is missing, do NOT silently hide everything.
+                if bool(getattr(ladder, "show_only_highlighted", False)) and marker_set is not None:
+                    if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                        continue
+
+                is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
+                pen = marker_highlight_pen if is_highlighted else marker_pen
+
+                yy = y + marker_y_in_crop
+
+                scene.addLine(tick_x0, yy, tick_x1, yy, pen)
+
+                if bool(getattr(ladder, "show_labels", True)):
+                    label = getattr(preset_band, "label", None) if preset_band else None
+                    if not label:
+                        label = f"{kda:g}"
+
+                    text_item = scene.addText(str(label), marker_font)
+                    text_item.setDefaultTextColor(Qt.black)
+                    br = text_item.boundingRect()
+
+                    text_item.setPos(
+                        tick_x0 - br.width() - 8.0,
+                        yy - br.height() / 2.0,
+                    )
         # Protein label on the right (vertically centered)
         protein_label = getattr(blot, "protein_label", None)
         label = getattr(protein_label, "text", "")
@@ -509,18 +578,20 @@ def build_provenance_scene(
         )
 
         tick_pen = QPen(Qt.black)
+        tick_pen.setWidth(5)
         tick_pen.setCosmetic(True)
 
         highlight_pen = QPen(Qt.black)
-        highlight_pen.setWidth(3)
+        highlight_pen.setWidth(8)
         highlight_pen.setCosmetic(True)
 
-        label_font = QFont(s.font_family, int(s.font_size_pt))
+        label_font = QFont(s.font_family, 28)
+        label_font.setBold(True)
 
         # For now, draw on the left of the image.
-        tick_x0 = x0 - 45.0
-        tick_x1 = x0 - 10.0
-        label_x = x0 - 85.0
+        tick_x0 = x0 - 65.0
+        tick_x1 = x0 - 15.0
+        label_x = x0 - 125.0
 
         for assignment in ladder.bands:
             y = y0 + float(assignment.y_px)

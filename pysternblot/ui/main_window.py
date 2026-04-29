@@ -1408,6 +1408,8 @@ class MainWindow(QMainWindow):
             show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
         )
 
+        self.current_project.marker_sets = list(self.marker_set_library.items)
+
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
@@ -1494,6 +1496,8 @@ class MainWindow(QMainWindow):
                 b for b in blot.overlay_ladder.bands
                 if abs(float(b.kda) - kda) > 0.001
             ]
+
+            self.current_project.marker_sets = list(self.marker_set_library.items)
 
             self.workspace.save_project(self.current_project)
             self.refresh_previews()
@@ -1611,6 +1615,8 @@ class MainWindow(QMainWindow):
         )
 
         self.pending_overlay_ladder_kda = None
+
+        self.current_project.marker_sets = list(self.marker_set_library.items)
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()

@@ -1459,14 +1459,17 @@ class MainWindow(QMainWindow):
         root.addWidget(info)
 
         table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["kDa", "Label", "Highlight", "Assigned y px", "Action"])
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(["kDa", "Label", "Highlight", "Assigned y px", "Show final", "Action"])
         table.setAlternatingRowColors(True)
         root.addWidget(table)
 
         self.overlay_ladder_assignment_table = table
 
         btns = QHBoxLayout()
+
+        save_visibility_btn = QPushButton("Save visibility")
+        btns.addWidget(save_visibility_btn)
 
         clear_btn = QPushButton("Clear selected assignment")
         btns.addWidget(clear_btn)
@@ -1515,6 +1518,7 @@ class MainWindow(QMainWindow):
         clear_btn.clicked.connect(clear_selected)
         close_btn.clicked.connect(close_dialog)
         dialog.destroyed.connect(on_destroyed)
+        save_visibility_btn.clicked.connect(self._sync_overlay_ladder_visibility_from_table)
 
         self._populate_overlay_ladder_assignment_table()
         dialog.show()
@@ -1591,17 +1595,21 @@ class MainWindow(QMainWindow):
         if not marker_set_id:
             return
 
+        previous_show_in_final = True
         existing = []
+
         if getattr(blot, "overlay_ladder", None) is not None:
-            existing = [
-                b for b in blot.overlay_ladder.bands
-                if abs(float(b.kda) - float(kda)) > 0.001
-            ]
+            for b in blot.overlay_ladder.bands:
+                if abs(float(b.kda) - float(kda)) <= 0.001:
+                    previous_show_in_final = bool(getattr(b, "show_in_final", True))
+                else:
+                    existing.append(b)
 
         existing.append(
             LadderBandAssignment(
                 y_px=float(image_y),
                 kda=float(kda),
+                show_in_final=previous_show_in_final,
             )
         )
 
@@ -1649,7 +1657,7 @@ class MainWindow(QMainWindow):
         assigned_by_kda = {}
         if getattr(blot, "overlay_ladder", None) is not None:
             for assignment in blot.overlay_ladder.bands:
-                assigned_by_kda[float(assignment.kda)] = float(assignment.y_px)
+                assigned_by_kda[float(assignment.kda)] = assignment
 
         table.setRowCount(len(marker_set.bands))
 
@@ -1659,17 +1667,28 @@ class MainWindow(QMainWindow):
             table.setItem(row, 0, QTableWidgetItem(f"{kda:g}"))
             table.setItem(row, 1, QTableWidgetItem(str(band.label or "")))
             table.setItem(row, 2, QTableWidgetItem("yes" if band.highlight else ""))
+            assignment = assigned_by_kda.get(kda)
+
             table.setItem(
                 row,
                 3,
                 QTableWidgetItem(
-                    f"{assigned_by_kda[kda]:.1f}" if kda in assigned_by_kda else "—"
+                    f"{float(assignment.y_px):.1f}" if assignment is not None else "—"
                 )
             )
 
+            show_item = QTableWidgetItem()
+            show_item.setFlags(show_item.flags() | Qt.ItemIsUserCheckable)
+            show_item.setCheckState(
+                Qt.Checked
+                if assignment is None or bool(getattr(assignment, "show_in_final", True))
+                else Qt.Unchecked
+            )
+            table.setItem(row, 4, show_item)
+
             btn = QPushButton("Select")
             btn.clicked.connect(lambda _checked=False, value=kda: self._select_overlay_ladder_kda(value))
-            table.setCellWidget(row, 4, btn)
+            table.setCellWidget(row, 5, btn)
 
         table.resizeColumnsToContents()
 
@@ -1681,3 +1700,31 @@ class MainWindow(QMainWindow):
             "Select band on image",
             f"Now click the corresponding {kda:g} kDa band on the provenance image."
         )
+
+    def _sync_overlay_ladder_visibility_from_table(self):
+        table = self.overlay_ladder_assignment_table
+        blot = self._get_active_blot()
+
+        if table is None or blot is None or getattr(blot, "overlay_ladder", None) is None:
+            return
+
+        show_by_kda = {}
+
+        for row in range(table.rowCount()):
+            kda_item = table.item(row, 0)
+            show_item = table.item(row, 4)
+
+            if kda_item is None or show_item is None:
+                continue
+
+            kda = float(kda_item.text())
+            show_by_kda[kda] = show_item.checkState() == Qt.Checked
+
+        for assignment in blot.overlay_ladder.bands:
+            kda = float(assignment.kda)
+            if kda in show_by_kda:
+                assignment.show_in_final = bool(show_by_kda[kda])
+
+        self.current_project.marker_sets = list(self.marker_set_library.items)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()

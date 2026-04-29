@@ -365,6 +365,9 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             tick_x1 = img_col_x - 8.0
 
             for assignment in ladder.bands:
+                if not bool(getattr(assignment, "show_in_final", True)):
+                    continue
+                
                 crop_h_model = float(getattr(blot.crop, "h", pm.height()))
                 scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 

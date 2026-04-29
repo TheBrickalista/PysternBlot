@@ -164,6 +164,7 @@ class Project(BaseModel):
 class LadderBandAssignment(BaseModel):
     y_px: float
     kda: float
+    show_in_final: bool = True
 
 
 class OverlayLadder(BaseModel):

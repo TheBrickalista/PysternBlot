@@ -11,8 +11,9 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
     QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QDialog
 )
-from PySide6.QtGui import QAction, QPixmap
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QAction, QPixmap, QPainter, QImage, QPdfWriter, QPageSize
+from PySide6.QtCore import Qt, QEvent, QRectF, QSize
+from PySide6.QtSvg import QSvgGenerator
 
 from pathlib import Path
 import uuid
@@ -176,6 +177,18 @@ class MainWindow(QMainWindow):
         self.final_refresh_btn = QPushButton("Refresh")
         self.final_refresh_btn.clicked.connect(self.refresh_previews)
         final_top.addWidget(self.final_refresh_btn)
+
+        self.export_png_btn = QPushButton("Export PNG")
+        self.export_png_btn.clicked.connect(self.export_final_png)
+        final_top.addWidget(self.export_png_btn)
+
+        self.export_pdf_btn = QPushButton("Export PDF")
+        self.export_pdf_btn.clicked.connect(self.export_final_pdf)
+        final_top.addWidget(self.export_pdf_btn)
+
+        self.export_svg_btn = QPushButton("Export SVG")
+        self.export_svg_btn.clicked.connect(self.export_final_svg)
+        final_top.addWidget(self.export_svg_btn)
 
         final_top.addStretch(1)
 
@@ -1729,3 +1742,169 @@ class MainWindow(QMainWindow):
         self.current_project.marker_sets = list(self.marker_set_library.items)
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _final_scene_and_rect(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return None, None
+
+        scene = build_panel_scene(self.current_project, self.workspace.root)
+        if scene is None:
+            QMessageBox.critical(self, "Export error", "Could not build final result scene.")
+            return None, None
+
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            QMessageBox.critical(self, "Export error", "Final result scene is empty.")
+            return None, None
+
+        return scene, rect
+    
+    def export_final_png(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as PNG",
+            "",
+            "PNG (*.png)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        margin = 20
+        scale = 2.0  # higher resolution export
+
+        img = QImage(
+            int((rect.width() + 2 * margin) * scale),
+            int((rect.height() + 2 * margin) * scale),
+            QImage.Format_ARGB32
+        )
+        img.fill(Qt.white)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.scale(scale, scale)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        if not img.save(path):
+            QMessageBox.critical(self, "Export error", "Could not save PNG.")
+            return
+
+        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
+
+    def export_final_pdf(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as PDF",
+            "",
+            "PDF (*.pdf)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        margin = 20
+
+        writer = QPdfWriter(path)
+        writer.setPageSize(QPageSize(QPageSize.A4))
+        writer.setResolution(300)
+
+        painter = QPainter(writer)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        page_rect = writer.pageLayout().paintRectPixels(writer.resolution())
+
+        scale_x = page_rect.width() / (rect.width() + 2 * margin)
+        scale_y = page_rect.height() / (rect.height() + 2 * margin)
+        scale = min(scale_x, scale_y)
+
+        painter.scale(scale, scale)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}")
+
+    def export_final_svg(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as SVG",
+            "",
+            "SVG (*.svg)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".svg"):
+            path += ".svg"
+
+        margin = 20
+
+        generator = QSvgGenerator()
+        generator.setFileName(path)
+        generator.setSize(
+            QSize(
+                int(rect.width() + 2 * margin),
+                int(rect.height() + 2 * margin)
+            )
+        )
+        generator.setViewBox(
+            QRectF(
+                0,
+                0,
+                rect.width() + 2 * margin,
+                rect.height() + 2 * margin
+            )
+        )
+        generator.setTitle("Pystern Blot Final Result")
+        generator.setDescription("Exported from Pystern Blot")
+
+        painter = QPainter(generator)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")

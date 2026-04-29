@@ -361,15 +361,18 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             crop_y = float(getattr(blot.crop, "y", 0.0))
             crop_h_scene = float(pm.height())
 
-            tick_x0 = img_col_x - 80.0
-            tick_x1 = img_col_x - 15.0
+            tick_x0 = left_col_x + 45.0
+            tick_x1 = img_col_x - 8.0
 
             for assignment in ladder.bands:
-                marker_y_in_crop = float(assignment.y_px) - crop_y
+                crop_h_model = float(getattr(blot.crop, "h", pm.height()))
+                scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 
-                # Use actual rendered crop height, not blot.crop.h
-                if marker_y_in_crop < 0 or marker_y_in_crop > crop_h_scene:
-                    continue
+                marker_y_in_crop = (float(assignment.y_px) - crop_y) * scale_y
+
+                # Do not skip: show MW marker position relative to crop,
+                # even if it falls slightly outside the cropped image.
+                # This makes it clear where the marker lies relative to the crop.
 
                 kda = float(assignment.kda)
 
@@ -402,7 +405,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     br = text_item.boundingRect()
 
                     text_item.setPos(
-                        tick_x0 - br.width() - 8.0,
+                        left_col_x + 2.0,
                         yy - br.height() / 2.0,
                     )
         # Protein label on the right (vertically centered)

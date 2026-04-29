@@ -1465,11 +1465,10 @@ class MainWindow(QMainWindow):
         root.addWidget(table)
 
         self.overlay_ladder_assignment_table = table
+        table.itemChanged.connect(self._sync_overlay_ladder_visibility_from_table)
 
         btns = QHBoxLayout()
 
-        save_visibility_btn = QPushButton("Save visibility")
-        btns.addWidget(save_visibility_btn)
 
         clear_btn = QPushButton("Clear selected assignment")
         btns.addWidget(clear_btn)
@@ -1518,7 +1517,7 @@ class MainWindow(QMainWindow):
         clear_btn.clicked.connect(clear_selected)
         close_btn.clicked.connect(close_dialog)
         dialog.destroyed.connect(on_destroyed)
-        save_visibility_btn.clicked.connect(self._sync_overlay_ladder_visibility_from_table)
+       
 
         self._populate_overlay_ladder_assignment_table()
         dialog.show()
@@ -1638,6 +1637,8 @@ class MainWindow(QMainWindow):
         if table is None:
             return
 
+        table.blockSignals(True)
+
         blot = self._get_active_blot()
         if blot is None:
             return
@@ -1691,15 +1692,10 @@ class MainWindow(QMainWindow):
             table.setCellWidget(row, 5, btn)
 
         table.resizeColumnsToContents()
+        table.blockSignals(False)
 
     def _select_overlay_ladder_kda(self, kda: float):
         self.pending_overlay_ladder_kda = float(kda)
-
-        QMessageBox.information(
-            self,
-            "Select band on image",
-            f"Now click the corresponding {kda:g} kDa band on the provenance image."
-        )
 
     def _sync_overlay_ladder_visibility_from_table(self):
         table = self.overlay_ladder_assignment_table

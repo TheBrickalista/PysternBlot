@@ -1439,6 +1439,7 @@ class MainWindow(QMainWindow):
             return
 
         dialog = QDialog(self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         dialog.setWindowTitle("Overlay ladder assignments")
         dialog.resize(620, 520)
         dialog.setModal(False)
@@ -1507,6 +1508,8 @@ class MainWindow(QMainWindow):
 
         def close_dialog():
             self.pending_overlay_ladder_kda = None
+            self.overlay_ladder_dialog = None
+            self.overlay_ladder_assignment_table = None
             dialog.close()
 
         def on_destroyed():
@@ -1641,6 +1644,7 @@ class MainWindow(QMainWindow):
 
         blot = self._get_active_blot()
         if blot is None:
+            table.blockSignals(False)
             return
 
         marker_set_id = self.overlay_ladder_combo.currentData()
@@ -1653,6 +1657,7 @@ class MainWindow(QMainWindow):
 
         if marker_set is None:
             table.setRowCount(0)
+            table.blockSignals(False)
             return
 
         assigned_by_kda = {}

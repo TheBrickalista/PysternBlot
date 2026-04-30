@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
 
         lib_l.addWidget(ladder_frame)
 
-        self.tabs.addTab(lib, "Library")
+        self.tabs.addTab(lib, "Preferences")
 
         # Final Result tab
         final = QWidget()
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         self.view = QGraphicsView()
         final_l.addWidget(self.view)
 
-        self.tabs.addTab(final, "Final Result")
+        self.tabs.addTab(final, "Figure")
         
         # Provenance tab
         prov = QWidget()
@@ -233,6 +233,14 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb = QCheckBox("Grid")
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_top.addWidget(self.prov_grid_cb)
+
+        self.export_original_tiff_btn = QPushButton("Export Original TIFF")
+        self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
+        prov_top.addWidget(self.export_original_tiff_btn)
+
+        self.export_all_original_tiff_btn = QPushButton("Export All Originals")
+        self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
+        prov_top.addWidget(self.export_all_original_tiff_btn)
 
         prov_top.addSpacing(16)
 
@@ -419,7 +427,7 @@ class MainWindow(QMainWindow):
         self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 
-        self.tabs.addTab(prov, "Provenance")
+        self.tabs.addTab(prov, "Original Image")
 
         # Legend tab
         self.legend_tab = LegendTab()
@@ -1908,3 +1916,94 @@ class MainWindow(QMainWindow):
         painter.end()
 
         QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
+
+    def _export_provenance_scene_to_tiff(self, blot_id: str, path: str):
+        scene = build_provenance_scene(
+            self.current_project,
+            self.workspace.root,
+            blot_id=blot_id,
+            on_crop_commit=None,
+            show_grid=False,
+        )
+
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            raise RuntimeError("Original image scene is empty.")
+
+        margin = 40
+
+        img = QImage(
+            int(rect.width() + 2 * margin),
+            int(rect.height() + 2 * margin),
+            QImage.Format_RGB888,
+        )
+        img.fill(Qt.white)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height(),
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        if not img.save(path, "TIFF"):
+            raise RuntimeError(f"Could not save TIFF:\n{path}")
+
+    def export_current_original_tiff(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        blot = self._get_active_blot()
+        if blot is None:
+            QMessageBox.information(self, "No blot", "No active blot to export.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Original Image TIFF",
+            f"{blot.id}_original_annotated.tif",
+            "TIFF (*.tif *.tiff)",
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+
+        try:
+            self._export_provenance_scene_to_tiff(blot.id, path)
+            QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))
+
+    def export_all_original_tiffs(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for Original Image TIFF exports",
+        )
+
+        if not folder:
+            return
+
+        try:
+            for blot in self.current_project.panel.blots:
+                path = Path(folder) / f"{blot.id}_original_annotated.tif"
+                self._export_provenance_scene_to_tiff(blot.id, str(path))
+
+            QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))

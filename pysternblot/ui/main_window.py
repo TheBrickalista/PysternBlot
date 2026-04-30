@@ -18,6 +18,8 @@ from PySide6.QtSvg import QSvgGenerator
 from pathlib import Path
 import uuid
 
+from datetime import datetime, timezone
+import json
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
@@ -25,6 +27,7 @@ from ..models import (
     Blot, AssetEntry,
     MarkerSet, MarkerBand, MarkerSetLibrary,
     OverlayLadder, LadderBandAssignment,
+    OperationLogEntry,
 )
 from .legend_tab import LegendTab
 from ..integrity import build_integrity_report, write_integrity_json, write_integrity_html
@@ -558,7 +561,50 @@ class MainWindow(QMainWindow):
         a_import_mem.triggered.connect(self.import_membrane)
         tb.addAction(a_import_mem)
 
+    def _plain_log_value(self, value):
+        """
+        Make values JSON-friendly for operation logging.
+        """
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
 
+        try:
+            json.dumps(value)
+            return value
+        except TypeError:
+            return str(value)
+
+    def log_operation(
+        self,
+        operation: str,
+        *,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        asset_sha256: str | None = None,
+        field: str | None = None,
+        old_value=None,
+        new_value=None,
+        note: str | None = None,
+    ):
+        if not self.current_project:
+            return
+
+        if old_value == new_value and old_value is not None:
+            return
+
+        self.current_project.operation_log.append(
+            OperationLogEntry(
+                timestamp_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                operation=operation,
+                target_type=target_type,
+                target_id=target_id,
+                asset_sha256=asset_sha256,
+                field=field,
+                old_value=self._plain_log_value(old_value),
+                new_value=self._plain_log_value(new_value),
+                note=note,
+            )
+        )
 
     def open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open project.json", "", "JSON (*.json)")
@@ -653,6 +699,19 @@ class MainWindow(QMainWindow):
 
             self.current_project.panel.blots.append(new_blot)
             self.current_project.panel.layout.order.append(blot_id)
+            self.log_operation(
+                "blot_imported",
+                target_type="blot",
+                target_id=blot_id,
+                asset_sha256=digest,
+                field="panel.blots",
+                old_value=None,
+                new_value={
+                    "blot_id": blot_id,
+                    "asset_sha256": digest,
+                    "source_path": str(path),
+                },
+            )
             self.active_blot_id = blot_id
             self._populate_prov_blot_combo()
             self._update_prov_label()
@@ -695,7 +754,18 @@ class MainWindow(QMainWindow):
             blot = self._get_active_blot()
             if blot is None:
                 raise RuntimeError("No active blot available.")
+            old_overlay = blot.overlay_asset_sha256
             blot.overlay_asset_sha256 = digest
+            self.log_operation(
+                "overlay_imported",
+                target_type="blot",
+                target_id=blot.id,
+                asset_sha256=blot.asset_sha256,
+                field="overlay_asset_sha256",
+                old_value=old_overlay,
+                new_value=digest,
+                note=f"Overlay source: {path}",
+            )
 
             # Optional: force overlay visible immediately
             blot.display.overlay_visible = True
@@ -838,6 +908,17 @@ class MainWindow(QMainWindow):
         """
         if not self.current_project:
             return
+        
+        self.log_operation(
+            "crop_committed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="crop",
+            old_value=None,
+            new_value=blot.crop,
+            note="Crop rectangle committed after user interaction.",
+        )
 
         # Persist the updated crop coordinates
         self.workspace.save_project(self.current_project)
@@ -879,17 +960,49 @@ class MainWindow(QMainWindow):
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
-        if not blot:
+        if not blot or not self.current_project:
             return
-        blot.display.overlay_visible = bool(checked)
+
+        old = bool(blot.display.overlay_visible)
+        new = bool(checked)
+
+        blot.display.overlay_visible = new
+
+        self.log_operation(
+            "overlay_visible_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.overlay_visible",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
     def change_overlay_alpha(self, value: int):
         blot = self._get_active_blot()
-        if not blot:
+        if not blot or not self.current_project:
             return
-        blot.display.overlay_alpha = float(value) / 100.0
+
+        old = float(blot.display.overlay_alpha)
+        new = float(value) / 100.0
+
+        blot.display.overlay_alpha = new
         self.alpha_value_lbl.setText(str(value))
+
+        self.log_operation(
+            "overlay_alpha_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.overlay_alpha",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
     def refresh_previews(self):
@@ -1022,7 +1135,19 @@ class MainWindow(QMainWindow):
         if i <= 0:
             return
 
+        old_order = list(order)
+
         order[i - 1], order[i] = order[i], order[i - 1]
+
+        self.log_operation(
+            "panel_order_changed",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.layout.order",
+            old_value=old_order,
+            new_value=list(order),
+            note=f"Moved {self.active_blot_id} up",
+        )
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
@@ -1040,7 +1165,19 @@ class MainWindow(QMainWindow):
         if i >= len(order) - 1:
             return
 
+        old_order = list(order)
+
         order[i + 1], order[i] = order[i], order[i + 1]
+
+        self.log_operation(
+            "panel_order_changed",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.layout.order",
+            old_value=old_order,
+            new_value=list(order),
+            note=f"Moved {self.active_blot_id} down",
+        )
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
@@ -1050,11 +1187,22 @@ class MainWindow(QMainWindow):
         if blot is None or not self.current_project:
             return
 
-        # Map dial integer to degrees
-        rotation_deg = float(value) / 10.0
-        blot.display.rotation_deg = rotation_deg
+        old = float(blot.display.rotation_deg)
+        new = float(value) / 10.0
 
-        self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+        blot.display.rotation_deg = new
+
+        self.log_operation(
+            "rotation_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.rotation_deg",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.prov_rotate_label.setText(f"{new:.1f}°")
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
@@ -1067,6 +1215,12 @@ class MainWindow(QMainWindow):
         blot = self._get_active_blot()
         if blot is None or not self.current_project:
             return
+
+        old_levels = {
+            "black": int(blot.display.levels_black),
+            "white": int(blot.display.levels_white),
+            "gamma": float(blot.display.levels_gamma),
+        }
 
         black = int(self.levels_black_slider.value())
         white = int(self.levels_white_slider.value())
@@ -1086,9 +1240,25 @@ class MainWindow(QMainWindow):
                 self.levels_black_slider.setValue(black)
                 self.levels_black_slider.blockSignals(False)
 
+        new_levels = {
+            "black": black,
+            "white": white,
+            "gamma": gamma,
+        }
+
         blot.display.levels_black = black
         blot.display.levels_white = white
         blot.display.levels_gamma = gamma
+
+        self.log_operation(
+            "levels_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.levels",
+            old_value=old_levels,
+            new_value=new_levels,
+        )
 
         self.black_value_lbl.setText(str(black))
         self.white_value_lbl.setText(str(white))
@@ -1102,21 +1272,63 @@ class MainWindow(QMainWindow):
         if blot is None or not self.current_project:
             return
 
-        blot.display.invert = bool(checked)
+        old = bool(blot.display.invert)
+        new = bool(checked)
+
+        blot.display.invert = new
+
+        self.log_operation(
+            "invert_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.invert",
+            old_value=old,
+            new_value=new,
+        )
+
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
     def _on_border_toggled(self, checked: bool):
         if not self.current_project:
             return
-        self.current_project.panel.style.border_enabled = bool(checked)
+
+        old = bool(self.current_project.panel.style.border_enabled)
+        new = bool(checked)
+
+        self.current_project.panel.style.border_enabled = new
+
+        self.log_operation(
+            "border_visibility_changed",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.style.border_enabled",
+            old_value=old,
+            new_value=new,
+        )
+
         self.workspace.save_project(self.current_project)
         self._refresh_final_only(fit=True)
 
     def _on_border_width_changed(self, value: int):
         if not self.current_project:
             return
-        self.current_project.panel.style.border_width_px = int(value)
+
+        old = int(self.current_project.panel.style.border_width_px)
+        new = int(value)
+
+        self.current_project.panel.style.border_width_px = new
+
+        self.log_operation(
+            "border_width_changed",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.style.border_width_px",
+            old_value=old,
+            new_value=new,
+        )
+
         self.workspace.save_project(self.current_project)
         self._refresh_final_only(fit=True)
 
@@ -1419,6 +1631,12 @@ class MainWindow(QMainWindow):
         if blot is None or not self.current_project:
             return
 
+        old_value = (
+            blot.overlay_ladder.model_dump()
+            if getattr(blot, "overlay_ladder", None) is not None
+            else None
+        )
+
         marker_set_id = self.overlay_ladder_combo.currentData()
         if not marker_set_id:
             QMessageBox.warning(self, "No ladder preset", "Please select a ladder preset.")
@@ -1433,6 +1651,18 @@ class MainWindow(QMainWindow):
             bands=existing_bands,
             show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
             show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        new_value = blot.overlay_ladder.model_dump()
+
+        self.log_operation(
+            "overlay_ladder_options_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="overlay_ladder",
+            old_value=old_value,
+            new_value=new_value,
         )
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
@@ -1522,10 +1752,23 @@ class MainWindow(QMainWindow):
             if blot is None or getattr(blot, "overlay_ladder", None) is None:
                 return
 
+            old_value = blot.overlay_ladder.model_dump()
+
             blot.overlay_ladder.bands = [
                 b for b in blot.overlay_ladder.bands
                 if abs(float(b.kda) - kda) > 0.001
             ]
+
+            self.log_operation(
+                "overlay_ladder_assignment_cleared",
+                target_type="blot",
+                target_id=blot.id,
+                asset_sha256=blot.asset_sha256,
+                field="overlay_ladder.bands",
+                old_value=old_value,
+                new_value=blot.overlay_ladder.model_dump(),
+                note=f"Cleared assignment for {kda:g} kDa band",
+            )
 
             self.current_project.marker_sets = list(self.marker_set_library.items)
 
@@ -1579,10 +1822,22 @@ class MainWindow(QMainWindow):
         if blot is None or not self.current_project:
             return
 
-        text = self.protein_label_combo.currentText().strip()
-        blot.protein_label.text = text
+        old = str(blot.protein_label.text or "")
+        new = self.protein_label_combo.currentText().strip()
 
-        self._add_protein_label_suggestion(text)
+        blot.protein_label.text = new
+
+        self.log_operation(
+            "protein_label_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="protein_label.text",
+            old_value=old,
+            new_value=new,
+        )
+
+        self._add_protein_label_suggestion(new)
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
@@ -1592,7 +1847,20 @@ class MainWindow(QMainWindow):
         if blot is None or not self.current_project:
             return
 
-        blot.protein_label.font_size_pt = float(value)
+        old = blot.protein_label.font_size_pt
+        new = float(value)
+
+        blot.protein_label.font_size_pt = new
+
+        self.log_operation(
+            "protein_font_size_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="protein_label.font_size_pt",
+            old_value=old,
+            new_value=new,
+        )
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
@@ -1624,6 +1892,12 @@ class MainWindow(QMainWindow):
         if not marker_set_id:
             return
 
+        old_value = (
+            blot.overlay_ladder.model_dump()
+            if getattr(blot, "overlay_ladder", None) is not None
+            else None
+        )
+
         previous_show_in_final = True
         existing = []
 
@@ -1649,6 +1923,17 @@ class MainWindow(QMainWindow):
             bands=existing,
             show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
             show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        self.log_operation(
+            "overlay_ladder_band_assigned",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="overlay_ladder.bands",
+            old_value=old_value,
+            new_value=blot.overlay_ladder.model_dump(),
+            note=f"Assigned {float(kda):g} kDa band to y={float(image_y):.1f}px",
         )
 
         self.pending_overlay_ladder_kda = None
@@ -1736,6 +2021,8 @@ class MainWindow(QMainWindow):
         if table is None or blot is None or getattr(blot, "overlay_ladder", None) is None:
             return
 
+        old_value = blot.overlay_ladder.model_dump()
+
         show_by_kda = {}
 
         for row in range(table.rowCount()):
@@ -1752,6 +2039,16 @@ class MainWindow(QMainWindow):
             kda = float(assignment.kda)
             if kda in show_by_kda:
                 assignment.show_in_final = bool(show_by_kda[kda])
+
+        self.log_operation(
+            "overlay_ladder_visibility_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="overlay_ladder.bands.show_in_final",
+            old_value=old_value,
+            new_value=blot.overlay_ladder.model_dump(),
+        )
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
         self.workspace.save_project(self.current_project)
@@ -1819,6 +2116,17 @@ class MainWindow(QMainWindow):
         if not img.save(path):
             QMessageBox.critical(self, "Export error", "Could not save PNG.")
             return
+        
+        self.log_operation(
+            "export_generated",
+            target_type="export",
+            target_id=self.current_project.project.id if self.current_project else None,
+            field="final_png",
+            old_value=None,
+            new_value=str(path),
+        )
+
+        self.workspace.save_project(self.current_project)
 
         QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
 
@@ -1866,6 +2174,16 @@ class MainWindow(QMainWindow):
 
         scene.render(painter, target, rect)
         painter.end()
+
+        self.log_operation(
+            "export_generated",
+            target_type="export",
+            target_id=self.current_project.project.id if self.current_project else None,
+            field="final_pdf",
+            old_value=None,
+            new_value=str(path),
+        )
+        self.workspace.save_project(self.current_project)
 
         QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}")
 
@@ -1920,6 +2238,16 @@ class MainWindow(QMainWindow):
 
         scene.render(painter, target, rect)
         painter.end()
+
+        self.log_operation(
+            "export_generated",
+            target_type="export",
+            target_id=self.current_project.project.id if self.current_project else None,
+            field="final_svg",
+            old_value=None,
+            new_value=str(path),
+        )
+        self.workspace.save_project(self.current_project)
 
         QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
 
@@ -1987,6 +2315,16 @@ class MainWindow(QMainWindow):
 
         try:
             self._export_provenance_scene_to_tiff(blot.id, path)
+            self.log_operation(
+                "export_generated",
+                target_type="export",
+                target_id=blot.id,
+                asset_sha256=blot.asset_sha256,
+                field="original_annotated_tiff",
+                old_value=None,
+                new_value=str(path),
+            )
+            self.workspace.save_project(self.current_project)
             QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
@@ -2008,6 +2346,17 @@ class MainWindow(QMainWindow):
             for blot in self.current_project.panel.blots:
                 path = Path(folder) / f"{blot.id}_original_annotated.tif"
                 self._export_provenance_scene_to_tiff(blot.id, str(path))
+
+                self.log_operation(
+                    "export_generated",
+                    target_type="export",
+                    target_id=blot.id,
+                    asset_sha256=blot.asset_sha256,
+                    field="original_annotated_tiff",
+                    old_value=None,
+                    new_value=str(path),
+                )
+            self.workspace.save_project(self.current_project)
 
             QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")
 
@@ -2053,6 +2402,19 @@ class MainWindow(QMainWindow):
 
             write_integrity_json(report, json_path)
             write_integrity_html(report, html_path)
+
+            self.log_operation(
+                "integrity_report_generated",
+                target_type="export",
+                target_id=self.current_project.project.id,
+                field="integrity_report",
+                old_value=None,
+                new_value={
+                    "json": str(json_path),
+                    "html": str(html_path),
+                },
+            )
+            self.workspace.save_project(self.current_project)
 
             QMessageBox.information(
                 self,

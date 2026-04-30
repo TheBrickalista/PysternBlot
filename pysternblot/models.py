@@ -105,6 +105,20 @@ class LegendSettings(BaseModel):
     upper_rows: List[LegendRow] = Field(default_factory=list)
     lower_rows: List[LegendRow] = Field(default_factory=list)
 
+class LadderBandAssignment(BaseModel):
+    y_px: float
+    kda: float
+    show_in_final: bool = True
+
+
+class OverlayLadder(BaseModel):
+    marker_set_id: str
+    bands: List[LadderBandAssignment] = Field(default_factory=list)
+    side: Literal["left", "right"] = "left"
+    show_labels: bool = True
+    show_only_highlighted: bool = False
+
+
 class Blot(BaseModel):
     id: str
     asset_sha256: str
@@ -160,17 +174,4 @@ class Project(BaseModel):
     assets: Dict[str, AssetEntry] = {}
     marker_sets: List[MarkerSet] = Field(default_factory=list)
     panel: Panel
-
-class LadderBandAssignment(BaseModel):
-    y_px: float
-    kda: float
-    show_in_final: bool = True
-
-
-class OverlayLadder(BaseModel):
-    marker_set_id: str
-    bands: List[LadderBandAssignment] = Field(default_factory=list)
-    side: Literal["left", "right"] = "left"
-    show_labels: bool = True
-    show_only_highlighted: bool = False
 

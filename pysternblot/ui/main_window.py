@@ -27,6 +27,8 @@ from ..models import (
     OverlayLadder, LadderBandAssignment,
 )
 from .legend_tab import LegendTab
+from ..integrity import build_integrity_report, write_integrity_json, write_integrity_html
+
 
 
 class MainWindow(QMainWindow):
@@ -189,6 +191,10 @@ class MainWindow(QMainWindow):
         self.export_svg_btn = QPushButton("Export SVG")
         self.export_svg_btn.clicked.connect(self.export_final_svg)
         final_top.addWidget(self.export_svg_btn)
+
+        self.export_integrity_btn = QPushButton("Export Integrity Report")
+        self.export_integrity_btn.clicked.connect(self.export_integrity_report)
+        final_top.addWidget(self.export_integrity_btn)
 
         final_top.addStretch(1)
 
@@ -2007,3 +2013,52 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
+
+    def _current_project_json_path(self) -> Path | None:
+        if not self.current_project:
+            return None
+        path = self.workspace.projects_dir / self.current_project.project.id / "project.json"
+        return path if path.exists() else None
+
+    def export_integrity_report(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for Integrity Report export",
+        )
+
+        if not folder:
+            return
+
+        try:
+            # Save current project state first, so the project hash matches the report.
+            project_json_path = self.workspace.save_project(self.current_project)
+
+            out_dir = Path(folder)
+            base = self.current_project.project.name.strip() or self.current_project.project.id
+            safe_base = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in base)
+
+            json_path = out_dir / f"{safe_base}_integrity_report.json"
+            html_path = out_dir / f"{safe_base}_integrity_report.html"
+
+            report = build_integrity_report(
+                self.current_project,
+                self.workspace,
+                project_json_path=project_json_path,
+                exported_files=[],
+            )
+
+            write_integrity_json(report, json_path)
+            write_integrity_html(report, html_path)
+
+            QMessageBox.information(
+                self,
+                "Integrity report exported",
+                f"Saved:\n{json_path}\n{html_path}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Integrity report error", str(e))

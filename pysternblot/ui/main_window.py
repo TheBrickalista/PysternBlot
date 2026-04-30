@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem 
+    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QDialog
 )
-from PySide6.QtGui import QAction, QPixmap
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QPixmap, QPainter, QImage, QPdfWriter, QPageSize
+from PySide6.QtCore import Qt, QEvent, QRectF, QSize
+from PySide6.QtSvg import QSvgGenerator
 
 from pathlib import Path
 import uuid
@@ -20,7 +21,11 @@ import uuid
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..models import Blot, AssetEntry, MarkerSet, MarkerBand, MarkerSetLibrary
+from ..models import (
+    Blot, AssetEntry,
+    MarkerSet, MarkerBand, MarkerSetLibrary,
+    OverlayLadder, LadderBandAssignment,
+)
 from .legend_tab import LegendTab
 
 
@@ -31,6 +36,10 @@ class MainWindow(QMainWindow):
         self.current_project = None
         self.active_blot_id = None
         self.prov_grid_visible = False
+
+        self.pending_overlay_ladder_kda = None
+        self.overlay_ladder_dialog = None
+        self.overlay_ladder_assignment_table = None
 
         self.setWindowTitle("Pystern Blot")
         self.resize(1100, 700)
@@ -145,7 +154,7 @@ class MainWindow(QMainWindow):
 
         lib_l.addWidget(ladder_frame)
 
-        self.tabs.addTab(lib, "Library")
+        self.tabs.addTab(lib, "Preferences")
 
         # Final Result tab
         final = QWidget()
@@ -169,6 +178,18 @@ class MainWindow(QMainWindow):
         self.final_refresh_btn.clicked.connect(self.refresh_previews)
         final_top.addWidget(self.final_refresh_btn)
 
+        self.export_png_btn = QPushButton("Export PNG")
+        self.export_png_btn.clicked.connect(self.export_final_png)
+        final_top.addWidget(self.export_png_btn)
+
+        self.export_pdf_btn = QPushButton("Export PDF")
+        self.export_pdf_btn.clicked.connect(self.export_final_pdf)
+        final_top.addWidget(self.export_pdf_btn)
+
+        self.export_svg_btn = QPushButton("Export SVG")
+        self.export_svg_btn.clicked.connect(self.export_final_svg)
+        final_top.addWidget(self.export_svg_btn)
+
         final_top.addStretch(1)
 
         final_l.addLayout(final_top)
@@ -176,7 +197,7 @@ class MainWindow(QMainWindow):
         self.view = QGraphicsView()
         final_l.addWidget(self.view)
 
-        self.tabs.addTab(final, "Final Result")
+        self.tabs.addTab(final, "Figure")
         
         # Provenance tab
         prov = QWidget()
@@ -212,6 +233,14 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb = QCheckBox("Grid")
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_top.addWidget(self.prov_grid_cb)
+
+        self.export_original_tiff_btn = QPushButton("Export Original TIFF")
+        self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
+        prov_top.addWidget(self.export_original_tiff_btn)
+
+        self.export_all_original_tiff_btn = QPushButton("Export All Originals")
+        self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
+        prov_top.addWidget(self.export_all_original_tiff_btn)
 
         prov_top.addSpacing(16)
 
@@ -351,10 +380,54 @@ class MainWindow(QMainWindow):
 
         prov_l.addWidget(display_frame)
 
+        # --- Overlay ladder annotation compact controls ---
+        overlay_ladder_frame = QFrame()
+        overlay_ladder_frame.setFrameShape(QFrame.StyledPanel)
+        overlay_ladder_frame.setStyleSheet("""
+            QFrame {
+                background: #f4f4f4;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+
+        overlay_ladder_l = QHBoxLayout(overlay_ladder_frame)
+        overlay_ladder_l.setContentsMargins(10, 8, 10, 8)
+        overlay_ladder_l.setSpacing(10)
+
+        overlay_ladder_title = QLabel("Overlay ladder")
+        overlay_ladder_title.setStyleSheet("font-weight: 600; color: #333333;")
+        overlay_ladder_l.addWidget(overlay_ladder_title)
+
+        overlay_ladder_l.addWidget(QLabel("Preset"))
+
+        self.overlay_ladder_combo = QComboBox()
+        self.overlay_ladder_combo.setMinimumWidth(260)
+        overlay_ladder_l.addWidget(self.overlay_ladder_combo)
+
+        self.overlay_ladder_show_labels_cb = QCheckBox("Show labels")
+        self.overlay_ladder_show_labels_cb.setChecked(True)
+        overlay_ladder_l.addWidget(self.overlay_ladder_show_labels_cb)
+
+        self.overlay_ladder_only_highlight_cb = QCheckBox("Only highlighted")
+        overlay_ladder_l.addWidget(self.overlay_ladder_only_highlight_cb)
+
+        self.overlay_ladder_save_btn = QPushButton("Save options")
+        self.overlay_ladder_save_btn.clicked.connect(self._save_overlay_ladder_options)
+        overlay_ladder_l.addWidget(self.overlay_ladder_save_btn)
+
+        self.overlay_ladder_edit_btn = QPushButton("Edit assignments…")
+        self.overlay_ladder_edit_btn.clicked.connect(self._open_overlay_ladder_dialog)
+        overlay_ladder_l.addWidget(self.overlay_ladder_edit_btn)
+
+        overlay_ladder_l.addStretch(1)
+
+        prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = QGraphicsView()
+        self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 
-        self.tabs.addTab(prov, "Provenance")
+        self.tabs.addTab(prov, "Original Image")
 
         # Legend tab
         self.legend_tab = LegendTab()
@@ -490,6 +563,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
         except Exception as e:
@@ -505,6 +579,7 @@ class MainWindow(QMainWindow):
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             self.refresh_previews()
+            self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
         except Exception as e:
@@ -725,6 +800,8 @@ class MainWindow(QMainWindow):
         self.protein_font_size_spin.blockSignals(True)
         self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
         self.protein_font_size_spin.blockSignals(False)
+
+        self._refresh_overlay_ladder_ui()
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1096,6 +1173,15 @@ class MainWindow(QMainWindow):
         for marker_set in self.marker_set_library.items:
             self.marker_set_combo.addItem(marker_set.name, marker_set.id)
 
+        if hasattr(self, "overlay_ladder_combo"):
+            self.overlay_ladder_combo.blockSignals(True)
+            self.overlay_ladder_combo.clear()
+
+            for marker_set in self.marker_set_library.items:
+                self.overlay_ladder_combo.addItem(marker_set.name, marker_set.id)
+
+            self.overlay_ladder_combo.blockSignals(False)
+
         self.marker_set_combo.blockSignals(False)
 
         if self.marker_set_combo.count() > 0:
@@ -1289,6 +1375,177 @@ class MainWindow(QMainWindow):
         if row >= 0:
             self.marker_set_table.removeRow(row)
 
+    def _refresh_overlay_ladder_ui(self):
+        blot = self._get_active_blot()
+        if blot is None or not hasattr(self, "overlay_ladder_combo"):
+            return
+
+        if getattr(blot, "overlay_ladder", None) is None:
+            self.overlay_ladder_show_labels_cb.blockSignals(True)
+            self.overlay_ladder_only_highlight_cb.blockSignals(True)
+
+            self.overlay_ladder_show_labels_cb.setChecked(True)
+            self.overlay_ladder_only_highlight_cb.setChecked(False)
+
+            self.overlay_ladder_show_labels_cb.blockSignals(False)
+            self.overlay_ladder_only_highlight_cb.blockSignals(False)
+            return
+
+        ladder = blot.overlay_ladder
+
+        idx = self.overlay_ladder_combo.findData(ladder.marker_set_id)
+        if idx >= 0:
+            self.overlay_ladder_combo.blockSignals(True)
+            self.overlay_ladder_combo.setCurrentIndex(idx)
+            self.overlay_ladder_combo.blockSignals(False)
+
+        self.overlay_ladder_show_labels_cb.blockSignals(True)
+        self.overlay_ladder_only_highlight_cb.blockSignals(True)
+
+        self.overlay_ladder_show_labels_cb.setChecked(bool(ladder.show_labels))
+        self.overlay_ladder_only_highlight_cb.setChecked(bool(ladder.show_only_highlighted))
+
+        self.overlay_ladder_show_labels_cb.blockSignals(False)
+        self.overlay_ladder_only_highlight_cb.blockSignals(False)
+
+    def _save_overlay_ladder_options(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        if not marker_set_id:
+            QMessageBox.warning(self, "No ladder preset", "Please select a ladder preset.")
+            return
+
+        existing_bands = []
+        if getattr(blot, "overlay_ladder", None) is not None:
+            existing_bands = list(blot.overlay_ladder.bands)
+
+        blot.overlay_ladder = OverlayLadder(
+            marker_set_id=marker_set_id,
+            bands=existing_bands,
+            show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
+            show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        self.current_project.marker_sets = list(self.marker_set_library.items)
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _open_overlay_ladder_dialog(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        if not marker_set_id:
+            QMessageBox.warning(self, "No ladder preset", "Please select a ladder preset.")
+            return
+
+        marker_set = None
+        for ms in self.marker_set_library.items:
+            if ms.id == marker_set_id:
+                marker_set = ms
+                break
+
+        if marker_set is None:
+            QMessageBox.warning(self, "Missing ladder preset", "Selected ladder preset was not found.")
+            return
+
+        if self.overlay_ladder_dialog is not None:
+            self.overlay_ladder_dialog.raise_()
+            self.overlay_ladder_dialog.activateWindow()
+            return
+
+        dialog = QDialog(self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        dialog.setWindowTitle("Overlay ladder assignments")
+        dialog.resize(620, 520)
+        dialog.setModal(False)
+
+        self.overlay_ladder_dialog = dialog
+
+        root = QVBoxLayout(dialog)
+
+        title = QLabel("Assign overlay ladder bands")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        root.addWidget(title)
+
+        info = QLabel(
+            "Click Select next to a ladder band, then click the corresponding band "
+            "on the provenance image."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        table = QTableWidget()
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(["kDa", "Label", "Highlight", "Assigned y px", "Show final", "Action"])
+        table.setAlternatingRowColors(True)
+        root.addWidget(table)
+
+        self.overlay_ladder_assignment_table = table
+        table.itemChanged.connect(self._sync_overlay_ladder_visibility_from_table)
+
+        btns = QHBoxLayout()
+
+
+        clear_btn = QPushButton("Clear selected assignment")
+        btns.addWidget(clear_btn)
+
+        close_btn = QPushButton("Close")
+        btns.addWidget(close_btn)
+
+        btns.addStretch(1)
+        root.addLayout(btns)
+
+        def clear_selected():
+            row = table.currentRow()
+            if row < 0:
+                return
+
+            kda_item = table.item(row, 0)
+            if kda_item is None:
+                return
+
+            kda = float(kda_item.text())
+
+            blot = self._get_active_blot()
+            if blot is None or getattr(blot, "overlay_ladder", None) is None:
+                return
+
+            blot.overlay_ladder.bands = [
+                b for b in blot.overlay_ladder.bands
+                if abs(float(b.kda) - kda) > 0.001
+            ]
+
+            self.current_project.marker_sets = list(self.marker_set_library.items)
+
+            self.workspace.save_project(self.current_project)
+            self.refresh_previews()
+            self._populate_overlay_ladder_assignment_table()
+
+        def close_dialog():
+            self.pending_overlay_ladder_kda = None
+            self.overlay_ladder_dialog = None
+            self.overlay_ladder_assignment_table = None
+            dialog.close()
+
+        def on_destroyed():
+            self.pending_overlay_ladder_kda = None
+            self.overlay_ladder_dialog = None
+            self.overlay_ladder_assignment_table = None
+
+        clear_btn.clicked.connect(clear_selected)
+        close_btn.clicked.connect(close_dialog)
+        dialog.destroyed.connect(on_destroyed)
+       
+
+        self._populate_overlay_ladder_assignment_table()
+        dialog.show()
+
     def _open_project_from_library(self, row: int, _column: int):
         item = self.library_table.item(row, 5)  # path column
         if item is None:
@@ -1333,3 +1590,420 @@ class MainWindow(QMainWindow):
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+    
+    def eventFilter(self, obj, event):
+        if obj is self.prov_view.viewport() and event.type() == QEvent.MouseButtonPress:
+            if self.pending_overlay_ladder_kda is not None:
+                pos = event.position().toPoint()
+                scene_pos = self.prov_view.mapToScene(pos)
+
+                # In render.py provenance image starts at x0=10, y0=10
+                image_y = float(scene_pos.y() - 10.0)
+
+                self._assign_pending_overlay_ladder_band(image_y)
+                return True
+
+        return super().eventFilter(obj, event)
+    
+    def _assign_pending_overlay_ladder_band(self, image_y: float):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        kda = self.pending_overlay_ladder_kda
+        if kda is None:
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        if not marker_set_id:
+            return
+
+        previous_show_in_final = True
+        existing = []
+
+        if getattr(blot, "overlay_ladder", None) is not None:
+            for b in blot.overlay_ladder.bands:
+                if abs(float(b.kda) - float(kda)) <= 0.001:
+                    previous_show_in_final = bool(getattr(b, "show_in_final", True))
+                else:
+                    existing.append(b)
+
+        existing.append(
+            LadderBandAssignment(
+                y_px=float(image_y),
+                kda=float(kda),
+                show_in_final=previous_show_in_final,
+            )
+        )
+
+        existing.sort(key=lambda b: b.y_px)
+
+        blot.overlay_ladder = OverlayLadder(
+            marker_set_id=marker_set_id,
+            bands=existing,
+            show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
+            show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+        )
+
+        self.pending_overlay_ladder_kda = None
+
+        self.current_project.marker_sets = list(self.marker_set_library.items)
+
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+        self._refresh_overlay_ladder_ui()
+
+        if self.overlay_ladder_dialog is not None:
+            self._populate_overlay_ladder_assignment_table()
+
+    def _populate_overlay_ladder_assignment_table(self):
+        table = self.overlay_ladder_assignment_table
+        if table is None:
+            return
+
+        table.blockSignals(True)
+
+        blot = self._get_active_blot()
+        if blot is None:
+            table.blockSignals(False)
+            return
+
+        marker_set_id = self.overlay_ladder_combo.currentData()
+        marker_set = None
+
+        for ms in self.marker_set_library.items:
+            if ms.id == marker_set_id:
+                marker_set = ms
+                break
+
+        if marker_set is None:
+            table.setRowCount(0)
+            table.blockSignals(False)
+            return
+
+        assigned_by_kda = {}
+        if getattr(blot, "overlay_ladder", None) is not None:
+            for assignment in blot.overlay_ladder.bands:
+                assigned_by_kda[float(assignment.kda)] = assignment
+
+        table.setRowCount(len(marker_set.bands))
+
+        for row, band in enumerate(marker_set.bands):
+            kda = float(band.kda)
+
+            table.setItem(row, 0, QTableWidgetItem(f"{kda:g}"))
+            table.setItem(row, 1, QTableWidgetItem(str(band.label or "")))
+            table.setItem(row, 2, QTableWidgetItem("yes" if band.highlight else ""))
+            assignment = assigned_by_kda.get(kda)
+
+            table.setItem(
+                row,
+                3,
+                QTableWidgetItem(
+                    f"{float(assignment.y_px):.1f}" if assignment is not None else "—"
+                )
+            )
+
+            show_item = QTableWidgetItem()
+            show_item.setFlags(show_item.flags() | Qt.ItemIsUserCheckable)
+            show_item.setCheckState(
+                Qt.Checked
+                if assignment is None or bool(getattr(assignment, "show_in_final", True))
+                else Qt.Unchecked
+            )
+            table.setItem(row, 4, show_item)
+
+            btn = QPushButton("Select")
+            btn.clicked.connect(lambda _checked=False, value=kda: self._select_overlay_ladder_kda(value))
+            table.setCellWidget(row, 5, btn)
+
+        table.resizeColumnsToContents()
+        table.blockSignals(False)
+
+    def _select_overlay_ladder_kda(self, kda: float):
+        self.pending_overlay_ladder_kda = float(kda)
+
+    def _sync_overlay_ladder_visibility_from_table(self):
+        table = self.overlay_ladder_assignment_table
+        blot = self._get_active_blot()
+
+        if table is None or blot is None or getattr(blot, "overlay_ladder", None) is None:
+            return
+
+        show_by_kda = {}
+
+        for row in range(table.rowCount()):
+            kda_item = table.item(row, 0)
+            show_item = table.item(row, 4)
+
+            if kda_item is None or show_item is None:
+                continue
+
+            kda = float(kda_item.text())
+            show_by_kda[kda] = show_item.checkState() == Qt.Checked
+
+        for assignment in blot.overlay_ladder.bands:
+            kda = float(assignment.kda)
+            if kda in show_by_kda:
+                assignment.show_in_final = bool(show_by_kda[kda])
+
+        self.current_project.marker_sets = list(self.marker_set_library.items)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _final_scene_and_rect(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return None, None
+
+        scene = build_panel_scene(self.current_project, self.workspace.root)
+        if scene is None:
+            QMessageBox.critical(self, "Export error", "Could not build final result scene.")
+            return None, None
+
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            QMessageBox.critical(self, "Export error", "Final result scene is empty.")
+            return None, None
+
+        return scene, rect
+    
+    def export_final_png(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as PNG",
+            "",
+            "PNG (*.png)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        margin = 20
+        scale = 2.0  # higher resolution export
+
+        img = QImage(
+            int((rect.width() + 2 * margin) * scale),
+            int((rect.height() + 2 * margin) * scale),
+            QImage.Format_ARGB32
+        )
+        img.fill(Qt.white)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.scale(scale, scale)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        if not img.save(path):
+            QMessageBox.critical(self, "Export error", "Could not save PNG.")
+            return
+
+        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
+
+    def export_final_pdf(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as PDF",
+            "",
+            "PDF (*.pdf)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        margin = 20
+
+        writer = QPdfWriter(path)
+        writer.setPageSize(QPageSize(QPageSize.A4))
+        writer.setResolution(300)
+
+        painter = QPainter(writer)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        page_rect = writer.pageLayout().paintRectPixels(writer.resolution())
+
+        scale_x = page_rect.width() / (rect.width() + 2 * margin)
+        scale_y = page_rect.height() / (rect.height() + 2 * margin)
+        scale = min(scale_x, scale_y)
+
+        painter.scale(scale, scale)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}")
+
+    def export_final_svg(self):
+        scene, rect = self._final_scene_and_rect()
+        if scene is None:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Final Result as SVG",
+            "",
+            "SVG (*.svg)"
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".svg"):
+            path += ".svg"
+
+        margin = 20
+
+        generator = QSvgGenerator()
+        generator.setFileName(path)
+        generator.setSize(
+            QSize(
+                int(rect.width() + 2 * margin),
+                int(rect.height() + 2 * margin)
+            )
+        )
+        generator.setViewBox(
+            QRectF(
+                0,
+                0,
+                rect.width() + 2 * margin,
+                rect.height() + 2 * margin
+            )
+        )
+        generator.setTitle("Pystern Blot Final Result")
+        generator.setDescription("Exported from Pystern Blot")
+
+        painter = QPainter(generator)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height()
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
+
+    def _export_provenance_scene_to_tiff(self, blot_id: str, path: str):
+        scene = build_provenance_scene(
+            self.current_project,
+            self.workspace.root,
+            blot_id=blot_id,
+            on_crop_commit=None,
+            show_grid=False,
+        )
+
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            raise RuntimeError("Original image scene is empty.")
+
+        margin = 40
+
+        img = QImage(
+            int(rect.width() + 2 * margin),
+            int(rect.height() + 2 * margin),
+            QImage.Format_RGB888,
+        )
+        img.fill(Qt.white)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        target = QRectF(
+            margin,
+            margin,
+            rect.width(),
+            rect.height(),
+        )
+
+        scene.render(painter, target, rect)
+        painter.end()
+
+        if not img.save(path, "TIFF"):
+            raise RuntimeError(f"Could not save TIFF:\n{path}")
+
+    def export_current_original_tiff(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        blot = self._get_active_blot()
+        if blot is None:
+            QMessageBox.information(self, "No blot", "No active blot to export.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Original Image TIFF",
+            f"{blot.id}_original_annotated.tif",
+            "TIFF (*.tif *.tiff)",
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith((".tif", ".tiff")):
+            path += ".tif"
+
+        try:
+            self._export_provenance_scene_to_tiff(blot.id, path)
+            QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))
+
+    def export_all_original_tiffs(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for Original Image TIFF exports",
+        )
+
+        if not folder:
+            return
+
+        try:
+            for blot in self.current_project.panel.blots:
+                path = Path(folder) / f"{blot.id}_original_annotated.tif"
+                self._export_provenance_scene_to_tiff(blot.id, str(path))
+
+            QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))

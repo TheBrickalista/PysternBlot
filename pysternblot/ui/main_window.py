@@ -31,6 +31,8 @@ from ..models import (
 )
 from .legend_tab import LegendTab
 from ..integrity import build_integrity_report, write_integrity_json, write_integrity_html
+from .zoomable_graphics_view import ZoomableGraphicsView
+
 
 
 
@@ -243,6 +245,10 @@ class MainWindow(QMainWindow):
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_top.addWidget(self.prov_grid_cb)
 
+        self.prov_fit_btn = QPushButton("Fit")
+        self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
+        prov_top.addWidget(self.prov_fit_btn)
+
         self.export_original_tiff_btn = QPushButton("Export Original TIFF")
         self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
         prov_top.addWidget(self.export_original_tiff_btn)
@@ -432,7 +438,7 @@ class MainWindow(QMainWindow):
         overlay_ladder_l.addStretch(1)
 
         prov_l.addWidget(overlay_ladder_frame)
-        self.prov_view = QGraphicsView()
+        self.prov_view = ZoomableGraphicsView()
         self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 
@@ -1038,7 +1044,7 @@ class MainWindow(QMainWindow):
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
             self.prov_view.setScene(prov_scene)
-            self.prov_view.fitInView(prov_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+            self.prov_view.fit_scene()
 
         except Exception as e:
             QMessageBox.critical(self, "Render error", str(e))

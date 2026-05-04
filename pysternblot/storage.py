@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib, json
 from dataclasses import dataclass
 from pathlib import Path
-from .models import Project
+from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand
 import datetime, uuid
 from PySide6.QtGui import QImage, QTransform
 from PySide6.QtCore import Qt
@@ -54,6 +54,28 @@ class Workspace:
         protein_sugg = self.presets_dir / "protein_label_suggestions.json"
         if not protein_sugg.exists():
             protein_sugg.write_text('{"items":[]}\n', encoding="utf-8")
+
+        marker_sets = self.presets_dir / "protein_ladders.json"
+        if not marker_sets.exists():
+            default = MarkerSetLibrary(items=[
+                MarkerSet(
+                    id="pageruler_plus_prestained",
+                    name="PageRuler Plus Prestained",
+                    unit="kDa",
+                    bands=[
+                        MarkerBand(kda=250, label="250"),
+                        MarkerBand(kda=130, label="130"),
+                        MarkerBand(kda=100, label="100", highlight=True),
+                        MarkerBand(kda=70, label="70"),
+                        MarkerBand(kda=55, label="55", highlight=True),
+                        MarkerBand(kda=35, label="35"),
+                        MarkerBand(kda=25, label="25"),
+                        MarkerBand(kda=15, label="15"),
+                        MarkerBand(kda=10, label="10"),
+                    ],
+                )
+            ])
+            marker_sets.write_text(default.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     def import_asset(self, src_path: str) -> tuple[str, Path]:
         self.ensure()
@@ -266,5 +288,23 @@ class Workspace:
         save_uint16_tiff(cropped, out_path)
 
         return out_path
+    
+    def marker_sets_file(self) -> Path:
+        self.ensure()
+        return self.presets_dir / "protein_ladders.json"
+
+    def load_marker_sets(self) -> MarkerSetLibrary:
+        self.ensure()
+        path = self.presets_dir / "protein_ladders.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return MarkerSetLibrary.model_validate(data)
+        except Exception:
+            return MarkerSetLibrary(items=[])
+
+    def save_marker_sets(self, library: MarkerSetLibrary) -> None:
+        self.ensure()
+        path = self.presets_dir / "protein_ladders.json"
+        path.write_text(library.model_dump_json(indent=2) + "\n", encoding="utf-8")
     
     

@@ -8,6 +8,7 @@
 from __future__ import annotations
 from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Literal, Any
 
 class Group(BaseModel):
     label: str
@@ -169,9 +170,24 @@ class ProjectMeta(BaseModel):
     app_version: str
     license: Literal["GPL-3.0-only", "GPL-3.0-or-later"] = "GPL-3.0-only"
 
+class OperationLogEntry(BaseModel):
+    timestamp_utc: str
+    operation: str
+
+    target_type: Optional[str] = None   # "project", "blot", "asset", "export"
+    target_id: Optional[str] = None     # blot.id, project.id, etc.
+    asset_sha256: Optional[str] = None
+
+    field: Optional[str] = None         # e.g. "display.rotation_deg"
+    old_value: Optional[Any] = None
+    new_value: Optional[Any] = None
+
+    note: Optional[str] = None
+
 class Project(BaseModel):
     project: ProjectMeta
     assets: Dict[str, AssetEntry] = {}
     marker_sets: List[MarkerSet] = Field(default_factory=list)
     panel: Panel
+    operation_log: List[OperationLogEntry] = Field(default_factory=list)
 

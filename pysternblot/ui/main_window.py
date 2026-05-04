@@ -30,7 +30,12 @@ from ..models import (
     OperationLogEntry,
 )
 from .legend_tab import LegendTab
-from ..integrity import build_integrity_report, write_integrity_json, write_integrity_html
+from ..integrity import (
+    build_integrity_report,
+    build_detailed_integrity_report,
+    write_integrity_json,
+    write_integrity_html,
+)
 from .zoomable_graphics_view import ZoomableGraphicsView
 
 
@@ -200,6 +205,10 @@ class MainWindow(QMainWindow):
         self.export_integrity_btn = QPushButton("Export Integrity Report")
         self.export_integrity_btn.clicked.connect(self.export_integrity_report)
         final_top.addWidget(self.export_integrity_btn)
+
+        self.export_detailed_integrity_btn = QPushButton("Export Detailed Report")
+        self.export_detailed_integrity_btn.clicked.connect(self.export_detailed_integrity_report)
+        final_top.addWidget(self.export_detailed_integrity_btn)
 
         final_top.addStretch(1)
 
@@ -2430,3 +2439,58 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Integrity report error", str(e))
+
+    def export_detailed_integrity_report(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for Detailed Integrity Report export",
+        )
+
+        if not folder:
+            return
+
+        try:
+            out_dir = Path(folder)
+            base = self.current_project.project.name.strip() or self.current_project.project.id
+            safe_base = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in base)
+
+            json_path = out_dir / f"{safe_base}_detailed_integrity_report.json"
+            html_path = out_dir / f"{safe_base}_detailed_integrity_report.html"
+
+            # Log first, so the detailed report contains its own generation event.
+            self.log_operation(
+                "detailed_integrity_report_generated",
+                target_type="export",
+                target_id=self.current_project.project.id,
+                field="detailed_integrity_report",
+                old_value=None,
+                new_value={
+                    "json": str(json_path),
+                    "html": str(html_path),
+                },
+            )
+
+            project_json_path = self.workspace.save_project(self.current_project)
+
+            report = build_detailed_integrity_report(
+                self.current_project,
+                self.workspace,
+                project_json_path=project_json_path,
+                exported_files=[],
+            )
+
+            write_integrity_json(report, json_path)
+            write_integrity_html(report, html_path)
+
+            QMessageBox.information(
+                self,
+                "Detailed integrity report exported",
+                f"Saved:\n{json_path}\n{html_path}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Detailed integrity report error", str(e))

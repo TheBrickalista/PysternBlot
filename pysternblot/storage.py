@@ -172,7 +172,7 @@ class Workspace:
         """
         self.ensure()
         project_id = "proj_" + uuid.uuid4().hex[:10]
-        now = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
         # Minimal but valid-ish structure for our current code paths.
         project_data = {

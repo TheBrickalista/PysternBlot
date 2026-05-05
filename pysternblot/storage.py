@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand, CropTemplate
 import datetime, uuid
-from PySide6.QtGui import QImage, QTransform
-from PySide6.QtCore import Qt
 
 from .image_utils import (
     load_image_uint16,

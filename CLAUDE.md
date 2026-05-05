@@ -36,19 +36,25 @@ All domain state is Pydantic v2 models. The hierarchy is:
 ```
 Project
 └── Panel
-    ├── style (PanelStyle)
+    ├── style (Style)
+    ├── crop_template (CropTemplate: w, h) — shared crop size for all blots
     ├── blots: list[Blot]
-    │   ├── crop (Crop: x, y, w, h, mode)
+    │   ├── crop (Crop: x, y — position only; w/h kept for backward compat)
     │   ├── display (DisplaySettings: levels, invert, rotation, overlay)
     │   ├── protein_label
     │   ├── ladder (Blot-level calibration)
-    │   └── overlay_ladder (optional OverlayLadder)
+    │   ├── overlay_ladder (optional OverlayLadder)
+    │   └── included_in_final: bool = True
     ├── layout (order: list[blot_id])
     ├── legend
-    └── header_block
+    └── lane_layout (header_block, groups)
 ```
 
 `Project` also holds `assets: dict[sha256, AssetEntry]`, `marker_sets`, and `operation_log`.
+
+Key model invariants:
+- `Crop.w` and `Crop.h` are kept in the model for backward compatibility but are **ignored** at render and storage time — the authoritative size is `Panel.crop_template`.
+- `Blot.included_in_final` controls whether a blot appears in `build_panel_scene`. Excluded blots remain fully editable and visible in the blot selector.
 
 ### Workspace / storage (storage.py)
 
@@ -58,7 +64,7 @@ Project
 - `projects/<project_id>/project.json` — full Pydantic model dump
 - `presets/` — marker sets, legend/protein label suggestion lists
 
-`import_asset()` hashes the source file and hard-links/copies to the assets store. `ensure_blot_crop_preview(blot)` applies rotation → levels → crop and caches the result as a TIFF. Render code reads this cache; callers must call `ensure_blot_crop_preview` before rendering.
+`import_asset()` hashes the source file and hard-links/copies to the assets store. `ensure_blot_crop_preview(blot, panel)` applies rotation → levels → crop and caches the result as a per-blot TIFF (`preview_crop_<id>.tif`). Crop position comes from `blot.crop.x/y`; crop size comes from `panel.crop_template.w/h`. Render code reads this cache; callers must call `ensure_blot_crop_preview` before rendering.
 
 ### Image pipeline (image_utils.py)
 
@@ -74,9 +80,11 @@ When saving uint16 TIFFs use `Image.frombuffer("I;16", (w, h), arr.tobytes(), "r
 
 ### Rendering (render.py)
 
-`build_panel_scene(project, workspace_root)` and `build_provenance_scene(...)` both return a `QGraphicsScene`. The scene is rebuilt from scratch on every refresh — no incremental update. The caller must call `ensure_blot_crop_preview` for each blot before calling these functions.
+`build_panel_scene(project, workspace_root)` and `build_provenance_scene(project, workspace_root, blot_id, on_crop_commit, on_crop_resize_commit, show_grid)` both return a `QGraphicsScene`. The scene is rebuilt from scratch on every refresh — no incremental update. Callers must call `ensure_blot_crop_preview(blot, panel)` for each blot before calling these functions.
 
-The final panel scene uses a fixed column layout: ladder column (left) → image column → protein label column (right). Lane-aligned legend cells and kDa annotations are positioned by absolute coordinate math relative to blot stack height/width.
+`build_panel_scene` only stacks blots where `blot.included_in_final` is `True`. The panel uses a fixed column layout: ladder column (left) → image column → protein label column (right).
+
+`build_provenance_scene` places an interactive `CropRectItem` over the full original image. Moving the rect updates `blot.crop.x/y` and calls `on_crop_commit(blot)`. Resizing updates `panel.crop_template.w/h` (affecting all blots) and calls `on_crop_resize_commit()`.
 
 ### UI (pysternblot/ui/)
 

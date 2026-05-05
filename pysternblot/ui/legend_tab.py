@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
     QScrollArea, QFrame, QCheckBox, QDoubleSpinBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 
 from .widgets import EditableHistoryCombo
 from ..models import LegendRow

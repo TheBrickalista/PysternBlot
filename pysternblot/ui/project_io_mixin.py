@@ -124,7 +124,10 @@ class _ProjectIOMixin:
                 "id": blot_id,
                 "asset_sha256": digest,
                 "overlay_asset_sha256": None,
-                "crop": {"x": 50, "y": 50, "w": 300, "h": 200, "mode": "absolute"},
+                "crop": {"x": 50, "y": 50,
+                         "w": self.current_project.panel.crop_template.w,
+                         "h": self.current_project.panel.crop_template.h,
+                         "mode": "absolute"},
                 "ladder": {
                     "lane_index": 0,
                     "marker_set_id": "ms_default",

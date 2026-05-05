@@ -368,7 +368,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 if not bool(getattr(assignment, "show_in_final", True)):
                     continue
                 
-                crop_h_model = float(getattr(blot.crop, "h", pm.height()))
+                crop_h_model = float(project.panel.crop_template.h)
                 scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 
                 marker_y_in_crop = (float(assignment.y_px) - crop_y) * scale_y
@@ -442,6 +442,7 @@ def build_provenance_scene(
     workspace_root: Path,
     blot_id: str | None = None,
     on_crop_commit=None,
+    on_crop_resize_commit=None,
     show_grid: bool = False,
 ) -> QGraphicsScene:
     """
@@ -537,15 +538,15 @@ def build_provenance_scene(
             
     # Crop box overlay (crop coords are in image pixel space)
     c = blot.crop
+    ct = project.panel.crop_template
 
-    def _apply_crop_from_scene_rect(scene_rect: QRectF) -> None:
+    def _apply_from_scene_rect(scene_rect: QRectF) -> None:
         # Convert scene coords -> image pixel coords
         x = float(scene_rect.x() - x0)
         y = float(scene_rect.y() - y0)
         w = float(scene_rect.width())
         h = float(scene_rect.height())
 
-        # Optional: clamp into image bounds (recommended)
         if w < 1: w = 1
         if h < 1: h = 1
         if x < 0: x = 0
@@ -555,20 +556,32 @@ def build_provenance_scene(
 
         blot.crop.x = x
         blot.crop.y = y
-        blot.crop.w = w
-        blot.crop.h = h
+        # w/h go to the shared template so all blots resize together
+        ct.w = w
+        ct.h = h
+
+    def _on_move_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_commit):
+            on_crop_commit(blot)
+
+    def _on_resize_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_resize_commit):
+            on_crop_resize_commit()
 
     crop_rect = QRectF(
         x0 + float(c.x),
         y0 + float(c.y),
-        float(c.w),
-        float(c.h)
+        float(ct.w),
+        float(ct.h),
     )
 
     rect_item = CropRectItem(
         crop_rect,
-        on_change=_apply_crop_from_scene_rect,
-        on_commit=lambda r: ( _apply_crop_from_scene_rect(r), on_crop_commit(blot) ) if callable(on_crop_commit) else _apply_crop_from_scene_rect(r)
+        on_change=_apply_from_scene_rect,
+        on_move_commit=_on_move_commit,
+        on_resize_commit=_on_resize_commit,
     )
     scene.addItem(rect_item)
 

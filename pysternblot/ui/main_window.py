@@ -710,11 +710,39 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # Rebuild cached preview_crop.png for this blot
         try:
-            self.workspace.ensure_blot_crop_preview(blot)
+            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
+        panel_scene = build_panel_scene(self.current_project, self.workspace.root)
+        self.view.setScene(panel_scene)
+        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def _on_crop_resize_commit(self):
+        """Called when the crop rectangle is resized (affects all blots via crop_template)."""
+        if not self.current_project:
+            return
+
+        self.log_operation(
+            "crop_template_resized",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.crop_template",
+            old_value=None,
+            new_value={"w": self.current_project.panel.crop_template.w,
+                       "h": self.current_project.panel.crop_template.h},
+            note="Crop template resized; all blot previews regenerated.",
+        )
+
+        self.workspace.save_project(self.current_project)
+
+        for blot in self.current_project.panel.blots:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            except Exception as e:
+                print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
+
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
@@ -800,7 +828,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # Option 2: ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
             try:
-                self.workspace.ensure_blot_crop_preview(blot)
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
             except Exception as e:
                 print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
@@ -813,12 +841,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = build_provenance_scene(
-            self.current_project,
-            self.workspace.root,
-            blot_id=self.active_blot_id,
-            on_crop_commit=self._on_crop_commit,
-            show_grid=self.prov_grid_visible
-        )
+                self.current_project,
+                self.workspace.root,
+                blot_id=self.active_blot_id,
+                on_crop_commit=self._on_crop_commit,
+                on_crop_resize_commit=self._on_crop_resize_commit,
+                show_grid=self.prov_grid_visible,
+            )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
@@ -837,7 +866,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # regenerate cached preview for this blot
         try:
-            self.workspace.ensure_blot_crop_preview(blot)
+            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed after crop move: {e}")
 

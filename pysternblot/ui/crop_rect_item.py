@@ -32,12 +32,15 @@ class CropRectItem(QGraphicsRectItem):
     BL = 8
     L = 9
 
-    def __init__(self, rect: QRectF, callback=None, *, on_change=None, on_commit=None):
+    def __init__(self, rect: QRectF, callback=None, *, on_change=None, on_commit=None,
+                 on_move_commit=None, on_resize_commit=None):
         super().__init__(rect)
 
         # Backward compat + new API
         self._on_change = on_change if on_change is not None else callback
         self._on_commit = on_commit
+        self._on_move_commit = on_move_commit
+        self._on_resize_commit = on_resize_commit
 
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsRectItem.ItemIsSelectable, True)
@@ -174,9 +177,20 @@ class CropRectItem(QGraphicsRectItem):
         # Restore movable after resizing
         self.setFlag(QGraphicsRectItem.ItemIsMovable, True)
 
+        was_move = self._active_handle == self.MOVE
+
         # one last live update + commit at end
         self._emit_change()
         self._emit_commit()
+
+        # dispatch to specific commit callbacks if provided
+        rect = self.sceneBoundingRect()
+        if was_move:
+            if callable(self._on_move_commit):
+                self._on_move_commit(rect)
+        else:
+            if callable(self._on_resize_commit):
+                self._on_resize_commit(rect)
 
         self._active_handle = self.NONE
         super().mouseReleaseEvent(event)

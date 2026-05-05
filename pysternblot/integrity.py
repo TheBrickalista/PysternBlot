@@ -193,6 +193,44 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         </tr>
         """)
 
+    operation_rows = []
+    for entry in report.get("operation_log", []):
+        operation_rows.append(f"""
+        <tr>
+          <td>{entry.get("timestamp_utc", "")}</td>
+          <td>{entry.get("operation", "")}</td>
+          <td>{entry.get("target_type", "") or ""}</td>
+          <td>{entry.get("target_id", "") or ""}</td>
+          <td>{entry.get("field", "") or ""}</td>
+          <td><code>{json.dumps(entry.get("old_value", None), ensure_ascii=False)}</code></td>
+          <td><code>{json.dumps(entry.get("new_value", None), ensure_ascii=False)}</code></td>
+          <td>{entry.get("note", "") or ""}</td>
+        </tr>
+        """)
+
+    operation_section = ""
+    if operation_rows:
+        operation_section = f"""
+<h2>Chronological operation log</h2>
+<table>
+<thead>
+<tr>
+<th>Time UTC</th>
+<th>Operation</th>
+<th>Target type</th>
+<th>Target ID</th>
+<th>Field</th>
+<th>Old value</th>
+<th>New value</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+{''.join(operation_rows)}
+</tbody>
+</table>
+"""
+
     html = f"""<!doctype html>
 <html>
 <head>
@@ -239,8 +277,10 @@ code {{ font-size: 11px; word-break: break-all; }}
 </tbody>
 </table>
 
+{operation_section}
+
 <h2>Machine-readable report</h2>
-<p>The companion JSON file contains the complete project, panel, legend, ladder, crop, overlay and export provenance.</p>
+<p>The companion JSON file contains the complete project, panel, legend, ladder, crop, overlay and export provenance{" including the chronological operation log" if operation_rows else ""}.</p>
 
 </body>
 </html>
@@ -248,3 +288,25 @@ code {{ font-size: 11px; word-break: break-all; }}
 
     path.write_text(html, encoding="utf-8")
     return path
+
+
+def build_detailed_integrity_report(
+    project: Project,
+    workspace: Workspace,
+    project_json_path: str | Path | None = None,
+    exported_files: list[str | Path] | None = None,
+) -> dict[str, Any]:
+    report = build_integrity_report(
+        project=project,
+        workspace=workspace,
+        project_json_path=project_json_path,
+        exported_files=exported_files,
+    )
+
+    report["schema"] = "pysternblot.detailed_integrity_report.v1"
+    report["operation_log"] = [
+        entry.model_dump()
+        for entry in getattr(project, "operation_log", [])
+    ]
+
+    return report

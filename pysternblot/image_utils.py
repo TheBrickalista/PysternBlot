@@ -140,7 +140,9 @@ def save_uint16_tiff(img: np.ndarray, path: str | Path) -> None:
     if img.dtype != np.uint16:
         raise TypeError(f"Expected uint16 image, got {img.dtype}")
 
-    Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+    h, w = img.shape
+    pil = Image.frombuffer("I;16", (w, h), img.tobytes(), "raw", "I;16", 0, 1)
+    pil.save(str(path), format="TIFF")
 
 
 def uint16_to_qimage(img: np.ndarray) -> QImage:

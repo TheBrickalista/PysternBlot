@@ -287,6 +287,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
         prov_top.addWidget(self.protein_font_size_spin)
 
+        prov_top.addSpacing(16)
+
+        self.include_in_final_cb = QCheckBox("Include in final figure")
+        self.include_in_final_cb.setChecked(True)
+        self.include_in_final_cb.toggled.connect(self._on_include_in_final_toggled)
+        prov_top.addWidget(self.include_in_final_cb)
+
         prov_top.addStretch(1)
 
         prov_l.addLayout(prov_top)
@@ -667,6 +674,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
         self.protein_font_size_spin.blockSignals(False)
 
+        self.include_in_final_cb.blockSignals(True)
+        self.include_in_final_cb.setChecked(bool(getattr(blot, "included_in_final", True)))
+        self.include_in_final_cb.blockSignals(False)
+
         self._refresh_overlay_ladder_ui()
 
     def _on_legend_changed(self):
@@ -887,6 +898,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             asset = self.current_project.assets.get(blot.asset_sha256)
             if asset and asset.original_source_path:
                 display_name = Path(asset.original_source_path).name
+            if not blot.included_in_final:
+                display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
 
         idx = -1
@@ -1101,6 +1114,30 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_include_in_final_toggled(self, checked: bool):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        old = bool(blot.included_in_final)
+        new = bool(checked)
+
+        blot.included_in_final = new
+
+        self.log_operation(
+            "included_in_final_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="included_in_final",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.workspace.save_project(self.current_project)
+        self._populate_prov_blot_combo()
+        self._refresh_final_only(fit=True)
 
     def _on_border_toggled(self, checked: bool):
         if not self.current_project:

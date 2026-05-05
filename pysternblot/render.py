@@ -112,10 +112,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     img_col_x = x0 + ladder_w
     col_gap = 10.0  # gap between image and protein column
 
-    # ---- stack order ----
+    # ---- stack order (only included blots appear in the final figure) ----
     order = list(getattr(project.panel.layout, "order", []))
-    blot_by_id = {b.id: b for b in project.panel.blots}
-    blots = [blot_by_id[i] for i in order if i in blot_by_id] or project.panel.blots
+    blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
+    blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []

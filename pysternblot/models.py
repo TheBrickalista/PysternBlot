@@ -8,6 +8,7 @@
 from __future__ import annotations
 from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Literal, Any
 
 class Group(BaseModel):
     label: str
@@ -52,6 +53,23 @@ class LadderFit(BaseModel):
     b: float
     model: Literal["y=a*log10(kDa)+b"] = "y=a*log10(kDa)+b"
 
+class MarkerBand(BaseModel):
+    kda: float = Field(gt=0)
+    label: Optional[str] = None
+    visible: bool = True
+    highlight: bool = False
+
+
+class MarkerSet(BaseModel):
+    id: str
+    name: str
+    unit: str = "kDa"
+    bands: List[MarkerBand] = Field(default_factory=list)
+
+
+class MarkerSetLibrary(BaseModel):
+    items: List[MarkerSet] = Field(default_factory=list)
+
 class Ladder(BaseModel):
     lane_index: int = Field(ge=0)
     marker_set_id: str
@@ -62,6 +80,7 @@ class Ladder(BaseModel):
 class ProteinLabel(BaseModel):
     text: str
     align: Literal["center"] = "center"
+    font_size_pt: float | None = None
 
 class DisplaySettings(BaseModel):
     invert: bool = False
@@ -87,6 +106,20 @@ class LegendSettings(BaseModel):
     upper_rows: List[LegendRow] = Field(default_factory=list)
     lower_rows: List[LegendRow] = Field(default_factory=list)
 
+class LadderBandAssignment(BaseModel):
+    y_px: float
+    kda: float
+    show_in_final: bool = True
+
+
+class OverlayLadder(BaseModel):
+    marker_set_id: str
+    bands: List[LadderBandAssignment] = Field(default_factory=list)
+    side: Literal["left", "right"] = "left"
+    show_labels: bool = True
+    show_only_highlighted: bool = False
+
+
 class Blot(BaseModel):
     id: str
     asset_sha256: str
@@ -95,6 +128,7 @@ class Blot(BaseModel):
     ladder: Ladder
     protein_label: ProteinLabel
     display: DisplaySettings = DisplaySettings()
+    overlay_ladder: Optional[OverlayLadder] = None
 
 class Style(BaseModel):
     font_family: str = "Arial"
@@ -136,10 +170,24 @@ class ProjectMeta(BaseModel):
     app_version: str
     license: Literal["GPL-3.0-only", "GPL-3.0-or-later"] = "GPL-3.0-only"
 
+class OperationLogEntry(BaseModel):
+    timestamp_utc: str
+    operation: str
+
+    target_type: Optional[str] = None   # "project", "blot", "asset", "export"
+    target_id: Optional[str] = None     # blot.id, project.id, etc.
+    asset_sha256: Optional[str] = None
+
+    field: Optional[str] = None         # e.g. "display.rotation_deg"
+    old_value: Optional[Any] = None
+    new_value: Optional[Any] = None
+
+    note: Optional[str] = None
+
 class Project(BaseModel):
     project: ProjectMeta
     assets: Dict[str, AssetEntry] = {}
-    marker_sets: List[dict] = []
+    marker_sets: List[MarkerSet] = Field(default_factory=list)
     panel: Panel
-
+    operation_log: List[OperationLogEntry] = Field(default_factory=list)
 

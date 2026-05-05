@@ -134,6 +134,7 @@ class Blot(BaseModel):
     protein_label: ProteinLabel
     display: DisplaySettings = DisplaySettings()
     overlay_ladder: Optional[OverlayLadder] = None
+    included_in_final: bool = True
 
 class Style(BaseModel):
     font_family: str = "Arial"

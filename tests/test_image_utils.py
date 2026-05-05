@@ -40,7 +40,8 @@ def _make_gradient_uint16(h: int = 16, w: int = 16) -> np.ndarray:
 def _save_tmp_uint16_tiff(arr: np.ndarray) -> Path:
     """Save a uint16 array to a temp TIFF and return the path."""
     tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
-    Image.fromarray(arr, mode="I;16").save(tmp.name, format="TIFF")
+    h, w = arr.shape
+    Image.frombuffer("I;16", (w, h), arr.tobytes(), "raw", "I;16", 0, 1).save(tmp.name, format="TIFF")
     return Path(tmp.name)
 
 
@@ -240,7 +241,7 @@ class TestLoadImageUint16:
     def test_loads_valid_uint16_tiff(self, tmp_path):
         img = _make_gradient_uint16(h=8, w=8)
         path = tmp_path / "test.tif"
-        Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+        Image.frombuffer("I;16", (img.shape[1], img.shape[0]), img.tobytes(), "raw", "I;16", 0, 1).save(str(path), format="TIFF")
         loaded = load_image_uint16(path)
         assert loaded.dtype == np.uint16
         assert loaded.shape == (8, 8)
@@ -248,7 +249,7 @@ class TestLoadImageUint16:
     def test_roundtrip_values_preserved(self, tmp_path):
         img = _make_gradient_uint16(h=8, w=16)
         path = tmp_path / "rt.tif"
-        Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+        Image.frombuffer("I;16", (img.shape[1], img.shape[0]), img.tobytes(), "raw", "I;16", 0, 1).save(str(path), format="TIFF")
         loaded = load_image_uint16(path)
         assert np.array_equal(loaded, img)
 
@@ -269,21 +270,21 @@ class TestLoadImageUint16:
     def test_returns_contiguous_array(self, tmp_path):
         img = _make_uint16()
         path = tmp_path / "c.tif"
-        Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+        Image.frombuffer("I;16", (img.shape[1], img.shape[0]), img.tobytes(), "raw", "I;16", 0, 1).save(str(path), format="TIFF")
         loaded = load_image_uint16(path)
         assert loaded.flags["C_CONTIGUOUS"]
 
     def test_accepts_path_object(self, tmp_path):
         img = _make_uint16()
         path = tmp_path / "pathobj.tif"
-        Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+        Image.frombuffer("I;16", (img.shape[1], img.shape[0]), img.tobytes(), "raw", "I;16", 0, 1).save(str(path), format="TIFF")
         loaded = load_image_uint16(path)  # Path object, not string
         assert loaded.dtype == np.uint16
 
     def test_accepts_string_path(self, tmp_path):
         img = _make_uint16()
         path = tmp_path / "strpath.tif"
-        Image.fromarray(img, mode="I;16").save(str(path), format="TIFF")
+        Image.frombuffer("I;16", (img.shape[1], img.shape[0]), img.tobytes(), "raw", "I;16", 0, 1).save(str(path), format="TIFF")
         loaded = load_image_uint16(str(path))  # string, not Path
         assert loaded.dtype == np.uint16
 

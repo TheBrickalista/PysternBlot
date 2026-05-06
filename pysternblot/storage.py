@@ -95,6 +95,25 @@ class Workspace:
         path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
         return path
 
+    def rename_project(self, project: Project, new_name: str) -> Path:
+        from .models import OperationLogEntry
+        old_name = project.project.name
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+        project.project.name = new_name
+        project.project.modified_utc = now
+        project.operation_log.append(
+            OperationLogEntry(
+                timestamp_utc=now,
+                operation="project_renamed",
+                target_type="project",
+                target_id=project.project.id,
+                field="project.name",
+                old_value=old_name,
+                new_value=new_name,
+            )
+        )
+        return self.save_project(project)
+
     def load_project(self, project_json_path: str) -> Project:
         data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
         project = Project.model_validate(data)

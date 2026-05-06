@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QInputDialog
+from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QInputDialog
 
 from datetime import datetime, timezone
 import json
@@ -236,6 +236,47 @@ class _ProjectIOMixin:
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+
+    def _on_library_context_menu(self, pos):
+        row = self.library_table.rowAt(pos.y())
+        if row < 0:
+            return
+
+        menu = QMenu(self)
+        open_action = menu.addAction("Open")
+        rename_action = menu.addAction("Rename…")
+
+        action = menu.exec(self.library_table.viewport().mapToGlobal(pos))
+
+        if action == open_action:
+            self._open_project_from_library(row, 0)
+        elif action == rename_action:
+            self._rename_project_from_library(row)
+
+    def _rename_project_from_library(self, row: int):
+        path_item = self.library_table.item(row, 5)
+        name_item = self.library_table.item(row, 0)
+        if path_item is None or name_item is None:
+            return
+
+        path = path_item.text().strip()
+        old_name = name_item.text().strip()
+
+        new_name, ok = QInputDialog.getText(self, "Rename Project", "New name:", text=old_name)
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+
+        try:
+            project = self.workspace.load_project(path)
+            self.workspace.rename_project(project, new_name.strip())
+
+            if self.current_project and self.current_project.project.id == project.project.id:
+                self.current_project.project.name = new_name.strip()
+                self._sync_controls_from_project()
+
+            self.refresh_library()
+        except Exception as e:
+            QMessageBox.critical(self, "Error renaming project", str(e))
 
     def _first_blot(self):
         if not self.current_project or not self.current_project.panel.blots:

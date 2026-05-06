@@ -10,13 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform, QImage
+from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
-
-import numpy as np
 
 from .image_utils import (
     load_image_uint16,
@@ -112,10 +110,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     img_col_x = x0 + ladder_w
     col_gap = 10.0  # gap between image and protein column
 
-    # ---- stack order ----
+    # ---- stack order (only included blots appear in the final figure) ----
     order = list(getattr(project.panel.layout, "order", []))
-    blot_by_id = {b.id: b for b in project.panel.blots}
-    blots = [blot_by_id[i] for i in order if i in blot_by_id] or project.panel.blots
+    blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
+    blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
@@ -368,7 +366,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 if not bool(getattr(assignment, "show_in_final", True)):
                     continue
                 
-                crop_h_model = float(getattr(blot.crop, "h", pm.height()))
+                crop_h_model = float(project.panel.crop_template.h)
                 scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 
                 marker_y_in_crop = (float(assignment.y_px) - crop_y) * scale_y
@@ -442,11 +440,12 @@ def build_provenance_scene(
     workspace_root: Path,
     blot_id: str | None = None,
     on_crop_commit=None,
+    on_crop_resize_commit=None,
     show_grid: bool = False,
 ) -> QGraphicsScene:
     """
-    Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
-    v0.1: uses the first blot in the project.
+    Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
+    Uses blot_id if provided; falls back to the first blot in the project.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -495,10 +494,6 @@ def build_provenance_scene(
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 
-    # Phase 1: rotate display only, do not modify pixels
-    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
-    #img_item.setRotation(rotation_deg)
-
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
     overlay_visible = getattr(getattr(blot, "display", None), "overlay_visible", True)
@@ -537,15 +532,15 @@ def build_provenance_scene(
             
     # Crop box overlay (crop coords are in image pixel space)
     c = blot.crop
+    ct = project.panel.crop_template
 
-    def _apply_crop_from_scene_rect(scene_rect: QRectF) -> None:
+    def _apply_from_scene_rect(scene_rect: QRectF) -> None:
         # Convert scene coords -> image pixel coords
         x = float(scene_rect.x() - x0)
         y = float(scene_rect.y() - y0)
         w = float(scene_rect.width())
         h = float(scene_rect.height())
 
-        # Optional: clamp into image bounds (recommended)
         if w < 1: w = 1
         if h < 1: h = 1
         if x < 0: x = 0
@@ -555,20 +550,32 @@ def build_provenance_scene(
 
         blot.crop.x = x
         blot.crop.y = y
-        blot.crop.w = w
-        blot.crop.h = h
+        # w/h go to the shared template so all blots resize together
+        ct.w = w
+        ct.h = h
+
+    def _on_move_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_commit):
+            on_crop_commit(blot)
+
+    def _on_resize_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_resize_commit):
+            on_crop_resize_commit()
 
     crop_rect = QRectF(
         x0 + float(c.x),
         y0 + float(c.y),
-        float(c.w),
-        float(c.h)
+        float(ct.w),
+        float(ct.h),
     )
 
     rect_item = CropRectItem(
         crop_rect,
-        on_change=_apply_crop_from_scene_rect,
-        on_commit=lambda r: ( _apply_crop_from_scene_rect(r), on_crop_commit(blot) ) if callable(on_crop_commit) else _apply_crop_from_scene_rect(r)
+        on_change=_apply_from_scene_rect,
+        on_move_commit=_on_move_commit,
+        on_resize_commit=_on_resize_commit,
     )
     scene.addItem(rect_item)
 

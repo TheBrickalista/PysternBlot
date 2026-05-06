@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QInputDialog
 
-from pathlib import Path
 from datetime import datetime, timezone
 import json
 
@@ -124,7 +123,10 @@ class _ProjectIOMixin:
                 "id": blot_id,
                 "asset_sha256": digest,
                 "overlay_asset_sha256": None,
-                "crop": {"x": 50, "y": 50, "w": 300, "h": 200, "mode": "absolute"},
+                "crop": {"x": 50, "y": 50,
+                         "w": self.current_project.panel.crop_template.w,
+                         "h": self.current_project.panel.crop_template.h,
+                         "mode": "absolute"},
                 "ladder": {
                     "lane_index": 0,
                     "marker_set_id": "ms_default",
@@ -203,7 +205,6 @@ class _ProjectIOMixin:
         try:
             digest, dest = self.workspace.import_asset(path)
 
-            # v0.1: attach to first blot (later we'll support selecting which blot)
             blot = self._get_active_blot()
             if blot is None:
                 raise RuntimeError("No active blot available.")

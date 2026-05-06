@@ -39,10 +39,15 @@ class HeaderBlock(BaseModel):
 class Crop(BaseModel):
     x: float
     y: float
-    w: float
-    h: float
+    w: float  # kept for backward compat; render/storage use panel.crop_template instead
+    h: float  # kept for backward compat; render/storage use panel.crop_template instead
     mode: Literal["absolute", "ladder_relative"] = "absolute"
     ladder_anchor: Optional[dict] = None
+
+class CropTemplate(BaseModel):
+    """Shared crop dimensions for all blots in the panel."""
+    w: float = 300.0
+    h: float = 200.0
 
 class CalibrationPoint(BaseModel):
     y_px: float
@@ -129,6 +134,7 @@ class Blot(BaseModel):
     protein_label: ProteinLabel
     display: DisplaySettings = DisplaySettings()
     overlay_ladder: Optional[OverlayLadder] = None
+    included_in_final: bool = True
 
 class Style(BaseModel):
     font_family: str = "Arial"
@@ -155,6 +161,7 @@ class Panel(BaseModel):
     blots: List[Blot]
     layout: Layout
     legend: LegendSettings = Field(default_factory=LegendSettings)
+    crop_template: CropTemplate = Field(default_factory=CropTemplate)
 
 class AssetEntry(BaseModel):
     sha256: str

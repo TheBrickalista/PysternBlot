@@ -8,34 +8,19 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QDialog
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem
 )
-from PySide6.QtGui import QAction, QPixmap, QPainter, QImage, QPdfWriter, QPageSize
-from PySide6.QtCore import Qt, QEvent, QRectF, QSize
-from PySide6.QtSvg import QSvgGenerator
+from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtCore import Qt
 
 from pathlib import Path
-import uuid
-
-from datetime import datetime, timezone
-import json
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
 from ..models import (
-    Blot, AssetEntry,
-    MarkerSet, MarkerBand, MarkerSetLibrary,
-    OverlayLadder, LadderBandAssignment,
-    OperationLogEntry,
+    Blot,
 )
 from .legend_tab import LegendTab
-from ..integrity import (
-    build_integrity_report,
-    build_detailed_integrity_report,
-    write_integrity_json,
-    write_integrity_html,
-)
 from .zoomable_graphics_view import ZoomableGraphicsView
 
 from .project_io_mixin import _ProjectIOMixin
@@ -286,6 +271,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.setValue(9)
         self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
         prov_top.addWidget(self.protein_font_size_spin)
+
+        prov_top.addSpacing(16)
+
+        self.include_in_final_cb = QCheckBox("Include in final figure")
+        self.include_in_final_cb.setChecked(True)
+        self.include_in_final_cb.toggled.connect(self._on_include_in_final_toggled)
+        prov_top.addWidget(self.include_in_final_cb)
 
         prov_top.addStretch(1)
 
@@ -667,6 +659,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.setValue(int(round(float(protein_font_size))))
         self.protein_font_size_spin.blockSignals(False)
 
+        self.include_in_final_cb.blockSignals(True)
+        self.include_in_final_cb.setChecked(bool(getattr(blot, "included_in_final", True)))
+        self.include_in_final_cb.blockSignals(False)
+
         self._refresh_overlay_ladder_ui()
 
     def _on_legend_changed(self):
@@ -710,11 +706,39 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # Rebuild cached preview_crop.png for this blot
         try:
-            self.workspace.ensure_blot_crop_preview(blot)
+            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
+        panel_scene = build_panel_scene(self.current_project, self.workspace.root)
+        self.view.setScene(panel_scene)
+        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def _on_crop_resize_commit(self):
+        """Called when the crop rectangle is resized (affects all blots via crop_template)."""
+        if not self.current_project:
+            return
+
+        self.log_operation(
+            "crop_template_resized",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.crop_template",
+            old_value=None,
+            new_value={"w": self.current_project.panel.crop_template.w,
+                       "h": self.current_project.panel.crop_template.h},
+            note="Crop template resized; all blot previews regenerated.",
+        )
+
+        self.workspace.save_project(self.current_project)
+
+        for blot in self.current_project.panel.blots:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            except Exception as e:
+                print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
+
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
@@ -800,7 +824,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # Option 2: ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
             try:
-                self.workspace.ensure_blot_crop_preview(blot)
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
             except Exception as e:
                 print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
@@ -813,12 +837,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = build_provenance_scene(
-            self.current_project,
-            self.workspace.root,
-            blot_id=self.active_blot_id,
-            on_crop_commit=self._on_crop_commit,
-            show_grid=self.prov_grid_visible
-        )
+                self.current_project,
+                self.workspace.root,
+                blot_id=self.active_blot_id,
+                on_crop_commit=self._on_crop_commit,
+                on_crop_resize_commit=self._on_crop_resize_commit,
+                show_grid=self.prov_grid_visible,
+            )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
@@ -837,7 +862,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # regenerate cached preview for this blot
         try:
-            self.workspace.ensure_blot_crop_preview(blot)
+            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed after crop move: {e}")
 
@@ -858,6 +883,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             asset = self.current_project.assets.get(blot.asset_sha256)
             if asset and asset.original_source_path:
                 display_name = Path(asset.original_source_path).name
+            if not blot.included_in_final:
+                display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
 
         idx = -1
@@ -1072,6 +1099,30 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_include_in_final_toggled(self, checked: bool):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        old = bool(blot.included_in_final)
+        new = bool(checked)
+
+        blot.included_in_final = new
+
+        self.log_operation(
+            "included_in_final_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="included_in_final",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.workspace.save_project(self.current_project)
+        self._populate_prov_blot_combo()
+        self._refresh_final_only(fit=True)
 
     def _on_border_toggled(self, checked: bool):
         if not self.current_project:

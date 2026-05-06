@@ -9,10 +9,8 @@ from __future__ import annotations
 import hashlib, json
 from dataclasses import dataclass
 from pathlib import Path
-from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand
+from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand, CropTemplate
 import datetime, uuid
-from PySide6.QtGui import QImage, QTransform
-from PySide6.QtCore import Qt
 
 from .image_utils import (
     load_image_uint16,
@@ -99,7 +97,12 @@ class Workspace:
 
     def load_project(self, project_json_path: str) -> Project:
         data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
-        return Project.model_validate(data)
+        project = Project.model_validate(data)
+        # Migrate old projects that pre-date crop_template: seed from first blot's crop w/h.
+        if "crop_template" not in data.get("panel", {}) and project.panel.blots:
+            first = project.panel.blots[0]
+            project.panel.crop_template = CropTemplate(w=first.crop.w, h=first.crop.h)
+        return project
     
     def load_legend_suggestions(self) -> list[str]:
         self.ensure()
@@ -210,6 +213,7 @@ class Workspace:
                 "blots": [],
                 "layout": {"stack_mode": "vertical_stack", "order": []},
                 "legend": {"mode": "protein", "upper_rows": [], "lower_rows": []},
+                "crop_template": {"w": 300.0, "h": 200.0},
             },
         }
 
@@ -254,9 +258,10 @@ class Workspace:
         save_uint16_tiff(cropped, out_path)
         return out_path
     
-    def ensure_blot_crop_preview(self, blot) -> Path:
+    def ensure_blot_crop_preview(self, blot, panel) -> Path:
         """
-        Generate/update assets/<sha256>/preview_crop.tif from the blot settings.
+        Generate/update assets/<sha256>/preview_crop_<id>.tif from the blot settings.
+        w/h come from panel.crop_template so all blots share the same crop size.
         Rotation is applied first, then crop is taken in rotated-image space.
         All processing stays in 16-bit.
         """
@@ -279,8 +284,9 @@ class Workspace:
         c = blot.crop
         x = int(round(float(c.x)))
         y = int(round(float(c.y)))
-        w = int(round(float(c.w)))
-        h = int(round(float(c.h)))
+        # w/h come from the shared crop template, not the per-blot crop
+        w = int(round(float(panel.crop_template.w)))
+        h = int(round(float(panel.crop_template.h)))
 
         cropped = crop_uint16(img, x, y, w, h)
 

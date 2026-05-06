@@ -438,6 +438,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.overlay_ladder_edit_btn.clicked.connect(self._open_overlay_ladder_dialog)
         overlay_ladder_l.addWidget(self.overlay_ladder_edit_btn)
 
+        overlay_ladder_l.addSpacing(16)
+        overlay_ladder_l.addWidget(QLabel("MW label size"))
+
+        self.mw_label_size_spin = QSpinBox()
+        self.mw_label_size_spin.setRange(4, 72)
+        self.mw_label_size_spin.setValue(24)
+        self.mw_label_size_spin.setSuffix(" pt")
+        self.mw_label_size_spin.valueChanged.connect(self._on_mw_label_size_changed)
+        overlay_ladder_l.addWidget(self.mw_label_size_spin)
+
         overlay_ladder_l.addStretch(1)
 
         prov_l.addWidget(overlay_ladder_frame)
@@ -663,6 +673,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.include_in_final_cb.setChecked(bool(getattr(blot, "included_in_final", True)))
         self.include_in_final_cb.blockSignals(False)
 
+        self.mw_label_size_spin.blockSignals(True)
+        self.mw_label_size_spin.setValue(
+            int(round(float(getattr(self.current_project.panel.style, "kda_label_font_size_pt", 24.0))))
+        )
+        self.mw_label_size_spin.blockSignals(False)
+
         self._refresh_overlay_ladder_ui()
 
     def _on_legend_changed(self):
@@ -714,6 +730,27 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def _on_mw_label_size_changed(self, value: int):
+        if not self.current_project:
+            return
+
+        old = float(self.current_project.panel.style.kda_label_font_size_pt)
+        new = float(value)
+
+        self.current_project.panel.style.kda_label_font_size_pt = new
+
+        self.log_operation(
+            "kda_label_font_size_changed",
+            target_type="project",
+            target_id=self.current_project.project.id,
+            field="panel.style.kda_label_font_size_pt",
+            old_value=old,
+            new_value=new,
+        )
+
+        self.workspace.save_project(self.current_project)
+        self._refresh_final_only(fit=False)
 
     def _on_crop_resize_commit(self):
         """Called when the crop rectangle is resized (affects all blots via crop_template)."""

@@ -80,6 +80,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.library_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.library_table.setAlternatingRowColors(True)
         self.library_table.cellDoubleClicked.connect(self._open_project_from_library)
+        self.library_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.library_table.customContextMenuRequested.connect(self._on_library_context_menu)
 
         lib_l.addWidget(self.library_table)
 

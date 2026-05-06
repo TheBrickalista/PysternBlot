@@ -145,6 +145,7 @@ class Style(BaseModel):
     gap_between_blots_px: int = 10
     border_enabled: bool = True
     border_width_px: int = 1
+    kda_label_font_size_pt: float = 24.0
 
 class Layout(BaseModel):
     stack_mode: Literal["vertical_stack"] = "vertical_stack"

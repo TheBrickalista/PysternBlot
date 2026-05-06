@@ -308,7 +308,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         return y + text_h + extra
     
     
-    # No figure title
     y = y0
 
     # ---- upper legend ----
@@ -345,8 +344,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 None
             )
 
-            marker_font = QFont(s.font_family, 24)
-            marker_font.setBold(True)
+            marker_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
+            marker_font.setBold(False)
 
             marker_pen = QPen(Qt.black)
             marker_pen.setWidth(5)
@@ -400,15 +399,17 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     label = getattr(preset_band, "label", None) if preset_band else None
                     if not label:
                         label = f"{kda:g}"
+                    label = f"{label} kDa"
 
-                    text_item = scene.addText(str(label), marker_font)
+                    text_item = scene.addText(label, marker_font)
                     text_item.setDefaultTextColor(Qt.black)
                     br = text_item.boundingRect()
 
                     text_item.setPos(
-                        left_col_x + 2.0,
+                        tick_x0 - 4.0 - br.width(),
                         yy - br.height() / 2.0,
                     )
+
         # Protein label on the right (vertically centered)
         protein_label = getattr(blot, "protein_label", None)
         label = getattr(protein_label, "text", "")
@@ -598,7 +599,7 @@ def build_provenance_scene(
         highlight_pen.setWidth(8)
         highlight_pen.setCosmetic(True)
 
-        label_font = QFont(s.font_family, 28)
+        label_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
         label_font.setBold(True)
 
         # For now, draw on the left of the image.
@@ -630,8 +631,9 @@ def build_provenance_scene(
                 label = getattr(preset_band, "label", None) if preset_band else None
                 if not label:
                     label = f"{kda:g}"
+                label = f"{label} kDa"
 
-                text_item = scene.addText(str(label), label_font)
+                text_item = scene.addText(label, label_font)
                 text_item.setDefaultTextColor(Qt.black)
                 br = text_item.boundingRect()
                 text_item.setPos(label_x, y - br.height() / 2.0)

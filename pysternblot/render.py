@@ -308,7 +308,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         return y + text_h + extra
     
     
-    # No figure title
     y = y0
 
     # ---- upper legend ----
@@ -407,9 +406,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     br = text_item.boundingRect()
 
                     text_item.setPos(
-                        left_col_x + 2.0,
+                        tick_x0 - 4.0 - br.width(),
                         yy - br.height() / 2.0,
                     )
+
         # Protein label on the right (vertically centered)
         protein_label = getattr(blot, "protein_label", None)
         label = getattr(protein_label, "text", "")

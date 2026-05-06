@@ -10,13 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform, QImage
+from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
 from .models import Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
-
-import numpy as np
 
 from .image_utils import (
     load_image_uint16,
@@ -446,8 +444,8 @@ def build_provenance_scene(
     show_grid: bool = False,
 ) -> QGraphicsScene:
     """
-    Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
-    v0.1: uses the first blot in the project.
+    Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
+    Uses blot_id if provided; falls back to the first blot in the project.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -495,10 +493,6 @@ def build_provenance_scene(
     x0, y0 = 10.0, 10.0
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
-
-    # Phase 1: rotate display only, do not modify pixels
-    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
-    #img_item.setRotation(rotation_deg)
 
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)

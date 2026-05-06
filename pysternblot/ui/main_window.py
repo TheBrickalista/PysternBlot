@@ -8,34 +8,19 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
-    QMessageBox, QGraphicsView, QToolBar, QSlider, QInputDialog, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QDialog
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem
 )
-from PySide6.QtGui import QAction, QPixmap, QPainter, QImage, QPdfWriter, QPageSize
-from PySide6.QtCore import Qt, QEvent, QRectF, QSize
-from PySide6.QtSvg import QSvgGenerator
+from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtCore import Qt
 
 from pathlib import Path
-import uuid
-
-from datetime import datetime, timezone
-import json
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
 from ..models import (
-    Blot, AssetEntry,
-    MarkerSet, MarkerBand, MarkerSetLibrary,
-    OverlayLadder, LadderBandAssignment,
-    OperationLogEntry,
+    Blot,
 )
 from .legend_tab import LegendTab
-from ..integrity import (
-    build_integrity_report,
-    build_detailed_integrity_report,
-    write_integrity_json,
-    write_integrity_html,
-)
 from .zoomable_graphics_view import ZoomableGraphicsView
 
 from .project_io_mixin import _ProjectIOMixin

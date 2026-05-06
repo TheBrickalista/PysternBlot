@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QInputDialog
 
-from pathlib import Path
 from datetime import datetime, timezone
 import json
 
@@ -206,7 +205,6 @@ class _ProjectIOMixin:
         try:
             digest, dest = self.workspace.import_asset(path)
 
-            # v0.1: attach to first blot (later we'll support selecting which blot)
             blot = self._get_active_blot()
             if blot is None:
                 raise RuntimeError("No active blot available.")

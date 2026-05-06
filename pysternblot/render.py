@@ -345,7 +345,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             )
 
             marker_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
-            marker_font.setBold(True)
+            marker_font.setBold(False)
 
             marker_pen = QPen(Qt.black)
             marker_pen.setWidth(5)

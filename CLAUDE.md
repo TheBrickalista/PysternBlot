@@ -109,3 +109,45 @@ Every mutation that should appear in integrity reports must call `self.log_opera
 ### Project persistence
 
 `workspace.save_project(project)` serialises the full Pydantic model to JSON. `workspace.load_project(path)` deserialises with `Project.model_validate(json.loads(...))`. Migrations for missing optional fields are handled by Pydantic defaults — always add new fields with a default to preserve backward compatibility with existing `project.json` files.
+
+### Phase 6 — NIR Multichannel Fluorescence (planned)
+
+**Supported platforms (initial):**
+- **LI-COR Odyssey** (Image Studio export) — typically a multi-page TIFF, one page per channel, or two separate single-channel TIFFs
+- **Cytiva Typhoon** — typically two separate single-channel TIFFs with wavelength encoded in the filename
+
+**Key difference from ECL:**
+- NIR signal is stable and ratiometric — no multiple-exposure audit requirement
+- Two independent 16-bit grayscale channels per membrane acquisition (typically 700 nm and 800 nm)
+- Both channels share the same physical crop region and the same ladder calibration
+- Each channel has its own antibody, protein label, and display settings
+
+**Planned model extension — `BlotChannel`:**
+```
+BlotChannel
+├── asset_sha256: str
+├── channel_index: int           # 0-based
+├── wavelength_nm: Optional[int] # e.g. 700, 800
+├── fluorophore: Optional[str]   # e.g. "IRDye 800CW"
+├── antibody_name: str           # migrated from Blot
+├── protein_label: ProteinLabel  # migrated from Blot
+└── display: DisplaySettings     # migrated from Blot
+```
+
+**Planned `Blot` extension:**
+- `modality: Literal["ecl", "nir_fluorescence"] = "ecl"` — defaults to ECL for full backward compatibility
+- `channels: list[BlotChannel] = []` — empty means legacy single-channel ECL blot; existing `asset_sha256`, `protein_label`, `antibody_name`, and `display` fields remain authoritative for ECL blots
+
+**Planned rendering approach:**
+- `modality == "ecl"` → existing rendering path, unchanged
+- `modality == "nir_fluorescence"` → each channel in `channels` renders as an independent grayscale blot row in the final figure, stacked in `channel_index` order
+- No false-colour composite in the final figure (greyscale per channel only)
+- False-colour composite available in the Original Image tab preview only, for orientation
+
+**Planned `image_utils.py` additions:**
+- `detect_tiff_channel_encoding(path) -> Literal["multipage", "rgb_interleaved", "single"]` — already implemented; inspects n_frames and mode
+- `load_multichannel_tiff(path) -> list[np.ndarray]` — already implemented; dispatches on encoding, returns one uint16 array per channel
+
+**Instrument test files (to be added to `tests/` when available):**
+- `tests/licor_odyssey_sample.tif` — multi-channel export from Image Studio
+- `tests/typhoon_ch1_sample.tif` and `tests/typhoon_ch2_sample.tif` — separate channel files from Typhoon/ImageQuant

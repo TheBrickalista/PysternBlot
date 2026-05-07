@@ -266,6 +266,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_label_combo.activated.connect(self._on_protein_label_changed)
         prov_top.addWidget(self.protein_label_combo)
 
+        prov_top.addWidget(QLabel("Antibody"))
+        self.antibody_name_combo = QComboBox()
+        self.antibody_name_combo.setEditable(True)
+        self.antibody_name_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.antibody_name_combo.setMinimumWidth(180)
+        self.antibody_name_combo.lineEdit().editingFinished.connect(self._on_antibody_name_changed)
+        self.antibody_name_combo.activated.connect(self._on_antibody_name_changed)
+        prov_top.addWidget(self.antibody_name_combo)
+
         prov_top.addWidget(QLabel("Size"))
 
         self.protein_font_size_spin = QSpinBox()
@@ -663,6 +672,25 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.protein_label_combo.blockSignals(False)
 
+        antibody_text = str(getattr(blot, "antibody_name", "") or "")
+
+        self.antibody_name_combo.blockSignals(True)
+        self.antibody_name_combo.clear()
+
+        antibody_suggestions = self._get_antibody_name_suggestions()
+
+        seen_ab = set(antibody_suggestions)
+        for b in self.current_project.panel.blots:
+            txt = str(getattr(b, "antibody_name", "") or "").strip()
+            if txt and txt not in seen_ab:
+                antibody_suggestions.append(txt)
+                seen_ab.add(txt)
+
+        self.antibody_name_combo.addItems(antibody_suggestions)
+        self.antibody_name_combo.setEditText(antibody_text)
+
+        self.antibody_name_combo.blockSignals(False)
+
         protein_font_size = getattr(getattr(blot, "protein_label", None), "font_size_pt", None)
         if protein_font_size is None:
             protein_font_size = getattr(self.current_project.panel.style, "font_size_pt", 9)
@@ -805,6 +833,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if txt not in items:
             items.append(txt)
             self.workspace.save_protein_label_suggestions(items)
+
+    def _get_antibody_name_suggestions(self) -> list[str]:
+        return self.workspace.load_antibody_name_suggestions()
+
+    def _add_antibody_name_suggestion(self, txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return
+        items = self.workspace.load_antibody_name_suggestions()
+        if txt not in items:
+            items.append(txt)
+            self.workspace.save_antibody_name_suggestions(items)
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()

@@ -135,6 +135,7 @@ class Blot(BaseModel):
     display: DisplaySettings = DisplaySettings()
     overlay_ladder: Optional[OverlayLadder] = None
     included_in_final: bool = True
+    antibody_name: str = ""
 
 class Style(BaseModel):
     font_family: str = "Arial"

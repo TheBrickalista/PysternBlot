@@ -190,6 +190,110 @@ class _ProjectIOMixin:
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    def _on_import_nir_blot(self):
+        if not self.current_project:
+            QMessageBox.information(
+                self,
+                "No project",
+                "Create or open a project first (New Project… or Open Project…).",
+            )
+            return
+
+        from .nir_import_dialog import NirImportDialog
+        dialog = NirImportDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        file_paths = [dialog.channel1_path]
+        if dialog.channel2_path is not None:
+            file_paths.append(dialog.channel2_path)
+
+        try:
+            # Register assets (import_nir_blot_typhoon also imports but doesn't add to project.assets)
+            imported_assets: dict = {}
+            for fp in file_paths:
+                digest, dest = self.workspace.import_asset(str(fp))
+                imported_assets[digest] = (fp, dest)
+
+            channels = self.workspace.import_nir_blot_typhoon(file_paths, self.current_project)
+
+            for ch in channels:
+                if ch.asset_sha256 not in self.current_project.assets:
+                    fp, dest = imported_assets[ch.asset_sha256]
+                    self.current_project.assets[ch.asset_sha256] = AssetEntry(
+                        sha256=ch.asset_sha256,
+                        stored_original_path=str(dest),
+                        original_source_path=str(fp),
+                        stored_preview_path=None,
+                    )
+
+            blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
+
+            new_blot = Blot.model_validate({
+                "id": blot_id,
+                "modality": "nir_fluorescence",
+                "channels": [ch.model_dump() for ch in channels],
+                "asset_sha256": channels[0].asset_sha256,
+                "crop": {
+                    "x": 50, "y": 50,
+                    "w": self.current_project.panel.crop_template.w,
+                    "h": self.current_project.panel.crop_template.h,
+                    "mode": "absolute",
+                },
+                "ladder": {
+                    "lane_index": 0,
+                    "marker_set_id": "ms_default",
+                    "calibration_points": [
+                        {"y_px": 50, "kda": 55},
+                        {"y_px": 120, "kda": 36},
+                    ],
+                    "show_ticks": True,
+                },
+                "protein_label": {"text": "Protein", "align": "center", "font_size_pt": None},
+                "display": {
+                    "invert": False,
+                    "gamma": 1.0,
+                    "auto_contrast": True,
+                    "overlay_alpha": 0.35,
+                    "overlay_visible": True,
+                    "rotation_deg": 0.0,
+                    "levels_black": 0,
+                    "levels_white": 65535,
+                    "levels_gamma": 1.0,
+                },
+                "included_in_final": True,
+            })
+
+            self.current_project.panel.blots.append(new_blot)
+            self.current_project.panel.layout.order.append(blot_id)
+
+            self.log_operation(
+                "nir_blot_imported",
+                target_type="blot",
+                target_id=blot_id,
+                note=f"{len(file_paths)} channel(s) imported",
+            )
+
+            self.workspace.save_project(self.current_project)
+
+            self.active_blot_id = blot_id
+            self._populate_prov_blot_combo()
+            self._update_prov_label()
+            self.refresh_previews()
+
+            channel_info = "\n".join(
+                f"  Ch{c.channel_index + 1}: {c.wavelength_nm}nm {c.filter_name or ''}"
+                for c in channels
+            )
+            QMessageBox.information(
+                self,
+                "NIR blot imported",
+                f"NIR blot imported: {len(channels)} channel(s)\n{channel_info}",
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
     def import_membrane(self):
         if not self.current_project or not self.current_project.panel.blots:
             QMessageBox.information(

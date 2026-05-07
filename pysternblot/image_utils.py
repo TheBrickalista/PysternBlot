@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -219,6 +220,25 @@ def load_multichannel_tiff(path: str | Path) -> list[np.ndarray]:
 
     # "single"
     return [load_image_uint16(path_str)]
+
+
+def parse_typhoon_channel_id(filename: str) -> str | None:
+    """
+    Extract a channel identifier from a Typhoon / ImageQuant TIFF filename.
+
+    Two conventions are recognised:
+    - Bracket notation: "20260507-142651-[IRlong].tif"  → "IRlong"
+    - Wavelength suffix: "scan_700nm_ch1.tif"           → "700nm"
+
+    Returns None if neither pattern is found.
+    """
+    m = re.search(r'\[([^\]]+)\]', filename)
+    if m:
+        return m.group(1)
+    m = re.search(r'(\d+nm)', filename, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
 
 
 def uint16_to_qpixmap(img: np.ndarray) -> QPixmap:

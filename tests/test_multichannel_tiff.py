@@ -26,7 +26,9 @@ from PIL import Image
 
 from pysternblot.image_utils import (
     detect_tiff_channel_encoding,
+    load_image_uint16,
     load_multichannel_tiff,
+    parse_typhoon_channel_id,
 )
 
 TESTS_DIR = Path(__file__).parent
@@ -207,21 +209,37 @@ class TestInstrumentFiles:
 
     def test_load_typhoon_separate_files(self):
         """
-        Verify that typhoon_ch1_sample.tif and typhoon_ch2_sample.tif each
-        load as a single uint16 array via load_image_uint16, and that both
-        have the same shape (confirming co-registered acquisition from the
-        same membrane scan).
+        Verify that each Typhoon channel file (IRshort / IRlong) loads as a
+        single uint16 array via load_image_uint16, and that both have the same
+        shape — confirming co-registered acquisition from the same membrane
+        scan (Cytiva Typhoon convention: one 16-bit grayscale TIFF per channel).
         """
-        pytest.skip(
-            "awaiting test images: typhoon_ch1_sample.tif, typhoon_ch2_sample.tif"
+        ch_short = TESTS_DIR / "20260507-142651-[IRshort].tif"
+        ch_long = TESTS_DIR / "20260507-142651-[IRlong].tif"
+
+        arr_short = load_image_uint16(ch_short)
+        arr_long = load_image_uint16(ch_long)
+
+        assert arr_short.dtype == np.uint16
+        assert arr_long.dtype == np.uint16
+        assert arr_short.shape == arr_long.shape, (
+            "Both channels must have identical shape (co-registered acquisition)"
         )
 
     def test_load_typhoon_wavelength_from_filename(self):
         """
-        Verify that a filename-based wavelength parser (to be implemented in
-        Phase 6) correctly extracts the channel wavelength from Typhoon /
-        ImageQuant filename conventions (e.g. "488nm", "647nm" substrings).
+        Verify that parse_typhoon_channel_id correctly extracts the channel
+        identifier from Typhoon / ImageQuant bracket-notation filenames.
+
+        The Typhoon convention encodes the channel name as a bracketed token:
+          "20260507-142651-[IRshort].tif" → "IRshort"
+          "20260507-142651-[IRlong].tif"  → "IRlong"
+
+        Numeric wavelength filenames (e.g. "scan_700nm.tif" → "700nm") are
+        also supported by the parser but are not present in this acquisition.
         """
-        pytest.skip(
-            "awaiting test images: typhoon_ch1_sample.tif, typhoon_ch2_sample.tif"
-        )
+        ch_short = TESTS_DIR / "20260507-142651-[IRshort].tif"
+        ch_long = TESTS_DIR / "20260507-142651-[IRlong].tif"
+
+        assert parse_typhoon_channel_id(ch_short.name) == "IRshort"
+        assert parse_typhoon_channel_id(ch_long.name) == "IRlong"

@@ -403,19 +403,33 @@ class Workspace:
         save_uint16_tiff(cropped, out_path)
         return out_path
     
-    def ensure_blot_crop_preview(self, blot, panel) -> Path:
+    def ensure_blot_crop_preview(self, blot, panel, channel_index: int = -1) -> Path:
         """
-        Generate/update assets/<sha256>/preview_crop_<id>.tif from the blot settings.
-        w/h come from panel.crop_template so all blots share the same crop size.
-        Rotation is applied first, then crop is taken in rotated-image space.
-        All processing stays in 16-bit.
+        Generate/update a 16-bit crop preview TIFF from blot settings.
+
+        channel_index == -1 (default): ECL path — uses blot.asset_sha256 and blot.display.
+            Cache: assets/<blot.asset_sha256>/preview_crop_<blot.id>.tif
+        channel_index >= 0: NIR path — uses blot.channels[channel_index].asset_sha256 and .display.
+            Cache: assets/<channel.asset_sha256>/preview_crop_<blot.id>_ch<channel_index>.tif
+
+        Crop position comes from blot.crop.x/y; size from panel.crop_template.
+        Rotation → levels → crop, all in 16-bit.
         """
         self.ensure()
 
-        original_path = self.asset_original_file(blot.asset_sha256)
+        if channel_index >= 0:
+            ch = blot.channels[channel_index]
+            sha256 = ch.asset_sha256
+            display = ch.display
+            cache_name = f"preview_crop_{blot.id}_ch{channel_index}.tif"
+        else:
+            sha256 = blot.asset_sha256
+            display = getattr(blot, "display", None)
+            cache_name = f"preview_crop_{blot.id}.tif"
+
+        original_path = self.asset_original_file(sha256)
         img = load_image_uint16(original_path)
 
-        display = getattr(blot, "display", None)
         black = int(getattr(display, "levels_black", 0))
         white = int(getattr(display, "levels_white", 65535))
         gamma = float(getattr(display, "levels_gamma", 1.0))
@@ -435,7 +449,7 @@ class Workspace:
 
         cropped = crop_uint16(img, x, y, w, h)
 
-        out_path = (self.assets_dir / blot.asset_sha256) / f"preview_crop_{blot.id}.tif"
+        out_path = self.assets_dir / sha256 / cache_name
         save_uint16_tiff(cropped, out_path)
 
         return out_path

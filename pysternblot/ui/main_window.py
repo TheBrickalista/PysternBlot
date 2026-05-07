@@ -788,9 +788,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # Persist the updated crop coordinates
         self.workspace.save_project(self.current_project)
 
-        # Rebuild cached preview_crop.png for this blot
+        # Rebuild cached preview_crop for this blot (all channels for NIR)
         try:
-            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            if blot.is_nir():
+                for ch in blot.channels:
+                    self.workspace.ensure_blot_crop_preview(
+                        blot, self.current_project.panel, channel_index=ch.channel_index
+                    )
+            else:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
@@ -840,7 +846,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         for blot in self.current_project.panel.blots:
             try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+                if blot.is_nir():
+                    for ch in blot.channels:
+                        self.workspace.ensure_blot_crop_preview(
+                            blot, self.current_project.panel, channel_index=ch.channel_index
+                        )
+                else:
+                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
             except Exception as e:
                 print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
 
@@ -1005,10 +1017,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._populate_prov_blot_combo()
         self._update_prov_label()
 
-        # Option 2: ensure cached crop previews exist before rendering
+        # Ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
             try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+                if blot.is_nir():
+                    for ch in blot.channels:
+                        self.workspace.ensure_blot_crop_preview(
+                            blot, self.current_project.panel, channel_index=ch.channel_index
+                        )
+                else:
+                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
             except Exception as e:
                 print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
@@ -1027,6 +1045,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 on_crop_commit=self._on_crop_commit,
                 on_crop_resize_commit=self._on_crop_resize_commit,
                 show_grid=self.prov_grid_visible,
+                nir_channel_index=self._active_nir_channel,
             )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
@@ -1044,9 +1063,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # persist crop
         self.workspace.save_project(self.current_project)
 
-        # regenerate cached preview for this blot
+        # regenerate cached preview for this blot (all channels for NIR)
         try:
-            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            if blot.is_nir():
+                for ch in blot.channels:
+                    self.workspace.ensure_blot_crop_preview(
+                        blot, self.current_project.panel, channel_index=ch.channel_index
+                    )
+            else:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
         except Exception as e:
             print(f"[preview] failed after crop move: {e}")
 

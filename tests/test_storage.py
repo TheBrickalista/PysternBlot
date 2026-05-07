@@ -765,3 +765,100 @@ class TestImportNirBlotTyphoon:
             if e.operation == "nir_channel_imported"
         ]
         assert len(nir_entries) == 2
+
+
+# ===========================================================================
+# ensure_blot_crop_preview — ECL and NIR cache filename behaviour
+# ===========================================================================
+
+def _make_uint16_tiff(path, width: int = 10, height: int = 8) -> None:
+    """Write a minimal valid 16-bit grayscale TIFF to *path*."""
+    import numpy as np
+    from PIL import Image
+    arr = np.zeros((height, width), dtype=np.uint16)
+    arr[2, 3] = 32768
+    img = Image.frombuffer("I;16", (width, height), arr.tobytes(), "raw", "I;16", 0, 1)
+    img.save(str(path))
+
+
+def _minimal_blot_model(blot_id: str, sha: str) -> "Blot":
+    from pysternblot.models import (
+        Blot, Crop, Ladder, CalibrationPoint, ProteinLabel, CropTemplate,
+    )
+    return Blot(
+        id=blot_id,
+        asset_sha256=sha,
+        crop=Crop(x=0, y=0, w=8, h=6),
+        ladder=Ladder(
+            lane_index=0,
+            marker_set_id="ms_default",
+            calibration_points=[
+                CalibrationPoint(y_px=2, kda=55),
+                CalibrationPoint(y_px=5, kda=36),
+            ],
+        ),
+        protein_label=ProteinLabel(text="Test"),
+    )
+
+
+class TestEnsureBlotCropPreviewNIR:
+
+    def test_ensure_blot_crop_preview_ecl_unaffected(self, tmp_path):
+        """ECL blot cache filename is preview_crop_<id>.tif — unchanged."""
+        ws = _make_workspace(tmp_path)
+        ws.ensure()
+
+        # Plant a real 16-bit TIFF in the asset store
+        sha = "a" * 64
+        asset_dir = ws.assets_dir / sha
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        _make_uint16_tiff(asset_dir / "original.tif")
+
+        from pysternblot.models import CropTemplate, Panel, LaneLayout, HeaderBlock, Group, ConditionRow, Layout, LegendSettings
+        blot = _minimal_blot_model("blot_01", sha)
+
+        class _FakePanel:
+            crop_template = CropTemplate(w=6, h=4)
+
+        out = ws.ensure_blot_crop_preview(blot, _FakePanel())
+        assert out.name == "preview_crop_blot_01.tif"
+        assert out.exists()
+
+    def test_ensure_blot_crop_preview_nir_channel_cache_name(self, tmp_path):
+        """NIR channels produce preview_crop_<id>_ch<n>.tif, one file per channel."""
+        ws = _make_workspace(tmp_path)
+        ws.ensure()
+
+        # Two distinct assets for the two NIR channels
+        sha0 = "0" * 64
+        sha1 = "1" * 64
+        for sha in (sha0, sha1):
+            d = ws.assets_dir / sha
+            d.mkdir(parents=True, exist_ok=True)
+            _make_uint16_tiff(d / "original.tif")
+
+        from pysternblot.models import BlotChannel, DisplaySettings, ProteinLabel, CropTemplate
+
+        blot = _minimal_blot_model("blot_nir", sha0)
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            BlotChannel(asset_sha256=sha0, channel_index=0),
+            BlotChannel(asset_sha256=sha1, channel_index=1),
+        ]
+
+        class _FakePanel:
+            crop_template = CropTemplate(w=6, h=4)
+
+        out0 = ws.ensure_blot_crop_preview(blot, _FakePanel(), channel_index=0)
+        out1 = ws.ensure_blot_crop_preview(blot, _FakePanel(), channel_index=1)
+
+        assert out0.name == "preview_crop_blot_nir_ch0.tif"
+        assert out1.name == "preview_crop_blot_nir_ch1.tif"
+        # Must be in the respective channel's asset directory
+        assert out0.parent == ws.assets_dir / sha0
+        assert out1.parent == ws.assets_dir / sha1
+        # Both files must exist
+        assert out0.exists()
+        assert out1.exists()
+        # Must be distinct paths
+        assert out0 != out1

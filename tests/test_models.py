@@ -459,3 +459,84 @@ class TestBlotNIRExtension:
         restored = Blot.model_validate(blot_dict)
         assert restored.modality == "ecl"
         assert restored.channels == []
+
+
+# ===========================================================================
+# Render row expansion logic (mirrors build_panel_scene expansion in render.py)
+# ===========================================================================
+
+def _expand_render_rows(panel):
+    """
+    Inline expansion matching build_panel_scene — returns list of
+    (blot, channel|None, is_first_row) tuples for included blots only.
+    """
+    order = list(getattr(panel.layout, "order", []))
+    blot_by_id = {b.id: b for b in panel.blots if b.included_in_final}
+    ordered = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
+
+    rows = []
+    seen: set = set()
+    for blot in ordered:
+        if blot.is_nir():
+            for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                rows.append((blot, ch, blot.id not in seen))
+                seen.add(blot.id)
+        else:
+            rows.append((blot, None, True))
+    return rows
+
+
+class TestRenderRowExpansion:
+
+    def test_render_rows_ecl_blot(self):
+        blot = _minimal_blot("ecl_01")
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 1
+        b, ch, is_first = rows[0]
+        assert b is blot
+        assert ch is None
+        assert is_first is True
+
+    def test_render_rows_nir_two_channels(self):
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(1, "sha_1"),  # out-of-order on purpose
+            _minimal_blot_channel(0, "sha_0"),
+        ]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 2
+        # must be sorted by channel_index
+        b0, ch0, first0 = rows[0]
+        b1, ch1, first1 = rows[1]
+        assert ch0.channel_index == 0
+        assert ch1.channel_index == 1
+        assert first0 is True
+        assert first1 is False  # ladder only on first row
+        assert b0 is blot
+        assert b1 is blot
+
+    def test_render_rows_nir_single_channel(self):
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        blot.channels = [_minimal_blot_channel(0, "sha_0")]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 1
+        b, ch, is_first = rows[0]
+        assert ch.channel_index == 0
+        assert is_first is True
+
+    def test_render_rows_excluded_blot(self):
+        ecl = _minimal_blot("ecl_01")
+        nir = _minimal_blot("nir_01")
+        nir.modality = "nir_fluorescence"
+        nir.channels = [_minimal_blot_channel(0, "sha_nir"), _minimal_blot_channel(1, "sha_nir2")]
+        nir.included_in_final = False
+        panel = _minimal_panel(blots=[ecl, nir])
+        rows = _expand_render_rows(panel)
+        # excluded NIR blot must produce zero rows regardless of channel count
+        assert len(rows) == 1
+        assert rows[0][0] is ecl

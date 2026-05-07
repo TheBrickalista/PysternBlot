@@ -70,14 +70,17 @@ def _load_rotated_display_pixmap(
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str, blot_id: str) -> QPixmap:
     """
-    Loads assets/<sha256>/preview_crop.tif as true 16-bit grayscale.
+    Loads assets/<sha256>/preview_crop_<blot_id>.tif as true 16-bit grayscale.
     """
     p = workspace_root / "assets" / sha256 / f"preview_crop_{blot_id}.tif"
-    if not p.exists():
-        return QPixmap()
+    return _load_pixmap_from_path(p)
 
+
+def _load_pixmap_from_path(path: Path) -> QPixmap:
+    if not path.exists():
+        return QPixmap()
     try:
-        arr = load_image_uint16(p)
+        arr = load_image_uint16(path)
         return uint16_to_qpixmap(arr)
     except Exception:
         return QPixmap()
@@ -113,15 +116,40 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     # ---- stack order (only included blots appear in the final figure) ----
     order = list(getattr(project.panel.layout, "order", []))
     blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
-    blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
+    ordered_blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
+
+    # ---- expand into render rows: (blot, channel|None, is_first_row) ----
+    # NIR blots produce one row per channel (sorted by channel_index).
+    # ECL blots produce one row (channel=None, is_first_row=True).
+    # Ladder is drawn only on the first row of each blot.
+    render_rows: list[tuple] = []
+    _seen_blot_ids: set = set()
+    for blot in ordered_blots:
+        if blot.is_nir():
+            for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                render_rows.append((blot, ch, blot.id not in _seen_blot_ids))
+                _seen_blot_ids.add(blot.id)
+        else:
+            render_rows.append((blot, None, True))
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
-    for blot in blots:
-        pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256, blot.id)
-        if pm.isNull():
-            pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+    for blot, ch, _is_first in render_rows:
+        if ch is not None:
+            # NIR channel: load from per-channel cache
+            p = workspace_root / "assets" / ch.asset_sha256 / f"preview_crop_{blot.id}_ch{ch.channel_index}.tif"
+            pm = _load_pixmap_from_path(p)
+            if pm.isNull():
+                pm = _load_original_pixmap(workspace_root, ch.asset_sha256)
+        else:
+            pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256, blot.id)
+            if pm.isNull():
+                pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
         pixmaps.append(pm)
+
+    if not render_rows:
+        scene.addText("No blots in this project.", font)
+        return scene
 
     max_w = max((pm.width() for pm in pixmaps if not pm.isNull()), default=0)
     max_h = max((pm.height() for pm in pixmaps if not pm.isNull()), default=0)
@@ -317,8 +345,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             y = _draw_legend_row(row, y)
         y += 10.0  # gap before first blot
 
-    # ---- blots ----
-    for blot, pm in zip(blots, pixmaps):
+    # ---- render rows ----
+    for (blot, ch, is_first_row), pm in zip(render_rows, pixmaps):
         if pm.isNull():
             t = scene.addText(f"Could not load image for blot: {blot.id}", font)
             t.setPos(x0, y)
@@ -333,8 +361,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             pen.setCosmetic(True)
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
-        # --- MW marker annotations on final cropped panel ---
-        ladder = getattr(blot, "overlay_ladder", None)
+        # --- MW marker annotations — ladder is shared per blot, drawn only on first row ---
+        ladder = getattr(blot, "overlay_ladder", None) if is_first_row else None
 
         if ladder is not None and getattr(ladder, "bands", None):
             marker_library = getattr(project, "marker_sets", []) or []
@@ -410,8 +438,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                         yy - br.height() / 2.0,
                     )
 
-        # Protein label on the right (vertically centered)
-        protein_label = getattr(blot, "protein_label", None)
+        # Protein label on the right (vertically centered) — per-channel for NIR
+        protein_label = ch.protein_label if ch is not None else getattr(blot, "protein_label", None)
         label = getattr(protein_label, "text", "")
 
         if label:
@@ -443,10 +471,14 @@ def build_provenance_scene(
     on_crop_commit=None,
     on_crop_resize_commit=None,
     show_grid: bool = False,
+    nir_channel_index: int = 0,
 ) -> QGraphicsScene:
     """
     Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
     Uses blot_id if provided; falls back to the first blot in the project.
+
+    For NIR blots, nir_channel_index selects which channel's image and display settings to show.
+    Default 0 means existing ECL callers are unaffected.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -465,9 +497,13 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
-    rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+    # For NIR blots, get sha256 and display from the selected channel.
+    try:
+        sha256, display = blot.get_display_channel(nir_channel_index)
+    except (IndexError, AttributeError):
+        sha256, display = blot.asset_sha256, blot.display
 
-    display = getattr(blot, "display", None)
+    rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
     black = int(getattr(display, "levels_black", 0))
     white = int(getattr(display, "levels_white", 65535))
     gamma = float(getattr(display, "levels_gamma", 1.0))
@@ -475,7 +511,7 @@ def build_provenance_scene(
 
     pm = _load_rotated_display_pixmap(
         workspace_root,
-        blot.asset_sha256,
+        sha256,
         rotation_deg,
         black=black,
         white=white,

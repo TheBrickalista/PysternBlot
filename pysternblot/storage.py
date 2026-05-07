@@ -6,11 +6,20 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-import hashlib, json, zipfile
+import hashlib, json, re, zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand, CropTemplate
+from .models import (
+    BlotChannel,
+    CropTemplate,
+    MarkerBand,
+    MarkerSet,
+    MarkerSetLibrary,
+    OperationLogEntry,
+    Project,
+)
 import datetime, uuid
+from PIL import Image
 
 
 @dataclass
@@ -28,6 +37,83 @@ from .image_utils import (
     crop_uint16,
     save_uint16_tiff,
 )
+
+def parse_typhoon_tag270(tag_text: str) -> dict:
+    """
+    Parse the key=value metadata from TIFF Tag 270 produced by Cytiva Typhoon /
+    Amersham TYPHOON scanners.
+
+    Lines are delimited by CRLF, CR, or bare LF.  The string may end with a
+    null terminator.  Never raises — malformed input returns whatever was
+    successfully parsed, with remaining keys set to None.
+
+    Keys returned:
+        serial_number   str   e.g. "36651188"
+        datetime        str   e.g. "Thu May  7 14:32:30 2026"
+        laser_nm        int   e.g. 785  (from "Laser name=785 nm")
+        filter_name     str   e.g. "IRlong 825BP30"  (strips "Through + " prefix)
+        scan_number     str   e.g. "1/2"
+        channel_index   int   0-based  (derived from scan_number numerator − 1)
+        channel_total   int   e.g. 2   (denominator of scan_number)
+        pixel_size_um   float e.g. 50.0
+        pmt_hv_v        int   e.g. 399
+        software        str   e.g. "Amersham TYPHOON Scanner Control Software 4.0.0.4"
+    """
+    result: dict = {
+        "serial_number": None,
+        "datetime": None,
+        "laser_nm": None,
+        "filter_name": None,
+        "scan_number": None,
+        "channel_index": None,
+        "channel_total": None,
+        "pixel_size_um": None,
+        "pmt_hv_v": None,
+        "software": None,
+    }
+    try:
+        text = tag_text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\x00").strip()
+        for line in text.split("\n"):
+            line = line.strip()
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            try:
+                if key == "Serial number":
+                    result["serial_number"] = value
+                elif key == "Date time":
+                    result["datetime"] = value
+                elif key == "Laser name":
+                    m = re.search(r"(\d+)", value)
+                    if m:
+                        result["laser_nm"] = int(m.group(1))
+                elif key == "Filter name":
+                    stripped = re.sub(r"^[Tt]hrough\s*\+\s*", "", value).strip()
+                    result["filter_name"] = stripped
+                elif key == "Scan number":
+                    result["scan_number"] = value
+                    parts = value.split("/")
+                    if len(parts) == 2:
+                        result["channel_index"] = int(parts[0]) - 1
+                        result["channel_total"] = int(parts[1])
+                elif key == "Pixel size":
+                    m = re.search(r"([\d.]+)", value)
+                    if m:
+                        result["pixel_size_um"] = float(m.group(1))
+                elif key == "PMT HV":
+                    m = re.search(r"(\d+)", value)
+                    if m:
+                        result["pmt_hv_v"] = int(m.group(1))
+                elif key == "Software":
+                    result["software"] = value
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return result
+
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -105,7 +191,6 @@ class Workspace:
         return path
 
     def rename_project(self, project: Project, new_name: str) -> Path:
-        from .models import OperationLogEntry
         old_name = project.project.name
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         project.project.name = new_name
@@ -373,6 +458,84 @@ class Workspace:
         path = self.presets_dir / "protein_ladders.json"
         path.write_text(library.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
+    def import_nir_blot_typhoon(
+        self,
+        file_paths: list[Path],
+        project: Project,
+    ) -> list[BlotChannel]:
+        """
+        Import 1 or 2 Typhoon NIR channel files into the workspace and return
+        a list of BlotChannel objects sorted by channel_index ascending.
+
+        Each file is hashed and stored via import_asset (SHA256-deduplicated).
+        Metadata is read from TIFF Tag 270 via parse_typhoon_tag270.
+        One OperationLogEntry is appended to project.operation_log per channel.
+        The caller is responsible for attaching the returned channels to a Blot
+        and saving the project.
+        """
+        # Collect (channel_index, sha256, parsed_meta) for each file.
+        entries: list[tuple[int, str, dict]] = []
+        for i, fp in enumerate(file_paths):
+            sha, _ = self.import_asset(str(fp))
+            meta: dict = {}
+            try:
+                with Image.open(str(fp)) as im:
+                    tag270 = im.tag_v2.get(270, "")
+                meta = parse_typhoon_tag270(tag270)
+            except Exception:
+                pass
+            # Fall back to file order if channel_index is not in metadata.
+            idx = meta.get("channel_index")
+            if idx is None:
+                idx = i
+            entries.append((idx, sha, meta))
+
+        entries.sort(key=lambda e: e[0])
+
+        now = (
+            datetime.datetime.now(datetime.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+        )
+        channels: list[BlotChannel] = []
+        for channel_index, sha, meta in entries:
+            filter_name = meta.get("filter_name") or ""
+            wavelength_nm = meta.get("laser_nm")
+            channel_total = meta.get("channel_total") or len(file_paths)
+
+            note = (
+                f"Typhoon: {filter_name}, {wavelength_nm}nm, "
+                f"channel {channel_index + 1}/{channel_total}"
+            )
+            project.operation_log.append(
+                OperationLogEntry(
+                    timestamp_utc=now,
+                    operation="nir_channel_imported",
+                    target_type="blot",
+                    asset_sha256=sha,
+                    note=note,
+                )
+            )
+            channels.append(
+                BlotChannel(
+                    asset_sha256=sha,
+                    channel_index=channel_index,
+                    wavelength_nm=wavelength_nm,
+                    filter_name=filter_name or None,
+                )
+            )
+        return channels
+
+    def import_nir_blot_odyssey(
+        self,
+        file_path: Path,
+        project: Project,
+    ) -> list[BlotChannel]:
+        raise NotImplementedError(
+            "LI-COR Odyssey import is not yet implemented. "
+            "Awaiting instrument test files. See Phase 6 in CLAUDE.md."
+        )
+
     def export_archive(
         self,
         project_ids: list[str],
@@ -442,8 +605,6 @@ class Workspace:
         src_path: Path,
         app_version: str,
     ) -> ImportArchiveResult:
-        from .models import OperationLogEntry
-
         self.ensure()
         result = ImportArchiveResult()
 

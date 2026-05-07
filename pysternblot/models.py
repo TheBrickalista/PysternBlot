@@ -125,6 +125,19 @@ class OverlayLadder(BaseModel):
     show_only_highlighted: bool = False
 
 
+class BlotChannel(BaseModel):
+    asset_sha256: str
+    channel_index: int                                          # 0-based, from Scan number tag
+    wavelength_nm: Optional[int] = None                        # e.g. 685, 785
+    filter_name: Optional[str] = None                          # e.g. "IRshort 720BP20"
+    fluorophore: Optional[str] = None                          # user-editable, e.g. "IRDye 800CW"
+    antibody_name: str = ""
+    protein_label: ProteinLabel = Field(
+        default_factory=lambda: ProteinLabel(text="")
+    )
+    display: DisplaySettings = Field(default_factory=DisplaySettings)
+
+
 class Blot(BaseModel):
     id: str
     asset_sha256: str
@@ -136,6 +149,25 @@ class Blot(BaseModel):
     overlay_ladder: Optional[OverlayLadder] = None
     included_in_final: bool = True
     antibody_name: str = ""
+    modality: Literal["ecl", "nir_fluorescence"] = "ecl"
+    channels: List[BlotChannel] = Field(default_factory=list)
+
+    def is_nir(self) -> bool:
+        return self.modality == "nir_fluorescence"
+
+    def get_display_channel(self, channel_index: int = 0) -> tuple[str, DisplaySettings]:
+        """Return (asset_sha256, display) for the given channel.
+
+        For ECL blots (modality == 'ecl'), channel_index is ignored and the
+        blot's own asset_sha256 and display are returned.
+        For NIR blots, returns the matching BlotChannel's fields.
+        """
+        if not self.is_nir():
+            return self.asset_sha256, self.display
+        ch = next((c for c in self.channels if c.channel_index == channel_index), None)
+        if ch is None:
+            raise IndexError(f"No channel {channel_index} in NIR blot {self.id}")
+        return ch.asset_sha256, ch.display
 
 class Style(BaseModel):
     font_family: str = "Arial"

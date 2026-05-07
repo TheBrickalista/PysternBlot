@@ -16,6 +16,7 @@ import pytest
 
 from pysternblot.models import (
     Blot,
+    BlotChannel,
     CalibrationPoint,
     ConditionRow,
     Crop,
@@ -389,3 +390,72 @@ class TestAntibodyName:
         blot_dict.pop("antibody_name", None)
         restored = Blot.model_validate(blot_dict)
         assert restored.antibody_name == ""
+
+
+# ===========================================================================
+# Blot NIR extension — modality, channels, helpers
+# ===========================================================================
+
+def _minimal_blot_channel(index: int, sha: str = "sha_ch") -> BlotChannel:
+    return BlotChannel(
+        asset_sha256=sha,
+        channel_index=index,
+        wavelength_nm=785 - index * 100,  # 785, 685 for 0, 1
+    )
+
+
+class TestBlotNIRExtension:
+
+    def test_blot_ecl_defaults(self):
+        blot = _minimal_blot()
+        assert blot.modality == "ecl"
+        assert blot.channels == []
+        assert blot.is_nir() is False
+
+    def test_blot_nir_modality(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(0, "sha_0"),
+            _minimal_blot_channel(1, "sha_1"),
+        ]
+        assert blot.is_nir() is True
+        assert len(blot.channels) == 2
+
+    def test_get_display_channel_ecl(self):
+        blot = _minimal_blot()
+        sha, display = blot.get_display_channel()
+        assert sha == blot.asset_sha256
+        assert display is blot.display
+
+    def test_get_display_channel_nir(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_ch0")
+        ch1 = _minimal_blot_channel(1, "sha_ch1")
+        blot.channels = [ch0, ch1]
+
+        sha0, disp0 = blot.get_display_channel(0)
+        sha1, disp1 = blot.get_display_channel(1)
+
+        assert sha0 == "sha_ch0"
+        assert sha1 == "sha_ch1"
+        assert disp0 is ch0.display
+        assert disp1 is ch1.display
+
+    def test_blot_channel_index_out_of_range(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [_minimal_blot_channel(0)]
+
+        with pytest.raises(IndexError):
+            blot.get_display_channel(99)
+
+    def test_backward_compat_ecl_project_loads(self):
+        """A Blot dict without modality or channels (old project.json) must load cleanly."""
+        blot_dict = _minimal_blot().model_dump()
+        blot_dict.pop("modality", None)
+        blot_dict.pop("channels", None)
+        restored = Blot.model_validate(blot_dict)
+        assert restored.modality == "ecl"
+        assert restored.channels == []

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Project, LegendRow
+from .models import Crop, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -383,7 +383,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             marker_highlight_pen.setWidth(8)
             marker_highlight_pen.setCosmetic(True)
 
-            crop_y = float(getattr(blot.crop, "y", 0.0))
+            _row_crop = blot.get_channel_crop(ch.channel_index) if ch is not None else blot.crop
+            crop_y = float(getattr(_row_crop, "y", 0.0))
             crop_h_scene = float(pm.height())
 
             tick_x0 = left_col_x + 45.0
@@ -568,7 +569,7 @@ def build_provenance_scene(
             gy += grid_step
             
     # Crop box overlay (crop coords are in image pixel space)
-    c = blot.crop
+    c = blot.get_channel_crop(nir_channel_index)
     ct = project.panel.crop_template
 
     def _apply_from_scene_rect(scene_rect: QRectF) -> None:
@@ -585,8 +586,13 @@ def build_provenance_scene(
         if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
         if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
 
-        blot.crop.x = x
-        blot.crop.y = y
+        # Per-channel crop position: each NIR channel stores its own x/y.
+        # ECL blots always update blot.crop directly.
+        _cur = blot.get_channel_crop(nir_channel_index)
+        blot.set_channel_crop(
+            nir_channel_index,
+            Crop(x=x, y=y, w=_cur.w, h=_cur.h, mode=_cur.mode),
+        )
         # w/h go to the shared template so all blots resize together
         ct.w = w
         ct.h = h

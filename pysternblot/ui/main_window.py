@@ -969,6 +969,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def _on_nir_channel_changed(self, channel_index: int) -> None:
         self._active_nir_channel = channel_index
         self._sync_controls_from_project()
+        self.refresh_previews()
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()

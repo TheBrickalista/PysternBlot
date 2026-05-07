@@ -444,12 +444,16 @@ class Workspace:
         rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
         img = rotate_uint16(img, rotation_deg, expand=False)
 
-        c = blot.crop
-        x = int(round(float(c.x)))
-        y = int(round(float(c.y)))
         # w/h come from the shared crop template, not the per-blot crop
         w = int(round(float(panel.crop_template.w)))
         h = int(round(float(panel.crop_template.h)))
+
+        if channel_index >= 0:
+            c = blot.get_channel_crop(channel_index)
+        else:
+            c = blot.crop
+        x = int(round(float(c.x)))
+        y = int(round(float(c.y)))
 
         cropped = crop_uint16(img, x, y, w, h)
 

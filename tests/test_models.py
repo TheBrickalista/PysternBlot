@@ -540,3 +540,65 @@ class TestRenderRowExpansion:
         # excluded NIR blot must produce zero rows regardless of channel count
         assert len(rows) == 1
         assert rows[0][0] is ecl
+
+
+# ===========================================================================
+# Per-channel crop — get_channel_crop / set_channel_crop
+# ===========================================================================
+
+class TestPerChannelCrop:
+
+    def test_get_channel_crop_ecl(self):
+        """ECL blot always returns blot.crop regardless of channel_index."""
+        blot = _minimal_blot()
+        blot.crop = Crop(x=10, y=20, w=300, h=200)
+        assert blot.get_channel_crop(0) is blot.crop
+        assert blot.get_channel_crop(99) is blot.crop
+
+    def test_get_channel_crop_nir_fallback(self):
+        """NIR blot with no channel-specific crop falls back to blot.crop."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(0, "sha_0"),
+            _minimal_blot_channel(1, "sha_1"),
+        ]
+        # Both channels have crop=None → fall back to blot.crop
+        assert blot.get_channel_crop(0) is blot.crop
+        assert blot.get_channel_crop(1) is blot.crop
+
+    def test_get_channel_crop_nir_channel_specific(self):
+        """NIR blot with ch.crop set returns that channel's crop, not blot.crop."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        ch1.crop = Crop(x=50, y=60, w=300, h=200)
+        blot.channels = [ch0, ch1]
+        # ch0 has no crop → blot.crop
+        assert blot.get_channel_crop(0) is blot.crop
+        # ch1 has its own crop → channel crop
+        assert blot.get_channel_crop(1) is ch1.crop
+        assert blot.get_channel_crop(1).x == 50
+        assert blot.get_channel_crop(1).y == 60
+
+    def test_set_channel_crop_nir(self):
+        """set_channel_crop sets only the targeted channel; other channel is unchanged."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        blot.channels = [ch0, ch1]
+        new_crop = Crop(x=77, y=88, w=300, h=200)
+        blot.set_channel_crop(1, new_crop)
+        assert blot.channels[1].crop is new_crop
+        assert blot.channels[0].crop is None  # unchanged
+
+    def test_set_channel_crop_ecl(self):
+        """set_channel_crop on an ECL blot updates blot.crop."""
+        blot = _minimal_blot()
+        new_crop = Crop(x=50, y=60, w=300, h=200)
+        blot.set_channel_crop(0, new_crop)
+        assert blot.crop is new_crop
+        assert blot.crop.x == 50
+        assert blot.crop.y == 60

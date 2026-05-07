@@ -136,6 +136,7 @@ class BlotChannel(BaseModel):
         default_factory=lambda: ProteinLabel(text="")
     )
     display: DisplaySettings = Field(default_factory=DisplaySettings)
+    crop: Optional[Crop] = None                                 # None = use blot.crop (shared fallback)
 
 
 class Blot(BaseModel):
@@ -154,6 +155,25 @@ class Blot(BaseModel):
 
     def is_nir(self) -> bool:
         return self.modality == "nir_fluorescence"
+
+    def get_channel_crop(self, channel_index: int) -> Crop:
+        """Return crop for the given NIR channel; falls back to blot.crop if not set.
+        For ECL blots, channel_index is ignored and blot.crop is always returned."""
+        if not self.is_nir():
+            return self.crop
+        ch = next((c for c in self.channels if c.channel_index == channel_index), None)
+        if ch is None or ch.crop is None:
+            return self.crop
+        return ch.crop
+
+    def set_channel_crop(self, channel_index: int, crop: Optional[Crop]) -> None:
+        """Set the crop for the given NIR channel. For ECL blots, sets blot.crop."""
+        if not self.is_nir():
+            self.crop = crop
+            return
+        ch = next((c for c in self.channels if c.channel_index == channel_index), None)
+        if ch is not None:
+            ch.crop = crop
 
     def get_display_channel(self, channel_index: int = 0) -> tuple[str, DisplaySettings]:
         """Return (asset_sha256, display) for the given channel.

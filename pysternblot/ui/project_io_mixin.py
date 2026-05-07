@@ -218,6 +218,9 @@ class _ProjectIOMixin:
             channels = self.workspace.import_nir_blot_typhoon(file_paths, self.current_project)
 
             for ch in channels:
+                ch.display.invert = True
+
+            for ch in channels:
                 if ch.asset_sha256 not in self.current_project.assets:
                     fp, dest = imported_assets[ch.asset_sha256]
                     self.current_project.assets[ch.asset_sha256] = AssetEntry(
@@ -277,8 +280,8 @@ class _ProjectIOMixin:
             self.workspace.save_project(self.current_project)
 
             self.active_blot_id = blot_id
-            self._populate_prov_blot_combo()
-            self._update_prov_label()
+            self._active_nir_channel = 0
+            self._sync_controls_from_project()
             self.refresh_previews()
 
             channel_info = "\n".join(

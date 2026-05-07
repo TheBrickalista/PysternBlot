@@ -418,7 +418,11 @@ class Workspace:
         self.ensure()
 
         if channel_index >= 0:
-            ch = blot.channels[channel_index]
+            ch = next((c for c in blot.channels if c.channel_index == channel_index), None)
+            if ch is None:
+                raise IndexError(
+                    f"No channel with channel_index={channel_index} in blot {blot.id!r}"
+                )
             sha256 = ch.asset_sha256
             display = ch.display
             cache_name = f"preview_crop_{blot.id}_ch{channel_index}.tif"

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
 
+import re
 from pathlib import Path
 
 from ..storage import Workspace
@@ -789,16 +790,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         # Rebuild cached preview_crop for this blot (all channels for NIR)
-        try:
-            if blot.is_nir():
-                for ch in blot.channels:
+        if blot.is_nir():
+            for ch in blot.channels:
+                try:
                     self.workspace.ensure_blot_crop_preview(
                         blot, self.current_project.panel, channel_index=ch.channel_index
                     )
-            else:
+                except Exception as e:
+                    print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+        else:
+            try:
                 self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-        except Exception as e:
-            print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+            except Exception as e:
+                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -845,16 +849,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         for blot in self.current_project.panel.blots:
-            try:
-                if blot.is_nir():
-                    for ch in blot.channels:
+            if blot.is_nir():
+                for ch in blot.channels:
+                    try:
                         self.workspace.ensure_blot_crop_preview(
                             blot, self.current_project.panel, channel_index=ch.channel_index
                         )
-                else:
+                    except Exception as e:
+                        print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+            else:
+                try:
                     self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
+                except Exception as e:
+                    print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
 
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
@@ -1019,16 +1026,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # Ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
-            try:
-                if blot.is_nir():
-                    for ch in blot.channels:
+            if blot.is_nir():
+                for ch in blot.channels:
+                    try:
                         self.workspace.ensure_blot_crop_preview(
                             blot, self.current_project.panel, channel_index=ch.channel_index
                         )
-                else:
+                    except Exception as e:
+                        print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+            else:
+                try:
                     self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+                except Exception as e:
+                    print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         try:
             panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -1064,16 +1074,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         # regenerate cached preview for this blot (all channels for NIR)
-        try:
-            if blot.is_nir():
-                for ch in blot.channels:
+        if blot.is_nir():
+            for ch in blot.channels:
+                try:
                     self.workspace.ensure_blot_crop_preview(
                         blot, self.current_project.panel, channel_index=ch.channel_index
                     )
-            else:
+                except Exception as e:
+                    print(f"[preview] failed after crop move for ch{ch.channel_index}: {e}")
+        else:
+            try:
                 self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-        except Exception as e:
-            print(f"[preview] failed after crop move: {e}")
+            except Exception as e:
+                print(f"[preview] failed after crop move: {e}")
 
         # refresh both views
         self.refresh_previews()
@@ -1088,10 +1101,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             return
 
         for blot in self.current_project.panel.blots:
-            display_name = blot.id
-            asset = self.current_project.assets.get(blot.asset_sha256)
-            if asset and asset.original_source_path:
-                display_name = Path(asset.original_source_path).name
+            if blot.is_nir() and blot.channels:
+                first_ch = min(blot.channels, key=lambda c: c.channel_index)
+                first_asset = self.current_project.assets.get(first_ch.asset_sha256)
+                if first_asset and first_asset.original_source_path:
+                    stem = Path(first_asset.original_source_path).stem
+                    prefix = re.sub(r"-?\[.*?\]$", "", stem)
+                    display_name = f"{prefix} (NIR {len(blot.channels)}ch)"
+                else:
+                    display_name = f"{blot.id} (NIR {len(blot.channels)}ch)"
+            else:
+                display_name = blot.id
+                asset = self.current_project.assets.get(blot.asset_sha256)
+                if asset and asset.original_source_path:
+                    display_name = Path(asset.original_source_path).name
             if not blot.included_in_final:
                 display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)

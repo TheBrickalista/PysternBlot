@@ -242,6 +242,30 @@ class _OverlayLadderMixin:
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
+    def _on_antibody_name_changed(self, *_args):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        old = str(getattr(blot, "antibody_name", "") or "")
+        new = self.antibody_name_combo.currentText().strip()
+
+        blot.antibody_name = new
+
+        self.log_operation(
+            "antibody_name_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="antibody_name",
+            old_value=old,
+            new_value=new,
+        )
+
+        self._add_antibody_name_suggestion(new)
+
+        self.workspace.save_project(self.current_project)
+
     def _on_protein_font_size_changed(self, value: int):
         blot = self._get_active_blot()
         if blot is None or not self.current_project:

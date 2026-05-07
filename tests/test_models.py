@@ -366,3 +366,26 @@ class TestOperationLogEntry:
         restored = Project.model_validate(project.model_dump())
         assert len(restored.operation_log) == 1
         assert restored.operation_log[0].operation == "levels_changed"
+
+
+# ===========================================================================
+# Blot.antibody_name
+# ===========================================================================
+
+class TestAntibodyName:
+
+    def test_blot_antibody_name_default(self):
+        blot = _minimal_blot()
+        assert blot.antibody_name == ""
+
+    def test_blot_antibody_name_roundtrip(self):
+        blot = _minimal_blot()
+        blot.antibody_name = "anti-GAPDH"
+        restored = Blot.model_validate(blot.model_dump())
+        assert restored.antibody_name == "anti-GAPDH"
+
+    def test_blot_backward_compat_no_antibody_name(self):
+        blot_dict = _minimal_blot().model_dump()
+        blot_dict.pop("antibody_name", None)
+        restored = Blot.model_validate(blot_dict)
+        assert restored.antibody_name == ""

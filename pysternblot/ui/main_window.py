@@ -42,6 +42,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.overlay_ladder_assignment_table = None
 
         self.setWindowTitle("Pystern Blot")
+        self.setMinimumSize(900, 600)
         self.resize(1100, 700)
 
         self.tabs = QTabWidget()
@@ -213,77 +214,91 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov = QWidget()
         prov_l = QVBoxLayout(prov)
 
-        prov_top = QHBoxLayout()
-        prov_top.addWidget(QLabel("Blot"))
+        prov_rows = QVBoxLayout()
+        prov_rows.setSpacing(4)
+
+        prov_row1 = QHBoxLayout()
+        prov_row1.addWidget(QLabel("Blot"))
         self.prov_blot_combo = QComboBox()
         self.prov_blot_combo.currentIndexChanged.connect(self._on_active_blot_changed)
-        prov_top.addWidget(self.prov_blot_combo)
+        prov_row1.addWidget(self.prov_blot_combo)
 
         self.prov_up_btn = QPushButton("Up")
         self.prov_up_btn.clicked.connect(self._move_active_blot_up)
-        prov_top.addWidget(self.prov_up_btn)
+        prov_row1.addWidget(self.prov_up_btn)
 
         self.prov_down_btn = QPushButton("Down")
         self.prov_down_btn.clicked.connect(self._move_active_blot_down)
-        prov_top.addWidget(self.prov_down_btn)
+        prov_row1.addWidget(self.prov_down_btn)
 
-        prov_top.addWidget(QLabel("Rotate"))
+        prov_row1.addWidget(QLabel("Rotate"))
 
         self.prov_rotate_dial = QDial()
         self.prov_rotate_dial.setRange(-100, 100)   # maps to -10.0° to +10.0°
         self.prov_rotate_dial.setSingleStep(1)
         self.prov_rotate_dial.setNotchesVisible(True)
         self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
-        prov_top.addWidget(self.prov_rotate_dial)
+        prov_row1.addWidget(self.prov_rotate_dial)
 
         self.prov_rotate_label = QLabel("0.0°")
-        prov_top.addWidget(self.prov_rotate_label)
+        prov_row1.addWidget(self.prov_rotate_label)
 
         self.prov_grid_cb = QCheckBox("Grid")
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
-        prov_top.addWidget(self.prov_grid_cb)
+        prov_row1.addWidget(self.prov_grid_cb)
 
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
-        prov_top.addWidget(self.prov_fit_btn)
+        prov_row1.addWidget(self.prov_fit_btn)
 
         self.export_original_tiff_btn = QPushButton("Export Original TIFF")
         self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
-        prov_top.addWidget(self.export_original_tiff_btn)
+        prov_row1.addWidget(self.export_original_tiff_btn)
 
         self.export_all_original_tiff_btn = QPushButton("Export All Originals")
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
-        prov_top.addWidget(self.export_all_original_tiff_btn)
+        prov_row1.addWidget(self.export_all_original_tiff_btn)
 
-        prov_top.addSpacing(16)
+        prov_row1.addStretch(1)
 
-        prov_top.addWidget(QLabel("Protein"))
+        prov_row2 = QHBoxLayout()
+
+        prov_row2.addWidget(QLabel("Protein"))
         self.protein_label_combo = QComboBox()
         self.protein_label_combo.setEditable(True)
         self.protein_label_combo.setInsertPolicy(QComboBox.NoInsert)
         self.protein_label_combo.setMinimumWidth(180)
         self.protein_label_combo.lineEdit().editingFinished.connect(self._on_protein_label_changed)
         self.protein_label_combo.activated.connect(self._on_protein_label_changed)
-        prov_top.addWidget(self.protein_label_combo)
+        prov_row2.addWidget(self.protein_label_combo)
 
-        prov_top.addWidget(QLabel("Size"))
+        prov_row2.addWidget(QLabel("Antibody"))
+        self.antibody_name_combo = QComboBox()
+        self.antibody_name_combo.setEditable(True)
+        self.antibody_name_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.antibody_name_combo.setMinimumWidth(180)
+        self.antibody_name_combo.lineEdit().editingFinished.connect(self._on_antibody_name_changed)
+        self.antibody_name_combo.activated.connect(self._on_antibody_name_changed)
+        prov_row2.addWidget(self.antibody_name_combo)
+
+        prov_row2.addWidget(QLabel("Size"))
 
         self.protein_font_size_spin = QSpinBox()
         self.protein_font_size_spin.setRange(4, 48)
         self.protein_font_size_spin.setValue(9)
         self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
-        prov_top.addWidget(self.protein_font_size_spin)
-
-        prov_top.addSpacing(16)
+        prov_row2.addWidget(self.protein_font_size_spin)
 
         self.include_in_final_cb = QCheckBox("Include in final figure")
         self.include_in_final_cb.setChecked(True)
         self.include_in_final_cb.toggled.connect(self._on_include_in_final_toggled)
-        prov_top.addWidget(self.include_in_final_cb)
+        prov_row2.addWidget(self.include_in_final_cb)
 
-        prov_top.addStretch(1)
+        prov_row2.addStretch(1)
 
-        prov_l.addLayout(prov_top)
+        prov_rows.addLayout(prov_row1)
+        prov_rows.addLayout(prov_row2)
+        prov_l.addLayout(prov_rows)
 
         self.prov_label = QLabel("Current blot: —")
         prov_l.addWidget(self.prov_label)
@@ -663,6 +678,25 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.protein_label_combo.blockSignals(False)
 
+        antibody_text = str(getattr(blot, "antibody_name", "") or "")
+
+        self.antibody_name_combo.blockSignals(True)
+        self.antibody_name_combo.clear()
+
+        antibody_suggestions = self._get_antibody_name_suggestions()
+
+        seen_ab = set(antibody_suggestions)
+        for b in self.current_project.panel.blots:
+            txt = str(getattr(b, "antibody_name", "") or "").strip()
+            if txt and txt not in seen_ab:
+                antibody_suggestions.append(txt)
+                seen_ab.add(txt)
+
+        self.antibody_name_combo.addItems(antibody_suggestions)
+        self.antibody_name_combo.setEditText(antibody_text)
+
+        self.antibody_name_combo.blockSignals(False)
+
         protein_font_size = getattr(getattr(blot, "protein_label", None), "font_size_pt", None)
         if protein_font_size is None:
             protein_font_size = getattr(self.current_project.panel.style, "font_size_pt", 9)
@@ -805,6 +839,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if txt not in items:
             items.append(txt)
             self.workspace.save_protein_label_suggestions(items)
+
+    def _get_antibody_name_suggestions(self) -> list[str]:
+        return self.workspace.load_antibody_name_suggestions()
+
+    def _add_antibody_name_suggestion(self, txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return
+        items = self.workspace.load_antibody_name_suggestions()
+        if txt not in items:
+            items.append(txt)
+            self.workspace.save_antibody_name_suggestions(items)
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()

@@ -187,7 +187,39 @@ class Workspace:
                 out.append(s)
                 seen.add(s)
         path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
-        
+
+    def load_antibody_name_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "antibody_name_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_antibody_name_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "antibody_name_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+
     def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
         """
         Create a new project folder and a minimal project.json, return its path.

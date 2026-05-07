@@ -34,6 +34,15 @@ Full ladder annotation workflow is integrated:
 
 ---
 
+## ✅ UI Fixes *(Completed this session)*
+
+Two correctness fixes to the Original Image tab UI:
+
+- **Window resize regression** — main window was not resizable despite resize handles appearing on hover; fixed by setting an explicit `minimumSize(900, 600)` before `resize()` so the layout's computed `minimumSizeHint` cannot lock the window after `show()`
+- **Original Image toolbar split into two rows** — single-row toolbar was overflowing (causing the resize regression); navigation and image controls are now on row 1, metadata and annotation fields (Protein, Antibody, Size, Include in final) on row 2
+
+---
+
 ## Phase 1 — UI Cleanup & Workflow Reorganization
 
 **Goals**
@@ -82,6 +91,7 @@ Cleaner, more intuitive UI with minimal risk to core functionality.
 The following fields should be added to the blot data model to enable complete experimental documentation — the digital equivalent of writing on the film:
 
 **Reagent fields:**
+- [x] ✅ Antibody name per blot (writable dropdown combobox in Original Image tab, persisted in project file, logged in audit trail, suggestion history, not rendered in figure)
 - [ ] Antibody catalogue number and supplier
 - [ ] Antibody lot number
 - [ ] Primary antibody dilution and diluent (e.g. 1:1000 in 5% BSA/TBST)
@@ -167,6 +177,9 @@ Full support for the most common fluorescence-based WB platforms alongside exist
 Addresses the recovery of existing image libraries and long-term data availability requirements from journals and funders.
 
 ### 7.1 Batch Import of Existing Libraries
+
+**Archive export/import:**
+- [x] ✅ Export/import library archive (`.pbarchive` format — plain zip): `export_archive` and `import_archive` on `Workspace`; project selection dialog with Select All / Deselect All; SHA256 integrity verification of every asset before any file is written; `imported_from_archive` operation log entry on import; skips projects and assets already present (idempotent); full test coverage (5 tests)
 
 For researchers inheriting a dataset or bringing historical data into compliance:
 

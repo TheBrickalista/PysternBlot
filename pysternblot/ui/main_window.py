@@ -539,10 +539,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         new_btn = self._make_home_button("New Project", self.new_project)
         open_btn = self._make_home_button("Open Project", self.open_project)
         import_btn = self._make_home_button("Import Blot", self.import_blot)
+        export_lib_btn = self._make_home_button("Export Library…", self.export_library)
+        import_lib_btn = self._make_home_button("Import Library…", self.import_library)
 
         btn_row.addWidget(new_btn)
         btn_row.addWidget(open_btn)
         btn_row.addWidget(import_btn)
+        btn_row.addWidget(export_lib_btn)
+        btn_row.addWidget(import_lib_btn)
 
         btn_row.addStretch(1)
 
@@ -596,6 +600,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         a_import_mem = QAction("Import Membrane…", self)
         a_import_mem.triggered.connect(self.import_membrane)
         tb.addAction(a_import_mem)
+
+        tb.addSeparator()
+
+        a_export_lib = QAction("Export Library…", self)
+        a_export_lib.triggered.connect(self.export_library)
+        tb.addAction(a_export_lib)
+
+        a_import_lib = QAction("Import Library…", self)
+        a_import_lib.triggered.connect(self.import_library)
+        tb.addAction(a_import_lib)
 
     def _sync_controls_from_project(self):
         self._populate_prov_blot_combo()

@@ -21,7 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from pysternblot.storage import Workspace, sha256_file
+import zipfile
+
+from pysternblot.storage import Workspace, sha256_file, ImportArchiveResult
 from pysternblot.models import (
     CalibrationPoint,
     ConditionRow,
@@ -380,3 +382,192 @@ class TestCreateNewProject:
         id1 = json.loads(p1.read_text())["project"]["id"]
         id2 = json.loads(p2.read_text())["project"]["id"]
         assert id1 != id2
+
+
+# ===========================================================================
+# Helpers for archive tests
+# ===========================================================================
+
+def _make_project_with_real_asset(ws: Workspace, tmp_path: Path) -> tuple[str, str]:
+    """
+    Import a real binary asset into *ws*, create a project that references it,
+    return (project_id, asset_sha256).
+    """
+    # Create a fake 16-byte "image" file (content is arbitrary)
+    asset_file = tmp_path / "fake_image.tif"
+    asset_file.write_bytes(b"\x00\x01" * 8)
+
+    sha, _dest = ws.import_asset(str(asset_file))
+
+    proj_path = ws.create_new_project("Archive Test Project")
+    project = ws.load_project(str(proj_path))
+
+    # Patch the project so it references the asset via blot + assets dict
+    from pysternblot.models import AssetEntry, Blot
+    project.assets[sha] = AssetEntry(
+        sha256=sha,
+        stored_original_path=str(_dest),
+        original_source_path=str(asset_file),
+    )
+    blot_dict = _minimal_blot_dict("blot_01")
+    blot_dict["asset_sha256"] = sha
+    project.panel.blots.append(Blot.model_validate(blot_dict))
+    project.panel.layout.order.append("blot_01")
+    ws.save_project(project)
+
+    return project.project.id, sha
+
+
+# ===========================================================================
+# export_archive / import_archive
+# ===========================================================================
+
+class TestExportArchiveRoundtrip:
+
+    def test_export_archive_roundtrip(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        project_id, sha = _make_project_with_real_asset(ws, tmp_path)
+
+        archive_path = tmp_path / "export.pbarchive"
+        ws.export_archive([project_id], archive_path, "0.1.0")
+
+        assert archive_path.exists()
+
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            names = zf.namelist()
+
+            # manifest must be present
+            assert "pbarchive/manifest.json" in names
+
+            manifest = json.loads(zf.read("pbarchive/manifest.json"))
+            assert manifest["format"] == "pbarchive"
+            assert manifest["format_version"] == 1
+            assert project_id in manifest["project_ids"]
+            assert sha in manifest["asset_sha256s"]
+
+            # project.json must be present
+            assert f"pbarchive/projects/{project_id}/project.json" in names
+
+            # asset original must be present (name starts with "original.")
+            asset_entries = [n for n in names if n.startswith(f"pbarchive/assets/{sha}/")]
+            assert len(asset_entries) == 1
+            assert asset_entries[0].split("/")[-1].startswith("original.")
+
+            # preview caches must NOT be included
+            assert not any("preview_crop" in n for n in names)
+
+
+class TestImportArchiveRoundtrip:
+
+    def test_import_archive_roundtrip(self, tmp_path):
+        src_ws = _make_workspace(tmp_path / "source")
+        project_id, sha = _make_project_with_real_asset(src_ws, tmp_path)
+
+        archive_path = tmp_path / "transfer.pbarchive"
+        src_ws.export_archive([project_id], archive_path, "0.1.0")
+
+        dst_ws = _make_workspace(tmp_path / "dest")
+        result = dst_ws.import_archive(archive_path, "0.1.0")
+
+        assert result.imported_project_ids == [project_id]
+        assert result.skipped_project_ids == []
+        assert result.imported_asset_count == 1
+        assert result.skipped_asset_count == 0
+        assert result.integrity_errors == []
+
+        # Project should be present and loadable in the destination workspace
+        proj_path = dst_ws.projects_dir / project_id / "project.json"
+        assert proj_path.exists()
+        imported = dst_ws.load_project(str(proj_path))
+        assert imported.project.id == project_id
+
+        # Operation log must contain the import entry
+        import_entries = [
+            e for e in imported.operation_log
+            if e.operation == "imported_from_archive"
+        ]
+        assert len(import_entries) == 1
+        assert import_entries[0].target_id == project_id
+        assert "transfer.pbarchive" in (import_entries[0].note or "")
+
+        # Asset must be present on disk
+        asset_path = dst_ws.asset_original_file(sha)
+        assert asset_path.exists()
+
+
+class TestImportArchiveSkipsExistingProject:
+
+    def test_import_archive_skips_existing_project(self, tmp_path):
+        src_ws = _make_workspace(tmp_path / "source")
+        project_id, sha = _make_project_with_real_asset(src_ws, tmp_path)
+
+        archive_path = tmp_path / "export.pbarchive"
+        src_ws.export_archive([project_id], archive_path, "0.1.0")
+
+        dst_ws = _make_workspace(tmp_path / "dest")
+
+        # First import
+        result1 = dst_ws.import_archive(archive_path, "0.1.0")
+        assert project_id in result1.imported_project_ids
+
+        # Record state after first import
+        proj_path = dst_ws.projects_dir / project_id / "project.json"
+        content_after_first = proj_path.read_bytes()
+
+        # Second import — project already exists
+        result2 = dst_ws.import_archive(archive_path, "0.1.0")
+        assert project_id in result2.skipped_project_ids
+        assert project_id not in result2.imported_project_ids
+
+        # Project file must be identical (not re-written or corrupted)
+        assert proj_path.read_bytes() == content_after_first
+
+
+class TestImportArchiveIntegrityError:
+
+    def test_import_archive_integrity_error(self, tmp_path):
+        src_ws = _make_workspace(tmp_path / "source")
+        project_id, sha = _make_project_with_real_asset(src_ws, tmp_path)
+
+        # Build a valid archive first, then corrupt the asset inside
+        good_archive = tmp_path / "good.pbarchive"
+        src_ws.export_archive([project_id], good_archive, "0.1.0")
+
+        bad_archive = tmp_path / "bad.pbarchive"
+        with zipfile.ZipFile(good_archive, "r") as zin, \
+             zipfile.ZipFile(bad_archive, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename.startswith("pbarchive/assets/"):
+                    data = b"corrupted content"  # SHA256 will not match the path name
+                zout.writestr(item, data)
+
+        dst_ws = _make_workspace(tmp_path / "dest")
+        result = dst_ws.import_archive(bad_archive, "0.1.0")
+
+        assert len(result.integrity_errors) > 0
+        # Corrupt asset must NOT have been written to disk
+        assert not (dst_ws.assets_dir / sha).exists()
+
+
+class TestExportArchiveMissingAsset:
+
+    def test_export_archive_missing_asset_raises(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+
+        proj_path = ws.create_new_project("Ghost Asset Project")
+        project = ws.load_project(str(proj_path))
+
+        # Inject a blot referencing a SHA that has no file on disk
+        ghost_sha = "a" * 64
+        from pysternblot.models import Blot
+        blot_dict = _minimal_blot_dict("blot_01")
+        blot_dict["asset_sha256"] = ghost_sha
+        project.panel.blots.append(Blot.model_validate(blot_dict))
+        project.panel.layout.order.append("blot_01")
+        ws.save_project(project)
+
+        archive_path = tmp_path / "should_not_exist.pbarchive"
+
+        with pytest.raises(FileNotFoundError, match=ghost_sha):
+            ws.export_archive([project.project.id], archive_path, "0.1.0")

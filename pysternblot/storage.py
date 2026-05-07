@@ -6,11 +6,20 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-import hashlib, json
-from dataclasses import dataclass
+import hashlib, json, zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from .models import Project, MarkerSet, MarkerSetLibrary, MarkerBand, CropTemplate
 import datetime, uuid
+
+
+@dataclass
+class ImportArchiveResult:
+    imported_project_ids: list[str] = field(default_factory=list)
+    skipped_project_ids: list[str] = field(default_factory=list)
+    imported_asset_count: int = 0
+    skipped_asset_count: int = 0
+    integrity_errors: list[str] = field(default_factory=list)
 
 from .image_utils import (
     load_image_uint16,
@@ -95,6 +104,25 @@ class Workspace:
         path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
         return path
 
+    def rename_project(self, project: Project, new_name: str) -> Path:
+        from .models import OperationLogEntry
+        old_name = project.project.name
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+        project.project.name = new_name
+        project.project.modified_utc = now
+        project.operation_log.append(
+            OperationLogEntry(
+                timestamp_utc=now,
+                operation="project_renamed",
+                target_type="project",
+                target_id=project.project.id,
+                field="project.name",
+                old_value=old_name,
+                new_value=new_name,
+            )
+        )
+        return self.save_project(project)
+
     def load_project(self, project_json_path: str) -> Project:
         data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
         project = Project.model_validate(data)
@@ -168,7 +196,39 @@ class Workspace:
                 out.append(s)
                 seen.add(s)
         path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
-        
+
+    def load_antibody_name_suggestions(self) -> list[str]:
+        self.ensure()
+        path = self.presets_dir / "antibody_name_suggestions.json"
+        if not path.exists():
+            path.write_text('{"items":[]}\n', encoding="utf-8")
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            items = data.get("items", [])
+            seen = set()
+            out = []
+            for s in items:
+                s = str(s).strip()
+                if s and s not in seen:
+                    out.append(s)
+                    seen.add(s)
+            return out
+        except Exception:
+            return []
+
+    def save_antibody_name_suggestions(self, items: list[str]) -> None:
+        self.ensure()
+        path = self.presets_dir / "antibody_name_suggestions.json"
+        seen = set()
+        out = []
+        for s in items:
+            s = str(s).strip()
+            if s and s not in seen:
+                out.append(s)
+                seen.add(s)
+        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+
     def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
         """
         Create a new project folder and a minimal project.json, return its path.
@@ -312,5 +372,173 @@ class Workspace:
         self.ensure()
         path = self.presets_dir / "protein_ladders.json"
         path.write_text(library.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    
-    
+
+    def export_archive(
+        self,
+        project_ids: list[str],
+        dest_path: Path,
+        app_version: str,
+    ) -> None:
+        self.ensure()
+
+        for pid in project_ids:
+            if not (self.projects_dir / pid / "project.json").exists():
+                raise FileNotFoundError(f"Project not found in workspace: {pid}")
+
+        # Load projects and collect every referenced asset SHA256.
+        projects: dict[str, Project] = {}
+        all_sha256s: set[str] = set()
+
+        for pid in project_ids:
+            project = self.load_project(str(self.projects_dir / pid / "project.json"))
+            projects[pid] = project
+
+            for sha in project.assets:
+                all_sha256s.add(sha)
+
+            for blot in project.panel.blots:
+                all_sha256s.add(blot.asset_sha256)
+                if blot.overlay_asset_sha256:
+                    all_sha256s.add(blot.overlay_asset_sha256)
+
+        # Verify every asset exists on disk before touching the destination file.
+        asset_files: dict[str, Path] = {}
+        for sha in all_sha256s:
+            try:
+                asset_files[sha] = self.asset_original_file(sha)
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    f"Asset {sha} is referenced by a project but is missing from the workspace."
+                )
+
+        now = (
+            datetime.datetime.now(datetime.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+        )
+        manifest = {
+            "format": "pbarchive",
+            "format_version": 1,
+            "created_utc": now,
+            "app_version": app_version,
+            "project_ids": list(project_ids),
+            "asset_sha256s": list(all_sha256s),
+        }
+
+        with zipfile.ZipFile(dest_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("pbarchive/manifest.json", json.dumps(manifest, indent=2))
+
+            for pid, project in projects.items():
+                zf.writestr(
+                    f"pbarchive/projects/{pid}/project.json",
+                    project.model_dump_json(indent=2),
+                )
+
+            for sha, asset_path in asset_files.items():
+                zf.write(str(asset_path), f"pbarchive/assets/{sha}/{asset_path.name}")
+
+    def import_archive(
+        self,
+        src_path: Path,
+        app_version: str,
+    ) -> ImportArchiveResult:
+        from .models import OperationLogEntry
+
+        self.ensure()
+        result = ImportArchiveResult()
+
+        with zipfile.ZipFile(src_path, "r") as zf:
+            # --- Validate manifest ---
+            try:
+                manifest_bytes = zf.read("pbarchive/manifest.json")
+            except KeyError:
+                raise ValueError(
+                    "Not a valid .pbarchive file: missing pbarchive/manifest.json"
+                )
+
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+            if manifest.get("format") != "pbarchive":
+                raise ValueError(
+                    f"Unknown archive format: {manifest.get('format')!r}"
+                )
+            if manifest.get("format_version") != 1:
+                raise ValueError(
+                    f"Unsupported archive version: {manifest.get('format_version')}"
+                )
+
+            # --- Asset integrity check (read-only pass, nothing written yet) ---
+            valid_assets: dict[str, tuple[str, bytes]] = {}  # sha256 -> (filename, data)
+
+            for name in zf.namelist():
+                if not name.startswith("pbarchive/assets/"):
+                    continue
+                parts = name.split("/")
+                # Expected: pbarchive / assets / <sha256> / original.<ext>
+                if len(parts) != 4 or not parts[3].startswith("original."):
+                    continue
+
+                sha256_in_path = parts[2]
+                data = zf.read(name)
+
+                h = hashlib.sha256()
+                h.update(data)
+                computed = h.hexdigest()
+
+                if computed != sha256_in_path:
+                    result.integrity_errors.append(
+                        f"SHA256 mismatch for asset at {name}: "
+                        f"path says {sha256_in_path[:12]}…, "
+                        f"content hashes to {computed[:12]}…"
+                    )
+                    continue
+
+                valid_assets[sha256_in_path] = (parts[3], data)
+
+            # --- Write valid assets ---
+            for sha, (filename, data) in valid_assets.items():
+                dest_dir = self.assets_dir / sha
+                if dest_dir.exists():
+                    result.skipped_asset_count += 1
+                else:
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    (dest_dir / filename).write_bytes(data)
+                    result.imported_asset_count += 1
+
+            # --- Import projects ---
+            for name in zf.namelist():
+                if not name.startswith("pbarchive/projects/"):
+                    continue
+                parts = name.split("/")
+                # Expected: pbarchive / projects / <project_id> / project.json
+                if len(parts) != 4 or parts[3] != "project.json":
+                    continue
+
+                project_id = parts[2]
+                proj_dir = self.projects_dir / project_id
+
+                if proj_dir.exists():
+                    result.skipped_project_ids.append(project_id)
+                    continue
+
+                proj_data = json.loads(zf.read(name).decode("utf-8"))
+                project = Project.model_validate(proj_data)
+
+                now = (
+                    datetime.datetime.now(datetime.timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                )
+                project.operation_log.append(
+                    OperationLogEntry(
+                        timestamp_utc=now,
+                        operation="imported_from_archive",
+                        target_type="project",
+                        target_id=project_id,
+                        note=f"Imported from archive: {src_path.name}",
+                    )
+                )
+
+                self.save_project(project)
+                result.imported_project_ids.append(project_id)
+
+        return result

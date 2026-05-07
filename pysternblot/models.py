@@ -135,6 +135,7 @@ class Blot(BaseModel):
     display: DisplaySettings = DisplaySettings()
     overlay_ladder: Optional[OverlayLadder] = None
     included_in_final: bool = True
+    antibody_name: str = ""
 
 class Style(BaseModel):
     font_family: str = "Arial"
@@ -145,6 +146,7 @@ class Style(BaseModel):
     gap_between_blots_px: int = 10
     border_enabled: bool = True
     border_width_px: int = 1
+    kda_label_font_size_pt: float = 24.0
 
 class Layout(BaseModel):
     stack_mode: Literal["vertical_stack"] = "vertical_stack"

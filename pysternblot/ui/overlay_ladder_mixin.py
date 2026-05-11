@@ -222,10 +222,14 @@ class _OverlayLadderMixin:
         if blot is None or not self.current_project:
             return
 
-        old = str(blot.protein_label.text or "")
+        target = self._get_active_channel_or_blot()
+        if target is None:
+            return
+
+        old = str(target.protein_label.text or "")
         new = self.protein_label_combo.currentText().strip()
 
-        blot.protein_label.text = new
+        target.protein_label.text = new
 
         self.log_operation(
             "protein_label_changed",
@@ -247,10 +251,14 @@ class _OverlayLadderMixin:
         if blot is None or not self.current_project:
             return
 
-        old = str(getattr(blot, "antibody_name", "") or "")
+        target = self._get_active_channel_or_blot()
+        if target is None:
+            return
+
+        old = str(getattr(target, "antibody_name", "") or "")
         new = self.antibody_name_combo.currentText().strip()
 
-        blot.antibody_name = new
+        target.antibody_name = new
 
         self.log_operation(
             "antibody_name_changed",
@@ -271,10 +279,14 @@ class _OverlayLadderMixin:
         if blot is None or not self.current_project:
             return
 
-        old = blot.protein_label.font_size_pt
+        target = self._get_active_channel_or_blot()
+        if target is None:
+            return
+
+        old = target.protein_label.font_size_pt
         new = float(value)
 
-        blot.protein_label.font_size_pt = new
+        target.protein_label.font_size_pt = new
 
         self.log_operation(
             "protein_font_size_changed",

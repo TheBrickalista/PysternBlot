@@ -94,6 +94,8 @@ class DisplaySettings(BaseModel):
     overlay_alpha: float = 0.35
     overlay_visible: bool = True
     rotation_deg: float = 0.0
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
 
     levels_black: int = 0      # 0..65535
     levels_white: int = 65535  # 0..65535

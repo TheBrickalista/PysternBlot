@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib, json, re, zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+import numpy as np
 from .models import (
     BlotChannel,
     CropTemplate,
@@ -443,6 +444,11 @@ class Workspace:
 
         rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
         img = rotate_uint16(img, rotation_deg, expand=False)
+
+        if bool(getattr(display, "flip_horizontal", False)):
+            img = np.fliplr(img)
+        if bool(getattr(display, "flip_vertical", False)):
+            img = np.flipud(img)
 
         # w/h come from the shared crop template, not the per-blot crop
         w = int(round(float(panel.crop_template.w)))

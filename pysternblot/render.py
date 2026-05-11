@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from pathlib import Path
 
 from PySide6.QtWidgets import QGraphicsScene
@@ -47,9 +48,11 @@ def _load_rotated_display_pixmap(
     white: int = 65535,
     gamma: float = 1.0,
     invert: bool = False,
+    flip_horizontal: bool = False,
+    flip_vertical: bool = False,
 ) -> QPixmap:
     """
-    Load original image, apply levels in 16-bit, then rotate in 16-bit.
+    Load original image, apply levels → rotate → flip in 16-bit.
     """
     asset_dir = workspace_root / "assets" / sha256
     original_path = None
@@ -64,7 +67,11 @@ def _load_rotated_display_pixmap(
         img = load_image_uint16(original_path)
         img = apply_levels_uint16(img, black, white, gamma, invert)
         img = rotate_uint16(img, rotation_deg, expand=False)
-        return uint16_to_qpixmap(img)
+        if flip_horizontal:
+            img = np.fliplr(img)
+        if flip_vertical:
+            img = np.flipud(img)
+        return uint16_to_qpixmap(np.ascontiguousarray(img))
     except Exception:
         return QPixmap()
 
@@ -509,6 +516,8 @@ def build_provenance_scene(
     white = int(getattr(display, "levels_white", 65535))
     gamma = float(getattr(display, "levels_gamma", 1.0))
     invert = bool(getattr(display, "invert", False))
+    flip_h = bool(getattr(display, "flip_horizontal", False))
+    flip_v = bool(getattr(display, "flip_vertical", False))
 
     pm = _load_rotated_display_pixmap(
         workspace_root,
@@ -518,6 +527,8 @@ def build_provenance_scene(
         white=white,
         gamma=gamma,
         invert=invert,
+        flip_horizontal=flip_h,
+        flip_vertical=flip_v,
     )
     if pm.isNull():
         scene.addText(

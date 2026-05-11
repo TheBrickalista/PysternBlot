@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox, QInputDialog, QTableWidgetItem
+from PySide6.QtWidgets import QMessageBox, QInputDialog, QTableWidgetItem, QCheckBox
 from PySide6.QtCore import Qt
 
 import uuid
@@ -79,8 +79,14 @@ class _MarkerSetMixin:
             highlight_item.setCheckState(Qt.Checked if band.highlight else Qt.Unchecked)
             self.marker_set_table.setItem(row, 3, highlight_item)
 
-            channels_text = ", ".join(str(w) for w in band.channels) if band.channels else ""
-            self.marker_set_table.setItem(row, 4, QTableWidgetItem(channels_text))
+            show_685 = 685 in band.channels and 785 not in band.channels
+            show_785 = 785 in band.channels and 685 not in band.channels
+            cb_685 = QCheckBox()
+            cb_685.setChecked(show_685)
+            cb_785 = QCheckBox()
+            cb_785.setChecked(show_785)
+            self.marker_set_table.setCellWidget(row, 4, cb_685)
+            self.marker_set_table.setCellWidget(row, 5, cb_785)
 
         self.marker_set_table.blockSignals(False)
         self.marker_set_table.resizeColumnsToContents()
@@ -93,7 +99,6 @@ class _MarkerSetMixin:
             label_item = self.marker_set_table.item(row, 1)
             visible_item = self.marker_set_table.item(row, 2)
             highlight_item = self.marker_set_table.item(row, 3)
-            channels_item = self.marker_set_table.item(row, 4)
 
             if kda_item is None:
                 continue
@@ -105,15 +110,17 @@ class _MarkerSetMixin:
             kda = float(txt)
             label = label_item.text().strip() if label_item else ""
 
-            channels: list[int] = []
-            if channels_item:
-                for token in channels_item.text().split(","):
-                    token = token.strip()
-                    if token:
-                        try:
-                            channels.append(int(token))
-                        except ValueError:
-                            pass
+            cb_685 = self.marker_set_table.cellWidget(row, 4)
+            cb_785 = self.marker_set_table.cellWidget(row, 5)
+            show_685 = cb_685.isChecked() if cb_685 else False
+            show_785 = cb_785.isChecked() if cb_785 else False
+
+            if show_685 and not show_785:
+                channels: list[int] = [685]
+            elif show_785 and not show_685:
+                channels = [785]
+            else:
+                channels = []
 
             bands.append(
                 MarkerBand(
@@ -237,7 +244,10 @@ class _MarkerSetMixin:
         highlight_item.setCheckState(Qt.Unchecked)
         self.marker_set_table.setItem(row, 3, highlight_item)
 
-        self.marker_set_table.setItem(row, 4, QTableWidgetItem(""))
+        cb_685 = QCheckBox()
+        cb_785 = QCheckBox()
+        self.marker_set_table.setCellWidget(row, 4, cb_685)
+        self.marker_set_table.setCellWidget(row, 5, cb_785)
 
     def _remove_selected_marker_band_row(self):
         row = self.marker_set_table.currentRow()

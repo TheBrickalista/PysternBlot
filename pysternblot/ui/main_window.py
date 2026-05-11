@@ -138,14 +138,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ladder_l.addLayout(ladder_top)
 
         self.marker_set_table = QTableWidget()
-        self.marker_set_table.setColumnCount(5)
+        self.marker_set_table.setColumnCount(6)
         self.marker_set_table.setHorizontalHeaderLabels([
-            "kDa", "Label", "Visible", "Highlight", "Channels"
+            "kDa", "Label", "Visible", "Highlight", "Show 685", "Show 785"
         ])
-        self.marker_set_table.horizontalHeaderItem(4).setToolTip(
-            "Leave blank to show on all channels. "
-            "Enter wavelengths (e.g. 685, 785) to restrict to specific NIR channels."
+        _ch_tip = (
+            "Check to restrict this band to this wavelength channel only. "
+            "Leave both unchecked to show on all channels."
         )
+        self.marker_set_table.horizontalHeaderItem(4).setToolTip(_ch_tip)
+        self.marker_set_table.horizontalHeaderItem(5).setToolTip(_ch_tip)
+        self.marker_set_table.setColumnWidth(4, 70)
+        self.marker_set_table.setColumnWidth(5, 70)
         self.marker_set_table.setAlternatingRowColors(True)
         ladder_l.addWidget(self.marker_set_table)
 

@@ -731,6 +731,9 @@ def build_provenance_scene(
         label_x = x0 - 125.0
 
         for assignment in ladder.bands:
+            if not bool(getattr(assignment, "show_in_final", True)):
+                continue
+
             y = y0 + float(assignment.y_px)
             kda = float(assignment.kda)
 

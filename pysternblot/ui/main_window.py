@@ -561,17 +561,34 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot")
+        title = QLabel("Pystern Blot - 1.0.0")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)
 
-        subtitle = QLabel("Organize, crop and assemble publication-ready blot panels")
+        subtitle = QLabel(
+            "<p style='text-align:center; color:#666666; font-size:13px;'>"
+            "A scientific image processing tool for western blot figure preparation,<br>"
+            "with full provenance tracking, audit logging, and integrity reporting.<br>"
+            "Designed for reproducibility and compliance with journal data integrity requirements."
+            "</p>"
+        )
+        subtitle.setTextFormat(Qt.RichText)
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 13px; color: #666666;")
+        subtitle.setWordWrap(True)
         title_layout.addWidget(subtitle)
 
+        copyright_lbl = QLabel(
+            "<p>Copyright &copy; 2025&ndash;2026 Etienne Boulter, Inserm</p>"
+            "<p>This software is distributed under the <b>GNU General Public License v3 (GPLv3)</b>.<br>"
+            "This software is provided without warranty of any kind.</p>"
+        )
+        copyright_lbl.setAlignment(Qt.AlignCenter)
+        copyright_lbl.setWordWrap(True)
+        copyright_lbl.setTextFormat(Qt.RichText)
         root.addWidget(title_wrap)
+
+        root.addWidget(copyright_lbl)
 
         # Button row
         btn_row_wrap = QWidget()
@@ -597,30 +614,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         root.addWidget(btn_row_wrap)
 
-        version_lbl = QLabel("<h2>Pystern Blot 1.0.0</h2>")
-        version_lbl.setAlignment(Qt.AlignCenter)
-        version_lbl.setWordWrap(True)
-        version_lbl.setTextFormat(Qt.RichText)
-        root.addWidget(version_lbl)
-
-        desc_lbl = QLabel(
-            "A scientific image processing tool for western blot figure preparation, "
-            "with full provenance tracking, audit logging, and integrity reporting. "
-            "Designed for reproducibility and compliance with journal data integrity requirements."
-        )
-        desc_lbl.setAlignment(Qt.AlignCenter)
-        desc_lbl.setWordWrap(True)
-        root.addWidget(desc_lbl)
-
-        copyright_lbl = QLabel(
-            "<p>Copyright &copy; 2025&ndash;2026 Etienne Boulter, Inserm</p>"
-            "<p>This software is distributed under the <b>GNU General Public License v3 (GPLv3)</b>.<br>"
-            "This software is provided without warranty of any kind.</p>"
-        )
-        copyright_lbl.setAlignment(Qt.AlignCenter)
-        copyright_lbl.setWordWrap(True)
-        copyright_lbl.setTextFormat(Qt.RichText)
-        root.addWidget(copyright_lbl)
 
         about_btn_wrap = QWidget()
         about_btn_layout = QHBoxLayout(about_btn_wrap)

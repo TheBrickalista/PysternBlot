@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Crop, Project, LegendRow
+from .models import Crop, MarkerBand, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -23,6 +24,16 @@ from .image_utils import (
     rotate_uint16,
     uint16_to_qpixmap,
 )
+
+
+def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> bool:
+    """Returns True if the band should be rendered on a channel with the given wavelength.
+    Empty channels list means visible everywhere (ECL and all NIR channels)."""
+    if not band.channels:
+        return True
+    if wavelength_nm is None:
+        return True
+    return wavelength_nm in band.channels
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
@@ -424,6 +435,12 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
                         continue
 
+                # Per-channel filter: NIR rows only show bands whose channels list includes
+                # this channel's wavelength (empty channels list = visible everywhere).
+                if ch is not None and preset_band is not None:
+                    if not _band_visible_on_channel(preset_band, ch.wavelength_nm):
+                        continue
+
                 is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
                 pen = marker_highlight_pen if is_highlighted else marker_pen
 
@@ -644,6 +661,15 @@ def build_provenance_scene(
             None
         )
 
+        # Determine active channel wavelength for NIR per-channel filtering.
+        _active_wavelength: Optional[int] = None
+        if blot.is_nir() and blot.channels:
+            _active_ch = next(
+                (c for c in blot.channels if c.channel_index == nir_channel_index), None
+            )
+            if _active_ch is not None:
+                _active_wavelength = _active_ch.wavelength_nm
+
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)
         tick_pen.setCosmetic(True)
@@ -673,6 +699,11 @@ def build_provenance_scene(
 
             if bool(getattr(ladder, "show_only_highlighted", False)):
                 if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                    continue
+
+            # Per-channel filter: for NIR blots only show bands matching the active channel.
+            if blot.is_nir() and preset_band is not None:
+                if not _band_visible_on_channel(preset_band, _active_wavelength):
                     continue
 
             is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False

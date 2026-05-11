@@ -79,6 +79,9 @@ class _MarkerSetMixin:
             highlight_item.setCheckState(Qt.Checked if band.highlight else Qt.Unchecked)
             self.marker_set_table.setItem(row, 3, highlight_item)
 
+            channels_text = ", ".join(str(w) for w in band.channels) if band.channels else ""
+            self.marker_set_table.setItem(row, 4, QTableWidgetItem(channels_text))
+
         self.marker_set_table.blockSignals(False)
         self.marker_set_table.resizeColumnsToContents()
 
@@ -90,6 +93,7 @@ class _MarkerSetMixin:
             label_item = self.marker_set_table.item(row, 1)
             visible_item = self.marker_set_table.item(row, 2)
             highlight_item = self.marker_set_table.item(row, 3)
+            channels_item = self.marker_set_table.item(row, 4)
 
             if kda_item is None:
                 continue
@@ -101,12 +105,23 @@ class _MarkerSetMixin:
             kda = float(txt)
             label = label_item.text().strip() if label_item else ""
 
+            channels: list[int] = []
+            if channels_item:
+                for token in channels_item.text().split(","):
+                    token = token.strip()
+                    if token:
+                        try:
+                            channels.append(int(token))
+                        except ValueError:
+                            pass
+
             bands.append(
                 MarkerBand(
                     kda=kda,
                     label=label or None,
                     visible=visible_item.checkState() == Qt.Checked if visible_item else True,
                     highlight=highlight_item.checkState() == Qt.Checked if highlight_item else False,
+                    channels=channels,
                 )
             )
 
@@ -221,6 +236,8 @@ class _MarkerSetMixin:
         highlight_item.setFlags(highlight_item.flags() | Qt.ItemIsUserCheckable)
         highlight_item.setCheckState(Qt.Unchecked)
         self.marker_set_table.setItem(row, 3, highlight_item)
+
+        self.marker_set_table.setItem(row, 4, QTableWidgetItem(""))
 
     def _remove_selected_marker_band_row(self):
         row = self.marker_set_table.currentRow()

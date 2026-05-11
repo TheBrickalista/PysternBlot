@@ -30,6 +30,7 @@ from pysternblot.models import (
     Layout,
     LegendRow,
     LegendSettings,
+    MarkerBand,
     OperationLogEntry,
     OverlayLadder,
     Panel,
@@ -652,3 +653,15 @@ class TestRotation90Normalisation:
 
     def test_rotate_cw_from_0_gives_90(self):
         assert _rotate_cw(0.0) == 90.0
+
+
+class TestMarkerBandChannels:
+
+    def test_marker_band_channels_default(self):
+        band = MarkerBand(kda=100)
+        assert band.channels == []
+
+    def test_marker_band_backward_compat(self):
+        data = {"kda": 50.0, "label": "Test", "visible": True, "highlight": False}
+        band = MarkerBand.model_validate(data)
+        assert band.channels == []

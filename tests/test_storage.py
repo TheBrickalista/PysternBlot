@@ -23,8 +23,10 @@ import pytest
 
 import zipfile
 
-from pysternblot.storage import Workspace, sha256_file, ImportArchiveResult
+from pysternblot.storage import Workspace, sha256_file, ImportArchiveResult, parse_typhoon_tag270
 from pysternblot.models import (
+    Blot,
+    BlotChannel,
     CalibrationPoint,
     ConditionRow,
     Crop,
@@ -37,8 +39,9 @@ from pysternblot.models import (
     ProjectMeta,
     ProteinLabel,
     Project,
-    Blot,
 )
+
+TESTS_DIR = Path(__file__).parent
 
 
 # ---------------------------------------------------------------------------
@@ -571,3 +574,291 @@ class TestExportArchiveMissingAsset:
 
         with pytest.raises(FileNotFoundError, match=ghost_sha):
             ws.export_archive([project.project.id], archive_path, "0.1.0")
+
+
+# ===========================================================================
+# parse_typhoon_tag270
+# ===========================================================================
+
+# Exact Tag 270 text extracted from the two instrument files.
+# Mixed CRLF / LF exactly as stored by the scanner firmware.
+_IRLONG_TAG270 = (
+    "Serial number=36651188\r\n"
+    "Date time=Thu May  7 14:32:30 2026\n"
+    "Username=Cytiva\r\n"
+    "Method name=-\r\n"
+    "File name=20260507-142651-[IRlong].tif\r\n"
+    "Laser and filter name=[IRlong]\r\n"
+    "Laser name=785 nm\r\n"
+    "Filter name=Through + IRlong 825BP30\r\n"
+    "PMT type=Multi-alkali\r\n"
+    "PMT HV=399 V\r\n"
+    "Pixel size=50 micrometer\r\n"
+    "Shading=On\r\n"
+    "Scan speed=Normal\r\n"
+    "Scan mode=Fluorescence\r\n"
+    "Stage and area name=Fluor\r\n"
+    "Scan number=1/2\r\n"
+    "Orientation=bottom-left\r\n"
+    "Firmware version=310\r\n"
+    "FPGA version=11\r\n"
+    "Laser power=Fluor\r\n"
+    "Filter=3/1\r\n"
+    "Main start position=0[mm]\r\n"
+    "Sub start position=0[mm]\r\n"
+    "Correction1=1\r\n"
+    "Correction2=On\r\n"
+    "Correction3=On\r\n"
+    "Correction3A=Off\r\n"
+    "Correction4=On\r\n"
+    "Correction5=On\r\n"
+    "Correction6=On\r\n"
+    "Correction7=26532/26553\r\n"
+    "Correction8=Off\r\n"
+    "Correction8_DateTime=-\r\n"
+    "Correction9=Off\r\n"
+    "Correction9_DateTime=-\r\n"
+    "Shading=C:\\ProgramData\\Cytiva\\Amersham TYPHOON\\Data\\ShadingData\\"
+    "Fluorescence_5_6_15_16.shading\r\n"
+    "Shading_DateTime=2024/10/26 09:04:04\r\n"
+    "CorrectionA=Off\n"
+    "Correction10=Off\r\n"
+    "Invert=Off\r\n"
+    "Sub motor mode=1\r\n"
+    "Signal Process1=Off\r\n"
+    "Signal Process2=Log\r\n"
+    "Software=Amersham TYPHOON Scanner Control Software 4.0.0.4\r\n"
+    "\x00"
+)
+
+_IRSHORT_TAG270 = (
+    "Serial number=36651188\r\n"
+    "Date time=Thu May  7 14:38:43 2026\n"
+    "Username=Cytiva\r\n"
+    "Method name=-\r\n"
+    "File name=20260507-142651-[IRshort].tif\r\n"
+    "Laser and filter name=[IRshort]\r\n"
+    "Laser name=685 nm\r\n"
+    "Filter name=Through + IRshort 720BP20\r\n"
+    "PMT type=Multi-alkali\r\n"
+    "PMT HV=360 V\r\n"
+    "Pixel size=50 micrometer\r\n"
+    "Shading=On\r\n"
+    "Scan speed=Normal\r\n"
+    "Scan mode=Fluorescence\r\n"
+    "Stage and area name=Fluor\r\n"
+    "Scan number=2/2\r\n"
+    "Orientation=bottom-left\r\n"
+    "Firmware version=310\r\n"
+    "FPGA version=11\r\n"
+    "Laser power=Fluor\r\n"
+    "Filter=2/1\r\n"
+    "Main start position=0[mm]\r\n"
+    "Sub start position=0[mm]\r\n"
+    "Correction1=1\r\n"
+    "Correction2=On\r\n"
+    "Correction3=On\r\n"
+    "Correction3A=Off\r\n"
+    "Correction4=On\r\n"
+    "Correction5=On\r\n"
+    "Correction6=On\r\n"
+    "Correction7=26534/26553\r\n"
+    "Correction8=Off\r\n"
+    "Correction8_DateTime=-\r\n"
+    "Correction9=Off\r\n"
+    "Correction9_DateTime=-\r\n"
+    "Shading=C:\\ProgramData\\Cytiva\\Amersham TYPHOON\\Data\\ShadingData\\"
+    "Fluorescence_4_5_15_16.shading\r\n"
+    "Shading_DateTime=2024/10/26 09:04:04\r\n"
+    "CorrectionA=Off\n"
+    "Correction10=Off\r\n"
+    "Invert=Off\r\n"
+    "Sub motor mode=1\r\n"
+    "Signal Process1=Off\r\n"
+    "Signal Process2=Log\r\n"
+    "Software=Amersham TYPHOON Scanner Control Software 4.0.0.4\r\n"
+    "\x00"
+)
+
+
+class TestParseTyphoonTag270:
+
+    def test_parse_typhoon_tag270_irlong(self):
+        """Parse the exact Tag 270 string from the IRlong file and verify key fields."""
+        meta = parse_typhoon_tag270(_IRLONG_TAG270)
+        assert meta["laser_nm"] == 785
+        assert meta["filter_name"] == "IRlong 825BP30"
+        assert meta["channel_index"] == 0
+        assert meta["channel_total"] == 2
+
+    def test_parse_typhoon_tag270_irshort(self):
+        """Parse the exact Tag 270 string from the IRshort file and verify key fields."""
+        meta = parse_typhoon_tag270(_IRSHORT_TAG270)
+        assert meta["laser_nm"] == 685
+        assert meta["filter_name"] == "IRshort 720BP20"
+        assert meta["channel_index"] == 1
+        assert meta["channel_total"] == 2
+
+    def test_parse_typhoon_tag270_malformed(self):
+        """Garbage input must never raise — must return a dict."""
+        result = parse_typhoon_tag270("not valid at all !!!\x00\xff")
+        assert isinstance(result, dict)
+
+    def test_parse_typhoon_tag270_empty(self):
+        """Empty string must return a dict of all-None values."""
+        result = parse_typhoon_tag270("")
+        assert isinstance(result, dict)
+        assert result["laser_nm"] is None
+        assert result["channel_index"] is None
+
+
+# ===========================================================================
+# import_nir_blot_typhoon
+# ===========================================================================
+
+class TestImportNirBlotTyphoon:
+
+    def test_import_nir_blot_typhoon(self, tmp_path):
+        """
+        import_nir_blot_typhoon with both real Typhoon files must:
+        - Return 2 BlotChannel objects sorted by channel_index ascending
+        - Populate wavelength_nm correctly from Tag 270
+        - Populate asset_sha256 matching the actual file hashes
+        - Write both assets to the workspace assets directory
+        - Append one log entry per channel to project.operation_log
+        """
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("NIR Test")
+        project = ws.load_project(str(proj_path))
+
+        ch_short = TESTS_DIR / "20260507-142651-[IRshort].tif"
+        ch_long = TESTS_DIR / "20260507-142651-[IRlong].tif"
+
+        if not ch_short.exists() or not ch_long.exists():
+            pytest.skip("Typhoon test files not found in tests/")
+
+        # Pass in reverse order to verify sort-by-channel_index
+        channels = ws.import_nir_blot_typhoon([ch_short, ch_long], project)
+
+        assert len(channels) == 2
+        assert all(isinstance(c, BlotChannel) for c in channels)
+
+        # Sorted ascending: channel_index 0 (IRlong/785nm) first
+        assert channels[0].channel_index == 0
+        assert channels[1].channel_index == 1
+        assert channels[0].wavelength_nm == 785
+        assert channels[1].wavelength_nm == 685
+
+        # SHA256 must match the actual files
+        sha_long = sha256_file(str(ch_long))
+        sha_short = sha256_file(str(ch_short))
+        assert channels[0].asset_sha256 == sha_long
+        assert channels[1].asset_sha256 == sha_short
+
+        # Assets must exist on disk
+        ws.asset_original_file(sha_long)
+        ws.asset_original_file(sha_short)
+
+        # One log entry per channel
+        nir_entries = [
+            e for e in project.operation_log
+            if e.operation == "nir_channel_imported"
+        ]
+        assert len(nir_entries) == 2
+
+
+# ===========================================================================
+# ensure_blot_crop_preview — ECL and NIR cache filename behaviour
+# ===========================================================================
+
+def _make_uint16_tiff(path, width: int = 10, height: int = 8) -> None:
+    """Write a minimal valid 16-bit grayscale TIFF to *path*."""
+    import numpy as np
+    from PIL import Image
+    arr = np.zeros((height, width), dtype=np.uint16)
+    arr[2, 3] = 32768
+    img = Image.frombuffer("I;16", (width, height), arr.tobytes(), "raw", "I;16", 0, 1)
+    img.save(str(path))
+
+
+def _minimal_blot_model(blot_id: str, sha: str) -> "Blot":
+    from pysternblot.models import (
+        Blot, Crop, Ladder, CalibrationPoint, ProteinLabel, CropTemplate,
+    )
+    return Blot(
+        id=blot_id,
+        asset_sha256=sha,
+        crop=Crop(x=0, y=0, w=8, h=6),
+        ladder=Ladder(
+            lane_index=0,
+            marker_set_id="ms_default",
+            calibration_points=[
+                CalibrationPoint(y_px=2, kda=55),
+                CalibrationPoint(y_px=5, kda=36),
+            ],
+        ),
+        protein_label=ProteinLabel(text="Test"),
+    )
+
+
+class TestEnsureBlotCropPreviewNIR:
+
+    def test_ensure_blot_crop_preview_ecl_unaffected(self, tmp_path):
+        """ECL blot cache filename is preview_crop_<id>.tif — unchanged."""
+        ws = _make_workspace(tmp_path)
+        ws.ensure()
+
+        # Plant a real 16-bit TIFF in the asset store
+        sha = "a" * 64
+        asset_dir = ws.assets_dir / sha
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        _make_uint16_tiff(asset_dir / "original.tif")
+
+        from pysternblot.models import CropTemplate, Panel, LaneLayout, HeaderBlock, Group, ConditionRow, Layout, LegendSettings
+        blot = _minimal_blot_model("blot_01", sha)
+
+        class _FakePanel:
+            crop_template = CropTemplate(w=6, h=4)
+
+        out = ws.ensure_blot_crop_preview(blot, _FakePanel())
+        assert out.name == "preview_crop_blot_01.tif"
+        assert out.exists()
+
+    def test_ensure_blot_crop_preview_nir_channel_cache_name(self, tmp_path):
+        """NIR channels produce preview_crop_<id>_ch<n>.tif, one file per channel."""
+        ws = _make_workspace(tmp_path)
+        ws.ensure()
+
+        # Two distinct assets for the two NIR channels
+        sha0 = "0" * 64
+        sha1 = "1" * 64
+        for sha in (sha0, sha1):
+            d = ws.assets_dir / sha
+            d.mkdir(parents=True, exist_ok=True)
+            _make_uint16_tiff(d / "original.tif")
+
+        from pysternblot.models import BlotChannel, DisplaySettings, ProteinLabel, CropTemplate
+
+        blot = _minimal_blot_model("blot_nir", sha0)
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            BlotChannel(asset_sha256=sha0, channel_index=0),
+            BlotChannel(asset_sha256=sha1, channel_index=1),
+        ]
+
+        class _FakePanel:
+            crop_template = CropTemplate(w=6, h=4)
+
+        out0 = ws.ensure_blot_crop_preview(blot, _FakePanel(), channel_index=0)
+        out1 = ws.ensure_blot_crop_preview(blot, _FakePanel(), channel_index=1)
+
+        assert out0.name == "preview_crop_blot_nir_ch0.tif"
+        assert out1.name == "preview_crop_blot_nir_ch1.tif"
+        # Must be in the respective channel's asset directory
+        assert out0.parent == ws.assets_dir / sha0
+        assert out1.parent == ws.assets_dir / sha1
+        # Both files must exist
+        assert out0.exists()
+        assert out1.exists()
+        # Must be distinct paths
+        assert out0 != out1

@@ -16,6 +16,7 @@ import pytest
 
 from pysternblot.models import (
     Blot,
+    BlotChannel,
     CalibrationPoint,
     ConditionRow,
     Crop,
@@ -389,3 +390,265 @@ class TestAntibodyName:
         blot_dict.pop("antibody_name", None)
         restored = Blot.model_validate(blot_dict)
         assert restored.antibody_name == ""
+
+
+# ===========================================================================
+# Blot NIR extension — modality, channels, helpers
+# ===========================================================================
+
+def _minimal_blot_channel(index: int, sha: str = "sha_ch") -> BlotChannel:
+    return BlotChannel(
+        asset_sha256=sha,
+        channel_index=index,
+        wavelength_nm=785 - index * 100,  # 785, 685 for 0, 1
+    )
+
+
+class TestBlotNIRExtension:
+
+    def test_blot_ecl_defaults(self):
+        blot = _minimal_blot()
+        assert blot.modality == "ecl"
+        assert blot.channels == []
+        assert blot.is_nir() is False
+
+    def test_blot_nir_modality(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(0, "sha_0"),
+            _minimal_blot_channel(1, "sha_1"),
+        ]
+        assert blot.is_nir() is True
+        assert len(blot.channels) == 2
+
+    def test_get_display_channel_ecl(self):
+        blot = _minimal_blot()
+        sha, display = blot.get_display_channel()
+        assert sha == blot.asset_sha256
+        assert display is blot.display
+
+    def test_get_display_channel_nir(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_ch0")
+        ch1 = _minimal_blot_channel(1, "sha_ch1")
+        blot.channels = [ch0, ch1]
+
+        sha0, disp0 = blot.get_display_channel(0)
+        sha1, disp1 = blot.get_display_channel(1)
+
+        assert sha0 == "sha_ch0"
+        assert sha1 == "sha_ch1"
+        assert disp0 is ch0.display
+        assert disp1 is ch1.display
+
+    def test_blot_channel_index_out_of_range(self):
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [_minimal_blot_channel(0)]
+
+        with pytest.raises(IndexError):
+            blot.get_display_channel(99)
+
+    def test_backward_compat_ecl_project_loads(self):
+        """A Blot dict without modality or channels (old project.json) must load cleanly."""
+        blot_dict = _minimal_blot().model_dump()
+        blot_dict.pop("modality", None)
+        blot_dict.pop("channels", None)
+        restored = Blot.model_validate(blot_dict)
+        assert restored.modality == "ecl"
+        assert restored.channels == []
+
+
+# ===========================================================================
+# Render row expansion logic (mirrors build_panel_scene expansion in render.py)
+# ===========================================================================
+
+def _expand_render_rows(panel):
+    """
+    Inline expansion matching build_panel_scene — returns list of
+    (blot, channel|None, is_first_row) tuples for included blots only.
+    """
+    order = list(getattr(panel.layout, "order", []))
+    blot_by_id = {b.id: b for b in panel.blots if b.included_in_final}
+    ordered = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
+
+    rows = []
+    seen: set = set()
+    for blot in ordered:
+        if blot.is_nir():
+            for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                rows.append((blot, ch, blot.id not in seen))
+                seen.add(blot.id)
+        else:
+            rows.append((blot, None, True))
+    return rows
+
+
+class TestRenderRowExpansion:
+
+    def test_render_rows_ecl_blot(self):
+        blot = _minimal_blot("ecl_01")
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 1
+        b, ch, is_first = rows[0]
+        assert b is blot
+        assert ch is None
+        assert is_first is True
+
+    def test_render_rows_nir_two_channels(self):
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(1, "sha_1"),  # out-of-order on purpose
+            _minimal_blot_channel(0, "sha_0"),
+        ]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 2
+        # must be sorted by channel_index
+        b0, ch0, first0 = rows[0]
+        b1, ch1, first1 = rows[1]
+        assert ch0.channel_index == 0
+        assert ch1.channel_index == 1
+        assert first0 is True
+        assert first1 is False  # ladder only on first row
+        assert b0 is blot
+        assert b1 is blot
+
+    def test_render_rows_nir_single_channel(self):
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        blot.channels = [_minimal_blot_channel(0, "sha_0")]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 1
+        b, ch, is_first = rows[0]
+        assert ch.channel_index == 0
+        assert is_first is True
+
+    def test_render_rows_excluded_blot(self):
+        ecl = _minimal_blot("ecl_01")
+        nir = _minimal_blot("nir_01")
+        nir.modality = "nir_fluorescence"
+        nir.channels = [_minimal_blot_channel(0, "sha_nir"), _minimal_blot_channel(1, "sha_nir2")]
+        nir.included_in_final = False
+        panel = _minimal_panel(blots=[ecl, nir])
+        rows = _expand_render_rows(panel)
+        # excluded NIR blot must produce zero rows regardless of channel count
+        assert len(rows) == 1
+        assert rows[0][0] is ecl
+
+
+# ===========================================================================
+# Per-channel crop — get_channel_crop / set_channel_crop
+# ===========================================================================
+
+class TestPerChannelCrop:
+
+    def test_get_channel_crop_ecl(self):
+        """ECL blot always returns blot.crop regardless of channel_index."""
+        blot = _minimal_blot()
+        blot.crop = Crop(x=10, y=20, w=300, h=200)
+        assert blot.get_channel_crop(0) is blot.crop
+        assert blot.get_channel_crop(99) is blot.crop
+
+    def test_get_channel_crop_nir_fallback(self):
+        """NIR blot with no channel-specific crop falls back to blot.crop."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        blot.channels = [
+            _minimal_blot_channel(0, "sha_0"),
+            _minimal_blot_channel(1, "sha_1"),
+        ]
+        # Both channels have crop=None → fall back to blot.crop
+        assert blot.get_channel_crop(0) is blot.crop
+        assert blot.get_channel_crop(1) is blot.crop
+
+    def test_get_channel_crop_nir_channel_specific(self):
+        """NIR blot with ch.crop set returns that channel's crop, not blot.crop."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        ch1.crop = Crop(x=50, y=60, w=300, h=200)
+        blot.channels = [ch0, ch1]
+        # ch0 has no crop → blot.crop
+        assert blot.get_channel_crop(0) is blot.crop
+        # ch1 has its own crop → channel crop
+        assert blot.get_channel_crop(1) is ch1.crop
+        assert blot.get_channel_crop(1).x == 50
+        assert blot.get_channel_crop(1).y == 60
+
+    def test_set_channel_crop_nir(self):
+        """set_channel_crop sets only the targeted channel; other channel is unchanged."""
+        blot = _minimal_blot()
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        blot.channels = [ch0, ch1]
+        new_crop = Crop(x=77, y=88, w=300, h=200)
+        blot.set_channel_crop(1, new_crop)
+        assert blot.channels[1].crop is new_crop
+        assert blot.channels[0].crop is None  # unchanged
+
+    def test_set_channel_crop_ecl(self):
+        """set_channel_crop on an ECL blot updates blot.crop."""
+        blot = _minimal_blot()
+        new_crop = Crop(x=50, y=60, w=300, h=200)
+        blot.set_channel_crop(0, new_crop)
+        assert blot.crop is new_crop
+        assert blot.crop.x == 50
+        assert blot.crop.y == 60
+
+
+# ===========================================================================
+# DisplaySettings flip fields
+# ===========================================================================
+
+class TestDisplaySettingsFlip:
+
+    def test_display_settings_flip_defaults(self):
+        """New DisplaySettings has flip_horizontal=False and flip_vertical=False."""
+        d = DisplaySettings()
+        assert d.flip_horizontal is False
+        assert d.flip_vertical is False
+
+    def test_display_settings_flip_backward_compat(self):
+        """A dict without flip keys (old project.json) deserialises with False defaults."""
+        d_dict = DisplaySettings().model_dump()
+        d_dict.pop("flip_horizontal", None)
+        d_dict.pop("flip_vertical", None)
+        restored = DisplaySettings.model_validate(d_dict)
+        assert restored.flip_horizontal is False
+        assert restored.flip_vertical is False
+
+
+# ===========================================================================
+# 90° rotation normalisation (pure arithmetic — no Qt required)
+# ===========================================================================
+
+def _rotate_ccw(deg: float) -> float:
+    return (deg - 90.0) % 360.0
+
+def _rotate_cw(deg: float) -> float:
+    return (deg + 90.0) % 360.0
+
+
+class TestRotation90Normalisation:
+
+    def test_rotate_ccw_from_zero_gives_270(self):
+        """Subtracting 90° from 0° must give 270°, not -90°."""
+        assert _rotate_ccw(0.0) == 270.0
+
+    def test_rotate_cw_wraps_270_to_zero(self):
+        """Adding 90° to 270° must give 0° via % 360."""
+        assert _rotate_cw(270.0) == 0.0
+
+    def test_rotate_ccw_from_90_gives_0(self):
+        assert _rotate_ccw(90.0) == 0.0
+
+    def test_rotate_cw_from_0_gives_90(self):
+        assert _rotate_cw(0.0) == 90.0

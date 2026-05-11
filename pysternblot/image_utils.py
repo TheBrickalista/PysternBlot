@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from PIL import Image
@@ -166,6 +168,77 @@ def uint16_to_qimage(img: np.ndarray) -> QImage:
         QImage.Format_Grayscale16,
     )
     return qimg
+
+
+def detect_tiff_channel_encoding(
+    path: str | Path,
+) -> Literal["multipage", "rgb_interleaved", "single"]:
+    """
+    Inspect a TIFF and return how its channels are encoded.
+
+    - "multipage"       — multiple frames, one channel per frame (LI-COR Odyssey style)
+    - "rgb_interleaved" — single-frame RGB/RGBA (some composite exports)
+    - "single"          — single-frame grayscale (ECL, single-channel NIR)
+    """
+    with Image.open(str(path)) as im:
+        n_frames = getattr(im, "n_frames", 1)
+        if n_frames > 1:
+            return "multipage"
+        if im.mode in ("RGB", "RGBA"):
+            return "rgb_interleaved"
+        return "single"
+
+
+def load_multichannel_tiff(path: str | Path) -> list[np.ndarray]:
+    """
+    Load a TIFF and return one uint16 ndarray per channel.
+
+    Dispatch is based on detect_tiff_channel_encoding:
+    - "multipage"       — one array per frame
+    - "rgb_interleaved" — R and G bands returned as two arrays (NIR dual-channel)
+    - "single"          — delegates to load_image_uint16; returns a one-element list
+    """
+    encoding = detect_tiff_channel_encoding(path)
+    path_str = str(path)
+
+    if encoding == "multipage":
+        channels: list[np.ndarray] = []
+        with Image.open(path_str) as im:
+            for i in range(im.n_frames):
+                im.seek(i)
+                arr = np.array(im, dtype=np.uint16)
+                channels.append(np.ascontiguousarray(arr))
+        return channels
+
+    if encoding == "rgb_interleaved":
+        with Image.open(path_str) as im:
+            bands = im.split()
+        return [
+            np.ascontiguousarray(np.array(b, dtype=np.uint16))
+            for b in bands[:2]
+        ]
+
+    # "single"
+    return [load_image_uint16(path_str)]
+
+
+def parse_typhoon_channel_id(filename: str) -> str | None:
+    """
+    Extract a channel identifier from a Typhoon / ImageQuant TIFF filename.
+
+    Two conventions are recognised:
+    - Bracket notation: "20260507-142651-[IRlong].tif"  → "IRlong"
+    - Wavelength suffix: "scan_700nm_ch1.tif"           → "700nm"
+
+    Returns None if neither pattern is found.
+    """
+    m = re.search(r'\[([^\]]+)\]', filename)
+    if m:
+        return m.group(1)
+    m = re.search(r'(\d+nm)', filename, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
 
 
 def uint16_to_qpixmap(img: np.ndarray) -> QPixmap:

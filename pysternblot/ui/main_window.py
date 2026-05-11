@@ -8,11 +8,12 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup
 )
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
 
+import re
 from pathlib import Path
 
 from ..storage import Workspace
@@ -36,6 +37,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.current_project = None
         self.active_blot_id = None
         self.prov_grid_visible = False
+        self._active_nir_channel = 0
+        self._nir_ch_btn_group = None
 
         self.pending_overlay_ladder_kda = None
         self.overlay_ladder_dialog = None
@@ -243,6 +246,36 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_label = QLabel("0.0°")
         prov_row1.addWidget(self.prov_rotate_label)
 
+        prov_row1.addSpacing(8)
+
+        self._rotate_ccw_btn = QPushButton("↺")
+        self._rotate_ccw_btn.setFixedWidth(32)
+        self._rotate_ccw_btn.setToolTip("Rotate 90° counter-clockwise")
+        self._rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
+        prov_row1.addWidget(self._rotate_ccw_btn)
+
+        self._rotate_cw_btn = QPushButton("↻")
+        self._rotate_cw_btn.setFixedWidth(32)
+        self._rotate_cw_btn.setToolTip("Rotate 90° clockwise")
+        self._rotate_cw_btn.clicked.connect(self._on_rotate_cw)
+        prov_row1.addWidget(self._rotate_cw_btn)
+
+        self._flip_h_btn = QPushButton("⇔")
+        self._flip_h_btn.setFixedWidth(32)
+        self._flip_h_btn.setCheckable(True)
+        self._flip_h_btn.setToolTip("Flip horizontal (mirror left-right)")
+        self._flip_h_btn.clicked.connect(self._on_flip_horizontal)
+        prov_row1.addWidget(self._flip_h_btn)
+
+        self._flip_v_btn = QPushButton("↕")
+        self._flip_v_btn.setFixedWidth(32)
+        self._flip_v_btn.setCheckable(True)
+        self._flip_v_btn.setToolTip("Flip vertical (mirror top-bottom)")
+        self._flip_v_btn.clicked.connect(self._on_flip_vertical)
+        prov_row1.addWidget(self._flip_v_btn)
+
+        prov_row1.addSpacing(8)
+
         self.prov_grid_cb = QCheckBox("Grid")
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_row1.addWidget(self.prov_grid_cb)
@@ -262,6 +295,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_row1.addStretch(1)
 
         prov_row2 = QHBoxLayout()
+
+        # NIR channel selector — hidden for ECL blots, shown for multi-channel NIR
+        self._nir_ch_widget = QWidget()
+        self._nir_ch_layout = QHBoxLayout(self._nir_ch_widget)
+        self._nir_ch_layout.setContentsMargins(0, 0, 8, 0)
+        self._nir_ch_layout.setSpacing(6)
+        self._nir_ch_widget.setVisible(False)
+        prov_row2.addWidget(self._nir_ch_widget)
 
         prov_row2.addWidget(QLabel("Protein"))
         self.protein_label_combo = QComboBox()
@@ -597,6 +638,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         a_import.triggered.connect(self.import_blot)
         tb.addAction(a_import)
 
+        a_import_nir = QAction("Import NIR Blot…", self)
+        a_import_nir.triggered.connect(self._on_import_nir_blot)
+        tb.addAction(a_import_nir)
+
         a_import_mem = QAction("Import Membrane…", self)
         a_import_mem.triggered.connect(self.import_membrane)
         tb.addAction(a_import_mem)
@@ -618,13 +663,23 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not blot:
             return
 
-        rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+        self._rebuild_nir_channel_selector(blot)
+
+        _display = self._active_display() or blot.display
+        rotation_deg = float(getattr(_display, "rotation_deg", 0.0) or 0.0)
 
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(rotation_deg * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
 
         self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+
+        self._flip_h_btn.blockSignals(True)
+        self._flip_v_btn.blockSignals(True)
+        self._flip_h_btn.setChecked(bool(getattr(_display, "flip_horizontal", False)))
+        self._flip_v_btn.setChecked(bool(getattr(_display, "flip_vertical", False)))
+        self._flip_h_btn.blockSignals(False)
+        self._flip_v_btn.blockSignals(False)
 
         self.prov_grid_cb.blockSignals(True)
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
@@ -635,23 +690,23 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_gamma_slider.blockSignals(True)
         self.invert_cb.blockSignals(True)
 
-        self.levels_black_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_black", 0)))
-        self.levels_white_slider.setValue(int(getattr(getattr(blot, "display", None), "levels_white", 65535)))
-        self.levels_gamma_slider.setValue(int(round(float(getattr(getattr(blot, "display", None), "levels_gamma", 1.0)) * 100.0)))
-        self.invert_cb.setChecked(bool(getattr(getattr(blot, "display", None), "invert", False)))
+        self.levels_black_slider.setValue(int(getattr(_display, "levels_black", 0)))
+        self.levels_white_slider.setValue(int(getattr(_display, "levels_white", 65535)))
+        self.levels_gamma_slider.setValue(int(round(float(getattr(_display, "levels_gamma", 1.0)) * 100.0)))
+        self.invert_cb.setChecked(bool(getattr(_display, "invert", False)))
 
-        self.black_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_black", 0))))
-        self.white_value_lbl.setText(str(int(getattr(getattr(blot, "display", None), "levels_white", 65535))))
-        self.gamma_value_lbl.setText(f"{float(getattr(getattr(blot, 'display', None), 'levels_gamma', 1.0)):.2f}")
+        self.black_value_lbl.setText(str(int(getattr(_display, "levels_black", 0))))
+        self.white_value_lbl.setText(str(int(getattr(_display, "levels_white", 65535))))
+        self.gamma_value_lbl.setText(f"{float(getattr(_display, 'levels_gamma', 1.0)):.2f}")
 
         self.levels_black_slider.blockSignals(False)
         self.levels_white_slider.blockSignals(False)
         self.levels_gamma_slider.blockSignals(False)
         self.invert_cb.blockSignals(False)
 
-        # Default values if fields aren't present yet
-        overlay_vis = getattr(getattr(blot, "display", None), "overlay_visible", True)
-        overlay_alpha = float(getattr(getattr(blot, "display", None), "overlay_alpha", 0.35))
+        # Overlay settings remain on blot.display (ECL-only concept)
+        overlay_vis = getattr(blot.display, "overlay_visible", True)
+        overlay_alpha = float(getattr(blot.display, "overlay_alpha", 0.35))
 
         self.overlay_cb.blockSignals(True)
         self.alpha_slider.blockSignals(True)
@@ -672,7 +727,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.border_cb.blockSignals(False)
         self.border_width_spin.blockSignals(False)
 
-        protein_text = str(getattr(getattr(blot, "protein_label", None), "text", "") or "")
+        _target = self._get_active_channel_or_blot()
+        protein_text = str(getattr(getattr(_target, "protein_label", None), "text", "") or "")
 
         self.protein_label_combo.blockSignals(True)
         self.protein_label_combo.clear()
@@ -692,7 +748,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.protein_label_combo.blockSignals(False)
 
-        antibody_text = str(getattr(blot, "antibody_name", "") or "")
+        antibody_text = str(getattr(_target, "antibody_name", "") or "")
 
         self.antibody_name_combo.blockSignals(True)
         self.antibody_name_combo.clear()
@@ -711,7 +767,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.antibody_name_combo.blockSignals(False)
 
-        protein_font_size = getattr(getattr(blot, "protein_label", None), "font_size_pt", None)
+        protein_font_size = getattr(getattr(_target, "protein_label", None), "font_size_pt", None)
         if protein_font_size is None:
             protein_font_size = getattr(self.current_project.panel.style, "font_size_pt", 9)
 
@@ -770,11 +826,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # Persist the updated crop coordinates
         self.workspace.save_project(self.current_project)
 
-        # Rebuild cached preview_crop.png for this blot
-        try:
-            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-        except Exception as e:
-            print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+        # Rebuild cached preview_crop for this blot (all channels for NIR)
+        if blot.is_nir():
+            for ch in blot.channels:
+                try:
+                    self.workspace.ensure_blot_crop_preview(
+                        blot, self.current_project.panel, channel_index=ch.channel_index
+                    )
+                except Exception as e:
+                    print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+        else:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            except Exception as e:
+                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -821,10 +886,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         for blot in self.current_project.panel.blots:
-            try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
+            if blot.is_nir():
+                for ch in blot.channels:
+                    try:
+                        self.workspace.ensure_blot_crop_preview(
+                            blot, self.current_project.panel, channel_index=ch.channel_index
+                        )
+                    except Exception as e:
+                        print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+            else:
+                try:
+                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+                except Exception as e:
+                    print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
 
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
@@ -865,6 +939,74 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if txt not in items:
             items.append(txt)
             self.workspace.save_antibody_name_suggestions(items)
+
+    def _get_active_channel_or_blot(self):
+        """Return the active BlotChannel for NIR blots, or the blot itself for ECL.
+        Centralises ECL/NIR dispatch for protein_label and antibody_name access."""
+        blot = self._get_active_blot()
+        if blot is None:
+            return None
+        if blot.is_nir() and blot.channels:
+            idx = min(self._active_nir_channel, len(blot.channels) - 1)
+            return blot.channels[idx]
+        return blot
+
+    def _active_display(self):
+        """Return the DisplaySettings for the active channel (NIR) or blot (ECL)."""
+        blot = self._get_active_blot()
+        if blot is None:
+            return None
+        if blot.is_nir() and blot.channels:
+            idx = min(self._active_nir_channel, len(blot.channels) - 1)
+            return blot.channels[idx].display
+        return blot.display
+
+    def _rebuild_nir_channel_selector(self, blot) -> None:
+        """Clear and rebuild the NIR channel radio buttons for the given blot.
+        Hides the selector for ECL blots and single-channel NIR blots."""
+        if self._nir_ch_btn_group is not None:
+            self._nir_ch_btn_group.deleteLater()
+            self._nir_ch_btn_group = None
+
+        while self._nir_ch_layout.count():
+            item = self._nir_ch_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not blot or not blot.is_nir() or len(blot.channels) <= 1:
+            self._active_nir_channel = 0
+            self._nir_ch_widget.setVisible(False)
+            return
+
+        self._nir_ch_widget.setVisible(True)
+        lbl = QLabel("Channel:")
+        self._nir_ch_layout.addWidget(lbl)
+
+        btn_group = QButtonGroup(self._nir_ch_widget)
+        for ch in blot.channels:
+            label = f"Ch{ch.channel_index + 1}"
+            if ch.wavelength_nm:
+                label += f" — {ch.wavelength_nm}nm"
+            if ch.filter_name:
+                label += f" {ch.filter_name}"
+            rb = QRadioButton(label)
+            btn_group.addButton(rb, ch.channel_index)
+            self._nir_ch_layout.addWidget(rb)
+
+        # Set checked state before connecting — idClicked fires only on user click
+        for ch in blot.channels:
+            btn = btn_group.button(ch.channel_index)
+            if btn:
+                btn.setChecked(ch.channel_index == self._active_nir_channel)
+
+        btn_group.idClicked.connect(self._on_nir_channel_changed)
+        self._nir_ch_btn_group = btn_group
+
+    def _on_nir_channel_changed(self, channel_index: int) -> None:
+        self._active_nir_channel = channel_index
+        self._sync_controls_from_project()
+        self.refresh_previews()
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
@@ -920,12 +1062,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._populate_prov_blot_combo()
         self._update_prov_label()
 
-        # Option 2: ensure cached crop previews exist before rendering
+        # Ensure cached crop previews exist before rendering
         for blot in self.current_project.panel.blots:
-            try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+            if blot.is_nir():
+                for ch in blot.channels:
+                    try:
+                        self.workspace.ensure_blot_crop_preview(
+                            blot, self.current_project.panel, channel_index=ch.channel_index
+                        )
+                    except Exception as e:
+                        print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
+            else:
+                try:
+                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+                except Exception as e:
+                    print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
 
         try:
             panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -942,6 +1093,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 on_crop_commit=self._on_crop_commit,
                 on_crop_resize_commit=self._on_crop_resize_commit,
                 show_grid=self.prov_grid_visible,
+                nir_channel_index=self._active_nir_channel,
             )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
@@ -959,11 +1111,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # persist crop
         self.workspace.save_project(self.current_project)
 
-        # regenerate cached preview for this blot
-        try:
-            self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-        except Exception as e:
-            print(f"[preview] failed after crop move: {e}")
+        # regenerate cached preview for this blot (all channels for NIR)
+        if blot.is_nir():
+            for ch in blot.channels:
+                try:
+                    self.workspace.ensure_blot_crop_preview(
+                        blot, self.current_project.panel, channel_index=ch.channel_index
+                    )
+                except Exception as e:
+                    print(f"[preview] failed after crop move for ch{ch.channel_index}: {e}")
+        else:
+            try:
+                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
+            except Exception as e:
+                print(f"[preview] failed after crop move: {e}")
 
         # refresh both views
         self.refresh_previews()
@@ -978,10 +1139,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             return
 
         for blot in self.current_project.panel.blots:
-            display_name = blot.id
-            asset = self.current_project.assets.get(blot.asset_sha256)
-            if asset and asset.original_source_path:
-                display_name = Path(asset.original_source_path).name
+            if blot.is_nir() and blot.channels:
+                first_ch = min(blot.channels, key=lambda c: c.channel_index)
+                first_asset = self.current_project.assets.get(first_ch.asset_sha256)
+                if first_asset and first_asset.original_source_path:
+                    stem = Path(first_asset.original_source_path).stem
+                    prefix = re.sub(r"-?\[.*?\]$", "", stem)
+                    display_name = f"{prefix} (NIR {len(blot.channels)}ch)"
+                else:
+                    display_name = f"{blot.id} (NIR {len(blot.channels)}ch)"
+            else:
+                display_name = blot.id
+                asset = self.current_project.assets.get(blot.asset_sha256)
+                if asset and asset.original_source_path:
+                    display_name = Path(asset.original_source_path).name
             if not blot.included_in_final:
                 display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
@@ -1097,10 +1268,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if blot is None or not self.current_project:
             return
 
-        old = float(blot.display.rotation_deg)
+        _display = self._active_display()
+        if _display is None:
+            return
+
+        old = float(_display.rotation_deg)
         new = float(value) / 10.0
 
-        blot.display.rotation_deg = new
+        _display.rotation_deg = new
 
         self.log_operation(
             "rotation_changed",
@@ -1116,6 +1291,102 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
+    def _on_rotate_ccw(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = float(_display.rotation_deg)
+        new = (old - 90.0) % 360.0
+        _display.rotation_deg = new
+        self.log_operation(
+            "rotation_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.rotation_deg",
+            old_value=old,
+            new_value=new,
+        )
+        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(new * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_rotate_cw(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = float(_display.rotation_deg)
+        new = (old + 90.0) % 360.0
+        _display.rotation_deg = new
+        self.log_operation(
+            "rotation_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.rotation_deg",
+            old_value=old,
+            new_value=new,
+        )
+        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(new * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_flip_horizontal(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = bool(_display.flip_horizontal)
+        new = not old
+        _display.flip_horizontal = new
+        self.log_operation(
+            "flip_horizontal_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.flip_horizontal",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_flip_vertical(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = bool(_display.flip_vertical)
+        new = not old
+        _display.flip_vertical = new
+        self.log_operation(
+            "flip_vertical_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.flip_vertical",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
         self.refresh_previews()
@@ -1125,10 +1396,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if blot is None or not self.current_project:
             return
 
+        _display = self._active_display()
+        if _display is None:
+            return
+
         old_levels = {
-            "black": int(blot.display.levels_black),
-            "white": int(blot.display.levels_white),
-            "gamma": float(blot.display.levels_gamma),
+            "black": int(_display.levels_black),
+            "white": int(_display.levels_white),
+            "gamma": float(_display.levels_gamma),
         }
 
         black = int(self.levels_black_slider.value())
@@ -1155,9 +1430,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "gamma": gamma,
         }
 
-        blot.display.levels_black = black
-        blot.display.levels_white = white
-        blot.display.levels_gamma = gamma
+        _display.levels_black = black
+        _display.levels_white = white
+        _display.levels_gamma = gamma
 
         self.log_operation(
             "levels_changed",
@@ -1181,10 +1456,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if blot is None or not self.current_project:
             return
 
-        old = bool(blot.display.invert)
+        _display = self._active_display()
+        if _display is None:
+            return
+
+        old = bool(_display.invert)
         new = bool(checked)
 
-        blot.display.invert = new
+        _display.invert = new
 
         self.log_operation(
             "invert_changed",

@@ -147,28 +147,36 @@ A robust internal representation of the figure enabling clean export and future 
 
 ---
 
-## Phase 6 — Multichannel Fluorescence Support *(new)*
+## Phase 6 — Multichannel Fluorescence Support *(Substantially Complete)*
 
-NIR fluorescence platforms (LI-COR Odyssey, Azure 600, Bio-Rad ChemiDoc MP) produce multichannel images. This phase extends Pystern Blot to handle them correctly.
-
-**Depends on:** Phase 2.3 detection modality field
+NIR fluorescence platforms (LI-COR Odyssey, Cytiva Typhoon) produce multichannel images. This phase extends Pystern Blot to handle them correctly.
 
 ### 6.1 Multichannel Image Loading
 
-- [ ] Correctly read and separate channels from multichannel TIFF files (LI-COR, Azure, Bio-Rad formats)
-- [ ] Per-channel metadata: each channel carries its own antibody, target, dilution, and modality
+- [x] ✅ `detect_tiff_channel_encoding` and `load_multichannel_tiff` implemented in `image_utils.py`
+- [x] ✅ `parse_typhoon_tag270` — standalone Tag 270 XML parser for Typhoon wavelength/filter metadata (`storage.py`)
+- [x] ✅ `import_nir_blot_typhoon` on `Workspace` — imports 1 or 2 Typhoon TIFFs, populates `BlotChannel` entries with instrument metadata
+- [x] ✅ `BlotChannel` model and `Blot` extension (`modality`, `channels`) in `models.py`; backward compatible with existing ECL projects
+- [ ] LI-COR Odyssey import — stub exists (`import_nir_blot_odyssey` raises `NotImplementedError`); awaiting `tests/licor_odyssey_sample.tif`
 
 ### 6.2 Channel Merge Documentation
 
-- [ ] Record false-colour assignment and relative scaling in audit log when channels are merged for display
+*Not applicable.* Final figures use greyscale-only per-channel rendering (Option A decision); no false-colour composite is produced in the final figure. False-colour composite is available in the Original Image tab preview only, for orientation. Audit log entry for false-colour merge is not applicable.
 
-### 6.3 Per-channel Crop and Annotation
+### 6.3 Per-channel Crop, Display, and Annotation
 
-- [ ] Support channel-specific MW marker positions (images may not be perfectly co-registered)
+- [x] ✅ `NirImportDialog` — 1 or 2 channel import UI; second channel optional; Tag 270 metadata displayed on file selection
+- [x] ✅ Channel selector radio buttons in Original Image tab Row 2
+- [x] ✅ Per-channel display settings dispatched via `_active_display()`
+- [x] ✅ Per-channel crop via `get_channel_crop` / `set_channel_crop`; falls back to `blot.crop`
+- [x] ✅ Per-channel preview cache (`preview_crop_<id>_ch<i>.tif`)
+- [x] ✅ NIR blots render as per-channel greyscale rows in `build_panel_scene`; ladder column on first channel row only
+- [x] ✅ 90° rotation buttons (↺ ↻) in Original Image toolbar Row 1
+- [x] ✅ Flip buttons (⇔ ↕) in Original Image toolbar Row 1; display-time transforms, cache stores un-flipped image
 
 **Outcome**
 
-Full support for the most common fluorescence-based WB platforms alongside existing ECL workflow.
+Full support for Cytiva Typhoon alongside existing ECL workflow; LI-COR Odyssey pending instrument file.
 
 ---
 

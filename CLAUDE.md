@@ -40,11 +40,17 @@ Project
     ├── crop_template (CropTemplate: w, h) — shared crop size for all blots
     ├── blots: list[Blot]
     │   ├── crop (Crop: x, y — position only; w/h kept for backward compat)
-    │   ├── display (DisplaySettings: levels, invert, rotation, overlay)
+    │   ├── display (DisplaySettings: levels, invert, rotation, flip_horizontal, flip_vertical, overlay)
     │   ├── protein_label
     │   ├── ladder (Blot-level calibration)
     │   ├── overlay_ladder (optional OverlayLadder)
-    │   └── included_in_final: bool = True
+    │   ├── included_in_final: bool = True
+    │   ├── modality: "ecl" | "nir_fluorescence"
+    │   └── channels: list[BlotChannel]  # NIR only; empty for ECL blots
+    │       ├── asset_sha256, channel_index, wavelength_nm, filter_name
+    │       ├── fluorophore, antibody_name, protein_label
+    │       ├── display (DisplaySettings)
+    │       └── crop (optional per-channel Crop override; falls back to blot.crop)
     ├── layout (order: list[blot_id])
     ├── legend
     └── lane_layout (header_block, groups)
@@ -109,3 +115,59 @@ Every mutation that should appear in integrity reports must call `self.log_opera
 ### Project persistence
 
 `workspace.save_project(project)` serialises the full Pydantic model to JSON. `workspace.load_project(path)` deserialises with `Project.model_validate(json.loads(...))`. Migrations for missing optional fields are handled by Pydantic defaults — always add new fields with a default to preserve backward compatibility with existing `project.json` files.
+
+### Phase 6 — NIR Multichannel Fluorescence
+
+**Supported instruments:**
+- **Cytiva Typhoon** — two separate single-channel TIFFs with wavelength encoded in the filename; parsed via `parse_typhoon_tag270` in `storage.py`; instrument test files present at `tests/20260507-142651-[IRlong].tif` and `tests/20260507-142651-[IRshort].tif`
+- **LI-COR Odyssey** — stub only (`import_nir_blot_odyssey` raises `NotImplementedError`); 2 tests skipped awaiting `tests/licor_odyssey_sample.tif`
+
+**Key difference from ECL:**
+- NIR signal is stable and ratiometric — no multiple-exposure audit requirement
+- Two independent 16-bit grayscale channels per membrane acquisition (typically 700 nm and 800 nm)
+- Both channels share the same physical crop region and the same ladder calibration
+- Each channel has its own antibody, protein label, and display settings
+
+**`BlotChannel` model** (in `models.py`):
+```
+BlotChannel
+├── asset_sha256: str
+├── channel_index: int            # 0-based
+├── wavelength_nm: Optional[int]  # e.g. 700, 800
+├── filter_name: Optional[str]    # e.g. "IRshort 720BP20"
+├── fluorophore: Optional[str]    # user-editable, e.g. "IRDye 800CW"
+├── antibody_name: str
+├── protein_label: ProteinLabel
+├── display: DisplaySettings
+└── crop: Optional[Crop]          # per-channel override; falls back to blot.crop
+```
+
+**`Blot` extension:**
+- `modality: Literal["ecl", "nir_fluorescence"] = "ecl"` — defaults to ECL for full backward compatibility
+- `channels: list[BlotChannel] = []` — empty for ECL blots; each NIR channel is one entry
+- `get_channel_crop(channel_index)` / `set_channel_crop(channel_index, crop)` — per-channel crop with blot-level fallback
+- `get_display_channel(channel_index)` — returns `(asset_sha256, DisplaySettings)` for ECL or NIR channel
+
+**Storage (`storage.py`):**
+- `parse_typhoon_tag270(path)` — standalone function; parses Typhoon TIFF Tag 270 XML for scan metadata (wavelength, filter name, scan date)
+- `import_nir_blot_typhoon(paths, ...)` on `Workspace` — imports 1 or 2 Typhoon TIFFs, populates `BlotChannel` entries with instrument metadata
+- Per-channel preview cache: `preview_crop_<id>_ch<i>.tif` (one file per channel per blot)
+
+**Image utilities (`image_utils.py`):**
+- `detect_tiff_channel_encoding(path) -> Literal["multipage", "rgb_interleaved", "single"]`
+- `load_multichannel_tiff(path) -> list[np.ndarray]`
+
+**UI:**
+- `NirImportDialog` (`pysternblot/ui/nir_import_dialog.py`) — 1 or 2 channel import; second channel optional; Tag 270 metadata displayed on file selection
+- Channel selector radio buttons in Original Image tab Row 2
+- Per-channel display dispatch via `_active_display()`; per-channel crop via `get_channel_crop` / `set_channel_crop`
+- Rotation (↺ ↻) and flip (⇔ ↕) buttons in Original Image toolbar Row 1; flips are display-time transforms applied after loading from cache — the cache always stores the un-flipped cropped image
+
+**Rendering:**
+- NIR blots render as per-channel greyscale rows in `build_panel_scene`; ladder column appears on the first channel row only
+- ECL rendering path unchanged; `build_panel_scene` dispatches by `blot.modality`
+- No false-colour composite in the final figure (greyscale per channel only); false-colour composite available in the Original Image tab preview for orientation
+
+**Instrument test files:**
+- `tests/20260507-142651-[IRlong].tif` and `tests/20260507-142651-[IRshort].tif` — Typhoon channel files (present)
+- `tests/licor_odyssey_sample.tif` — awaited; 2 tests skipped until available

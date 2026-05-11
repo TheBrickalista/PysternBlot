@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit
 )
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
@@ -520,6 +520,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_tab.changed.connect(self._on_legend_changed)
         self.tabs.addTab(self.legend_tab, "Legend")
 
+        # About tab
+        self._about_tab = self._build_about_tab()
+        self.tabs.addTab(self._about_tab, "About")
+
         self._toolbar()
 
         self.refresh_library()
@@ -527,8 +531,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.refresh_marker_sets()
 
     def _build_home_tab(self) -> QWidget:
-        home = QWidget()
-        root = QVBoxLayout(home)
+        container = QWidget()
+        root = QVBoxLayout(container)
         root.setContentsMargins(30, 30, 30, 30)
         root.setSpacing(14)
 
@@ -593,9 +597,48 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         root.addWidget(btn_row_wrap)
 
+        version_lbl = QLabel("<h2>Pystern Blot 1.0.0</h2>")
+        version_lbl.setAlignment(Qt.AlignCenter)
+        version_lbl.setWordWrap(True)
+        version_lbl.setTextFormat(Qt.RichText)
+        root.addWidget(version_lbl)
+
+        desc_lbl = QLabel(
+            "A scientific image processing tool for western blot figure preparation, "
+            "with full provenance tracking, audit logging, and integrity reporting. "
+            "Designed for reproducibility and compliance with journal data integrity requirements."
+        )
+        desc_lbl.setAlignment(Qt.AlignCenter)
+        desc_lbl.setWordWrap(True)
+        root.addWidget(desc_lbl)
+
+        copyright_lbl = QLabel(
+            "<p>Copyright &copy; 2025&ndash;2026 Etienne Boulter, Inserm</p>"
+            "<p>This software is distributed under the <b>GNU General Public License v3 (GPLv3)</b>.<br>"
+            "This software is provided without warranty of any kind.</p>"
+        )
+        copyright_lbl.setAlignment(Qt.AlignCenter)
+        copyright_lbl.setWordWrap(True)
+        copyright_lbl.setTextFormat(Qt.RichText)
+        root.addWidget(copyright_lbl)
+
+        about_btn_wrap = QWidget()
+        about_btn_layout = QHBoxLayout(about_btn_wrap)
+        about_btn_layout.setContentsMargins(0, 0, 0, 0)
+        about_btn_layout.addStretch(1)
+        about_btn = QPushButton("About / License")
+        about_btn.clicked.connect(self._goto_about_tab)
+        about_btn_layout.addWidget(about_btn)
+        about_btn_layout.addStretch(1)
+        root.addWidget(about_btn_wrap)
+
         root.addStretch(2)
 
-        return home
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        return scroll
 
     def _make_home_button(self, text: str, slot) -> QPushButton:
         btn = QPushButton(text)
@@ -621,6 +664,41 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             }
         """)
         return btn
+
+    def _build_about_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel("<h3>About Pystern Blot</h3>")
+        title_lbl.setTextFormat(Qt.RichText)
+        layout.addWidget(title_lbl)
+
+        btn_row = QHBoxLayout()
+        legal_btn = QPushButton("Legal")
+        copyright_btn = QPushButton("Copyright & Credits")
+        repo_btn = QPushButton("Repository")
+        btn_row.addWidget(legal_btn)
+        btn_row.addWidget(copyright_btn)
+        btn_row.addWidget(repo_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        text_view = QPlainTextEdit()
+        text_view.setReadOnly(True)
+        text_view.setPlainText("— content to be added —")
+        layout.addWidget(text_view)
+
+        legal_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+        copyright_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+        repo_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+
+        return tab
+
+    def _goto_about_tab(self):
+        if hasattr(self, "_about_tab"):
+            self.tabs.setCurrentWidget(self._about_tab)
 
     def _toolbar(self):
         tb = QToolBar("Main")

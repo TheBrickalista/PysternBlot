@@ -314,3 +314,45 @@ class TestSaveUint16Tiff:
     def test_accepts_string_path(self, tmp_path):
         img = _make_uint16()
         save_uint16_tiff(img, str(tmp_path / "s.tif"))  # should not raise
+
+
+# ===========================================================================
+# flip operations — non-contiguity regression
+# ===========================================================================
+
+class TestFlipContiguity:
+    """np.fliplr / np.flipud return non-C-contiguous views.
+    Passing such a view's .data to QImage raises a buffer-protocol error.
+    np.ascontiguousarray must be applied before uint16_to_qpixmap."""
+
+    def test_fliplr_produces_non_contiguous_view(self):
+        img = _make_gradient_uint16(h=8, w=16)
+        flipped = np.fliplr(img)
+        assert not flipped.flags["C_CONTIGUOUS"], "np.fliplr must return a non-contiguous view"
+
+    def test_flipud_produces_non_contiguous_view(self):
+        img = _make_gradient_uint16(h=8, w=16)
+        flipped = np.flipud(img)
+        assert not flipped.flags["C_CONTIGUOUS"], "np.flipud must return a non-contiguous view"
+
+    def test_ascontiguousarray_after_fliplr_is_contiguous(self):
+        img = _make_gradient_uint16(h=8, w=16)
+        result = np.ascontiguousarray(np.fliplr(img))
+        assert result.flags["C_CONTIGUOUS"]
+        assert result.dtype == np.uint16
+
+    def test_ascontiguousarray_after_flipud_is_contiguous(self):
+        img = _make_gradient_uint16(h=8, w=16)
+        result = np.ascontiguousarray(np.flipud(img))
+        assert result.flags["C_CONTIGUOUS"]
+        assert result.dtype == np.uint16
+
+    def test_fliplr_values_are_correct_after_contiguous(self):
+        img = _make_gradient_uint16(h=4, w=8)
+        result = np.ascontiguousarray(np.fliplr(img))
+        assert np.array_equal(result, img[:, ::-1])
+
+    def test_flipud_values_are_correct_after_contiguous(self):
+        img = _make_gradient_uint16(h=4, w=8)
+        result = np.ascontiguousarray(np.flipud(img))
+        assert np.array_equal(result, img[::-1, :])

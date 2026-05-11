@@ -602,3 +602,53 @@ class TestPerChannelCrop:
         assert blot.crop is new_crop
         assert blot.crop.x == 50
         assert blot.crop.y == 60
+
+
+# ===========================================================================
+# DisplaySettings flip fields
+# ===========================================================================
+
+class TestDisplaySettingsFlip:
+
+    def test_display_settings_flip_defaults(self):
+        """New DisplaySettings has flip_horizontal=False and flip_vertical=False."""
+        d = DisplaySettings()
+        assert d.flip_horizontal is False
+        assert d.flip_vertical is False
+
+    def test_display_settings_flip_backward_compat(self):
+        """A dict without flip keys (old project.json) deserialises with False defaults."""
+        d_dict = DisplaySettings().model_dump()
+        d_dict.pop("flip_horizontal", None)
+        d_dict.pop("flip_vertical", None)
+        restored = DisplaySettings.model_validate(d_dict)
+        assert restored.flip_horizontal is False
+        assert restored.flip_vertical is False
+
+
+# ===========================================================================
+# 90° rotation normalisation (pure arithmetic — no Qt required)
+# ===========================================================================
+
+def _rotate_ccw(deg: float) -> float:
+    return (deg - 90.0) % 360.0
+
+def _rotate_cw(deg: float) -> float:
+    return (deg + 90.0) % 360.0
+
+
+class TestRotation90Normalisation:
+
+    def test_rotate_ccw_from_zero_gives_270(self):
+        """Subtracting 90° from 0° must give 270°, not -90°."""
+        assert _rotate_ccw(0.0) == 270.0
+
+    def test_rotate_cw_wraps_270_to_zero(self):
+        """Adding 90° to 270° must give 0° via % 360."""
+        assert _rotate_cw(270.0) == 0.0
+
+    def test_rotate_ccw_from_90_gives_0(self):
+        assert _rotate_ccw(90.0) == 0.0
+
+    def test_rotate_cw_from_0_gives_90(self):
+        assert _rotate_cw(0.0) == 90.0

@@ -246,6 +246,36 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_label = QLabel("0.0°")
         prov_row1.addWidget(self.prov_rotate_label)
 
+        prov_row1.addSpacing(8)
+
+        self._rotate_ccw_btn = QPushButton("↺")
+        self._rotate_ccw_btn.setFixedWidth(32)
+        self._rotate_ccw_btn.setToolTip("Rotate 90° counter-clockwise")
+        self._rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
+        prov_row1.addWidget(self._rotate_ccw_btn)
+
+        self._rotate_cw_btn = QPushButton("↻")
+        self._rotate_cw_btn.setFixedWidth(32)
+        self._rotate_cw_btn.setToolTip("Rotate 90° clockwise")
+        self._rotate_cw_btn.clicked.connect(self._on_rotate_cw)
+        prov_row1.addWidget(self._rotate_cw_btn)
+
+        self._flip_h_btn = QPushButton("⇔")
+        self._flip_h_btn.setFixedWidth(32)
+        self._flip_h_btn.setCheckable(True)
+        self._flip_h_btn.setToolTip("Flip horizontal (mirror left-right)")
+        self._flip_h_btn.clicked.connect(self._on_flip_horizontal)
+        prov_row1.addWidget(self._flip_h_btn)
+
+        self._flip_v_btn = QPushButton("↕")
+        self._flip_v_btn.setFixedWidth(32)
+        self._flip_v_btn.setCheckable(True)
+        self._flip_v_btn.setToolTip("Flip vertical (mirror top-bottom)")
+        self._flip_v_btn.clicked.connect(self._on_flip_vertical)
+        prov_row1.addWidget(self._flip_v_btn)
+
+        prov_row1.addSpacing(8)
+
         self.prov_grid_cb = QCheckBox("Grid")
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_row1.addWidget(self.prov_grid_cb)
@@ -643,6 +673,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.blockSignals(False)
 
         self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+
+        self._flip_h_btn.blockSignals(True)
+        self._flip_v_btn.blockSignals(True)
+        self._flip_h_btn.setChecked(bool(getattr(_display, "flip_horizontal", False)))
+        self._flip_v_btn.setChecked(bool(getattr(_display, "flip_vertical", False)))
+        self._flip_h_btn.blockSignals(False)
+        self._flip_v_btn.blockSignals(False)
 
         self.prov_grid_cb.blockSignals(True)
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
@@ -1251,6 +1288,102 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_rotate_ccw(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = float(_display.rotation_deg)
+        new = (old - 90.0) % 360.0
+        _display.rotation_deg = new
+        self.log_operation(
+            "rotation_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.rotation_deg",
+            old_value=old,
+            new_value=new,
+        )
+        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(new * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_rotate_cw(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = float(_display.rotation_deg)
+        new = (old + 90.0) % 360.0
+        _display.rotation_deg = new
+        self.log_operation(
+            "rotation_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.rotation_deg",
+            old_value=old,
+            new_value=new,
+        )
+        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(new * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_flip_horizontal(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = bool(_display.flip_horizontal)
+        new = not old
+        _display.flip_horizontal = new
+        self.log_operation(
+            "flip_horizontal_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.flip_horizontal",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
+        self.refresh_previews()
+
+    def _on_flip_vertical(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+        _display = self._active_display()
+        if _display is None:
+            return
+        old = bool(_display.flip_vertical)
+        new = not old
+        _display.flip_vertical = new
+        self.log_operation(
+            "flip_vertical_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display.flip_vertical",
+            old_value=old,
+            new_value=new,
+        )
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 

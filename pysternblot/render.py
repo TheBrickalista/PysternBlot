@@ -179,24 +179,22 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
     ordered_blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
 
-    # ---- expand into render rows: (blot, channel|None, is_ladder_row) ----
+    # ---- expand into render rows: (blot, channel|None) ----
     # NIR blots produce one row per channel (sorted by channel_index).
-    # ECL blots produce one row (channel=None, is_ladder_row=True).
-    # Ladder column is drawn only on the row whose channel wavelength matches
-    # the explicitly-tagged preset bands; falls back to channel_index 0.
-    marker_sets_list = list(getattr(project, "marker_sets", []) or [])
+    # ECL blots produce one row (channel=None).
+    # Ladder bands render on every NIR row where they are visible:
+    #   channels==[] → all rows; explicit channels → matching wavelength only.
     render_rows: list[tuple] = []
     for blot in ordered_blots:
         if blot.is_nir():
-            ladder_channel = _ladder_row_for_blot(blot, marker_sets_list)
             for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-                render_rows.append((blot, ch, ch.channel_index == ladder_channel))
+                render_rows.append((blot, ch))
         else:
-            render_rows.append((blot, None, True))
+            render_rows.append((blot, None))
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
-    for blot, ch, _is_first in render_rows:
+    for blot, ch in render_rows:
         if ch is not None:
             # NIR channel: load from per-channel cache
             p = workspace_root / "assets" / ch.asset_sha256 / f"preview_crop_{blot.id}_ch{ch.channel_index}.tif"
@@ -408,7 +406,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         y += 10.0  # gap before first blot
 
     # ---- render rows ----
-    for (blot, ch, is_first_row), pm in zip(render_rows, pixmaps):
+    for (blot, ch), pm in zip(render_rows, pixmaps):
         if pm.isNull():
             t = scene.addText(f"Could not load image for blot: {blot.id}", font)
             t.setPos(x0, y)
@@ -423,8 +421,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             pen.setCosmetic(True)
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
-        # --- MW marker annotations — ladder is shared per blot, drawn only on first row ---
-        ladder = getattr(blot, "overlay_ladder", None) if is_first_row else None
+        # --- MW marker annotations — per-band filter controls which rows each band appears on ---
+        ladder = getattr(blot, "overlay_ladder", None)
 
         if ladder is not None and getattr(ladder, "bands", None):
             marker_library = getattr(project, "marker_sets", []) or []

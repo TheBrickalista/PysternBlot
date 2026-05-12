@@ -1,0 +1,64 @@
+name: Build macOS App
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build macOS .app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller \
+            --name "PysternBlot" \
+            --windowed \
+            --noconfirm \
+            --add-data "pysternblot/resources:pysternblot/resources" \
+            pysternblot/__main__.py
+
+      - name: Set version tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=manual-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Zip the .app
+        run: |
+          cd dist
+          zip -r "../PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip" PysternBlot.app
+
+      - name: Upload as artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PysternBlot-${{ steps.version.outputs.tag }}-macOS
+          path: PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip
+          retention-days: 7
+
+      - name: Upload to GitHub Release (release runs)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip

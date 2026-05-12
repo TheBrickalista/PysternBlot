@@ -63,6 +63,7 @@ class MarkerBand(BaseModel):
     label: Optional[str] = None
     visible: bool = True
     highlight: bool = False
+    channels: List[int] = Field(default_factory=list)
 
 
 class MarkerSet(BaseModel):

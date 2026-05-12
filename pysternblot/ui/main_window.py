@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit
 )
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtCore import Qt
@@ -138,10 +138,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ladder_l.addLayout(ladder_top)
 
         self.marker_set_table = QTableWidget()
-        self.marker_set_table.setColumnCount(4)
+        self.marker_set_table.setColumnCount(6)
         self.marker_set_table.setHorizontalHeaderLabels([
-            "kDa", "Label", "Visible", "Highlight"
+            "kDa", "Label", "Visible", "Highlight", "Show 685", "Show 785"
         ])
+        _ch_tip = (
+            "Check to restrict this band to this wavelength channel only. "
+            "Leave both unchecked to show on all channels."
+        )
+        self.marker_set_table.horizontalHeaderItem(4).setToolTip(_ch_tip)
+        self.marker_set_table.horizontalHeaderItem(5).setToolTip(_ch_tip)
+        self.marker_set_table.setColumnWidth(4, 70)
+        self.marker_set_table.setColumnWidth(5, 70)
         self.marker_set_table.setAlternatingRowColors(True)
         ladder_l.addWidget(self.marker_set_table)
 
@@ -520,6 +528,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_tab.changed.connect(self._on_legend_changed)
         self.tabs.addTab(self.legend_tab, "Legend")
 
+        # About tab
+        self._about_tab = self._build_about_tab()
+        self.tabs.addTab(self._about_tab, "About")
+
         self._toolbar()
 
         self.refresh_library()
@@ -527,8 +539,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.refresh_marker_sets()
 
     def _build_home_tab(self) -> QWidget:
-        home = QWidget()
-        root = QVBoxLayout(home)
+        container = QWidget()
+        root = QVBoxLayout(container)
         root.setContentsMargins(30, 30, 30, 30)
         root.setSpacing(14)
 
@@ -557,17 +569,34 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot")
+        title = QLabel("Pystern Blot - 1.0.0")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)
 
-        subtitle = QLabel("Organize, crop and assemble publication-ready blot panels")
+        subtitle = QLabel(
+            "<p style='text-align:center; color:#666666; font-size:13px;'>"
+            "A scientific image processing tool for western blot figure preparation,<br>"
+            "with full provenance tracking, audit logging, and integrity reporting.<br>"
+            "Designed for reproducibility and compliance with journal data integrity requirements."
+            "</p>"
+        )
+        subtitle.setTextFormat(Qt.RichText)
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 13px; color: #666666;")
+        subtitle.setWordWrap(True)
         title_layout.addWidget(subtitle)
 
+        copyright_lbl = QLabel(
+            "<p>Copyright &copy; 2025&ndash;2026 Etienne Boulter, Inserm</p>"
+            "<p>This software is distributed under the <b>GNU General Public License v3 (GPLv3)</b>.<br>"
+            "This software is provided without warranty of any kind.</p>"
+        )
+        copyright_lbl.setAlignment(Qt.AlignCenter)
+        copyright_lbl.setWordWrap(True)
+        copyright_lbl.setTextFormat(Qt.RichText)
         root.addWidget(title_wrap)
+
+        root.addWidget(copyright_lbl)
 
         # Button row
         btn_row_wrap = QWidget()
@@ -593,9 +622,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         root.addWidget(btn_row_wrap)
 
+
+        about_btn_wrap = QWidget()
+        about_btn_layout = QHBoxLayout(about_btn_wrap)
+        about_btn_layout.setContentsMargins(0, 0, 0, 0)
+        about_btn_layout.addStretch(1)
+        about_btn = QPushButton("About / License")
+        about_btn.clicked.connect(self._goto_about_tab)
+        about_btn_layout.addWidget(about_btn)
+        about_btn_layout.addStretch(1)
+        root.addWidget(about_btn_wrap)
+
         root.addStretch(2)
 
-        return home
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        return scroll
 
     def _make_home_button(self, text: str, slot) -> QPushButton:
         btn = QPushButton(text)
@@ -621,6 +665,52 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             }
         """)
         return btn
+
+    def _build_about_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel("<h3>About Pystern Blot</h3>")
+        title_lbl.setTextFormat(Qt.RichText)
+        layout.addWidget(title_lbl)
+
+        btn_row = QHBoxLayout()
+        legal_btn = QPushButton("Legal")
+        copyright_btn = QPushButton("Copyright & Credits")
+        repo_btn = QPushButton("Repository")
+        btn_row.addWidget(legal_btn)
+        btn_row.addWidget(copyright_btn)
+        btn_row.addWidget(repo_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        text_view = QPlainTextEdit()
+        text_view.setReadOnly(True)
+        layout.addWidget(text_view)
+
+        def _load_legal():
+            license_path = Path(__file__).parent.parent / "resources" / "LICENSE.txt"
+            try:
+                text_view.setPlainText(license_path.read_text(encoding="utf-8"))
+            except Exception:
+                text_view.setPlainText(
+                    "License file not found.\n"
+                    "See https://www.gnu.org/licenses/gpl-3.0.html"
+                )
+
+        legal_btn.clicked.connect(_load_legal)
+        copyright_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+        repo_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+
+        _load_legal()
+
+        return tab
+
+    def _goto_about_tab(self):
+        if hasattr(self, "_about_tab"):
+            self.tabs.setCurrentWidget(self._about_tab)
 
     def _toolbar(self):
         tb = QToolBar("Main")

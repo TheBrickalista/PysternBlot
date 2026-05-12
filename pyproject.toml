@@ -16,5 +16,11 @@ dependencies = [
   "scikit-image>=0.21"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "build>=1.0"
+]
+
 [project.scripts]
 pysternblot = "pysternblot.main:main"

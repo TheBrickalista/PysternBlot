@@ -7,16 +7,16 @@
 
 from __future__ import annotations
 
+import numpy as np
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QFontMetricsF, QPen, QColor, QTransform, QImage
+from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Project, LegendRow
+from .models import Blot, Crop, MarkerBand, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
-
-import numpy as np
 
 from .image_utils import (
     load_image_uint16,
@@ -24,6 +24,59 @@ from .image_utils import (
     rotate_uint16,
     uint16_to_qpixmap,
 )
+
+
+def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> bool:
+    """Returns True if the band should be rendered on a channel with the given wavelength.
+    Empty channels list means visible everywhere (ECL and all NIR channels)."""
+    if not band.channels:
+        return True
+    if wavelength_nm is None:
+        return True
+    return wavelength_nm in band.channels
+
+
+def _ladder_row_for_blot(blot: Blot, marker_sets: list) -> int:
+    """Returns the channel_index of the row that should display the ladder column.
+
+    For ECL blots: always 0 (irrelevant, there is only one row).
+    For NIR blots: the channel_index of the first channel whose wavelength_nm
+    matches at least one assigned band's channels list.
+    Falls back to channel_index 0 if no match is found (e.g. all bands have
+    empty channels list, meaning show on all — in that case first row is correct).
+    """
+    if not blot.is_nir():
+        return 0
+    if blot.overlay_ladder is None or not blot.overlay_ladder.bands:
+        return 0
+
+    marker_set = next(
+        (ms for ms in marker_sets if ms.id == blot.overlay_ladder.marker_set_id),
+        None,
+    )
+
+    # Collect wavelengths that are explicitly restricted via MarkerBand.channels.
+    # Bands with channels==[] are deliberately excluded — they mean "show everywhere".
+    explicit_wavelengths: set[int] = set()
+    if marker_set is not None:
+        for assignment in blot.overlay_ladder.bands:
+            preset_band = next(
+                (b for b in marker_set.bands if abs(float(b.kda) - float(assignment.kda)) < 0.001),
+                None,
+            )
+            if preset_band is not None and preset_band.channels:
+                explicit_wavelengths.update(preset_band.channels)
+
+    # All bands have channels==[] → fall back to first row (backward compatible).
+    if not explicit_wavelengths:
+        return 0
+
+    # Return the channel_index of the first channel (sorted) whose wavelength matches.
+    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+        if ch.wavelength_nm is not None and ch.wavelength_nm in explicit_wavelengths:
+            return ch.channel_index
+
+    return 0
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
@@ -49,9 +102,11 @@ def _load_rotated_display_pixmap(
     white: int = 65535,
     gamma: float = 1.0,
     invert: bool = False,
+    flip_horizontal: bool = False,
+    flip_vertical: bool = False,
 ) -> QPixmap:
     """
-    Load original image, apply levels in 16-bit, then rotate in 16-bit.
+    Load original image, apply levels → rotate → flip in 16-bit.
     """
     asset_dir = workspace_root / "assets" / sha256
     original_path = None
@@ -66,20 +121,27 @@ def _load_rotated_display_pixmap(
         img = load_image_uint16(original_path)
         img = apply_levels_uint16(img, black, white, gamma, invert)
         img = rotate_uint16(img, rotation_deg, expand=False)
-        return uint16_to_qpixmap(img)
+        if flip_horizontal:
+            img = np.fliplr(img)
+        if flip_vertical:
+            img = np.flipud(img)
+        return uint16_to_qpixmap(np.ascontiguousarray(img))
     except Exception:
         return QPixmap()
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str, blot_id: str) -> QPixmap:
     """
-    Loads assets/<sha256>/preview_crop.tif as true 16-bit grayscale.
+    Loads assets/<sha256>/preview_crop_<blot_id>.tif as true 16-bit grayscale.
     """
     p = workspace_root / "assets" / sha256 / f"preview_crop_{blot_id}.tif"
-    if not p.exists():
-        return QPixmap()
+    return _load_pixmap_from_path(p)
 
+
+def _load_pixmap_from_path(path: Path) -> QPixmap:
+    if not path.exists():
+        return QPixmap()
     try:
-        arr = load_image_uint16(p)
+        arr = load_image_uint16(path)
         return uint16_to_qpixmap(arr)
     except Exception:
         return QPixmap()
@@ -112,18 +174,42 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     img_col_x = x0 + ladder_w
     col_gap = 10.0  # gap between image and protein column
 
-    # ---- stack order ----
+    # ---- stack order (only included blots appear in the final figure) ----
     order = list(getattr(project.panel.layout, "order", []))
-    blot_by_id = {b.id: b for b in project.panel.blots}
-    blots = [blot_by_id[i] for i in order if i in blot_by_id] or project.panel.blots
+    blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
+    ordered_blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
+
+    # ---- expand into render rows: (blot, channel|None) ----
+    # NIR blots produce one row per channel (sorted by channel_index).
+    # ECL blots produce one row (channel=None).
+    # Ladder bands render on every NIR row where they are visible:
+    #   channels==[] → all rows; explicit channels → matching wavelength only.
+    render_rows: list[tuple] = []
+    for blot in ordered_blots:
+        if blot.is_nir():
+            for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                render_rows.append((blot, ch))
+        else:
+            render_rows.append((blot, None))
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
-    for blot in blots:
-        pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256, blot.id)
-        if pm.isNull():
-            pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
+    for blot, ch in render_rows:
+        if ch is not None:
+            # NIR channel: load from per-channel cache
+            p = workspace_root / "assets" / ch.asset_sha256 / f"preview_crop_{blot.id}_ch{ch.channel_index}.tif"
+            pm = _load_pixmap_from_path(p)
+            if pm.isNull():
+                pm = _load_original_pixmap(workspace_root, ch.asset_sha256)
+        else:
+            pm = _load_preview_crop_pixmap(workspace_root, blot.asset_sha256, blot.id)
+            if pm.isNull():
+                pm = _load_original_pixmap(workspace_root, blot.asset_sha256)
         pixmaps.append(pm)
+
+    if not render_rows:
+        scene.addText("No blots in this project.", font)
+        return scene
 
     max_w = max((pm.width() for pm in pixmaps if not pm.isNull()), default=0)
     max_h = max((pm.height() for pm in pixmaps if not pm.isNull()), default=0)
@@ -310,7 +396,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         return y + text_h + extra
     
     
-    # No figure title
     y = y0
 
     # ---- upper legend ----
@@ -320,8 +405,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             y = _draw_legend_row(row, y)
         y += 10.0  # gap before first blot
 
-    # ---- blots ----
-    for blot, pm in zip(blots, pixmaps):
+    # ---- render rows ----
+    for (blot, ch), pm in zip(render_rows, pixmaps):
         if pm.isNull():
             t = scene.addText(f"Could not load image for blot: {blot.id}", font)
             t.setPos(x0, y)
@@ -336,7 +421,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             pen.setCosmetic(True)
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
-        # --- MW marker annotations on final cropped panel ---
+        # --- MW marker annotations — per-band filter controls which rows each band appears on ---
         ladder = getattr(blot, "overlay_ladder", None)
 
         if ladder is not None and getattr(ladder, "bands", None):
@@ -347,8 +432,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 None
             )
 
-            marker_font = QFont(s.font_family, 24)
-            marker_font.setBold(True)
+            marker_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
+            marker_font.setBold(False)
 
             marker_pen = QPen(Qt.black)
             marker_pen.setWidth(5)
@@ -358,7 +443,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             marker_highlight_pen.setWidth(8)
             marker_highlight_pen.setCosmetic(True)
 
-            crop_y = float(getattr(blot.crop, "y", 0.0))
+            _row_crop = blot.get_channel_crop(ch.channel_index) if ch is not None else blot.crop
+            crop_y = float(getattr(_row_crop, "y", 0.0))
             crop_h_scene = float(pm.height())
 
             tick_x0 = left_col_x + 45.0
@@ -368,7 +454,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 if not bool(getattr(assignment, "show_in_final", True)):
                     continue
                 
-                crop_h_model = float(getattr(blot.crop, "h", pm.height()))
+                crop_h_model = float(project.panel.crop_template.h)
                 scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 
                 marker_y_in_crop = (float(assignment.y_px) - crop_y) * scale_y
@@ -391,6 +477,12 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
                         continue
 
+                # Per-channel filter: NIR rows only show bands whose channels list includes
+                # this channel's wavelength (empty channels list = visible everywhere).
+                if ch is not None and preset_band is not None:
+                    if not _band_visible_on_channel(preset_band, ch.wavelength_nm):
+                        continue
+
                 is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
                 pen = marker_highlight_pen if is_highlighted else marker_pen
 
@@ -402,17 +494,19 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     label = getattr(preset_band, "label", None) if preset_band else None
                     if not label:
                         label = f"{kda:g}"
+                    label = f"{label} kDa"
 
-                    text_item = scene.addText(str(label), marker_font)
+                    text_item = scene.addText(label, marker_font)
                     text_item.setDefaultTextColor(Qt.black)
                     br = text_item.boundingRect()
 
                     text_item.setPos(
-                        left_col_x + 2.0,
+                        tick_x0 - 4.0 - br.width(),
                         yy - br.height() / 2.0,
                     )
-        # Protein label on the right (vertically centered)
-        protein_label = getattr(blot, "protein_label", None)
+
+        # Protein label on the right (vertically centered) — per-channel for NIR
+        protein_label = ch.protein_label if ch is not None else getattr(blot, "protein_label", None)
         label = getattr(protein_label, "text", "")
 
         if label:
@@ -442,11 +536,16 @@ def build_provenance_scene(
     workspace_root: Path,
     blot_id: str | None = None,
     on_crop_commit=None,
+    on_crop_resize_commit=None,
     show_grid: bool = False,
+    nir_channel_index: int = 0,
 ) -> QGraphicsScene:
     """
-    Provenance view = full copied original blot + (optional) membrane overlay + crop rectangle.
-    v0.1: uses the first blot in the project.
+    Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
+    Uses blot_id if provided; falls back to the first blot in the project.
+
+    For NIR blots, nir_channel_index selects which channel's image and display settings to show.
+    Default 0 means existing ECL callers are unaffected.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -465,22 +564,30 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
-    rotation_deg = float(getattr(getattr(blot, "display", None), "rotation_deg", 0.0) or 0.0)
+    # For NIR blots, get sha256 and display from the selected channel.
+    try:
+        sha256, display = blot.get_display_channel(nir_channel_index)
+    except (IndexError, AttributeError):
+        sha256, display = blot.asset_sha256, blot.display
 
-    display = getattr(blot, "display", None)
+    rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
     black = int(getattr(display, "levels_black", 0))
     white = int(getattr(display, "levels_white", 65535))
     gamma = float(getattr(display, "levels_gamma", 1.0))
     invert = bool(getattr(display, "invert", False))
+    flip_h = bool(getattr(display, "flip_horizontal", False))
+    flip_v = bool(getattr(display, "flip_vertical", False))
 
     pm = _load_rotated_display_pixmap(
         workspace_root,
-        blot.asset_sha256,
+        sha256,
         rotation_deg,
         black=black,
         white=white,
         gamma=gamma,
         invert=invert,
+        flip_horizontal=flip_h,
+        flip_vertical=flip_v,
     )
     if pm.isNull():
         scene.addText(
@@ -494,10 +601,6 @@ def build_provenance_scene(
     x0, y0 = 10.0, 10.0
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
-
-    # Phase 1: rotate display only, do not modify pixels
-    #img_item.setTransformOriginPoint(pm.width() / 2.0, pm.height() / 2.0)
-    #img_item.setRotation(rotation_deg)
 
     # Optional membrane overlay (same size/alignment expected)
     overlay_sha = getattr(blot, "overlay_asset_sha256", None)
@@ -536,16 +639,16 @@ def build_provenance_scene(
             gy += grid_step
             
     # Crop box overlay (crop coords are in image pixel space)
-    c = blot.crop
+    c = blot.get_channel_crop(nir_channel_index)
+    ct = project.panel.crop_template
 
-    def _apply_crop_from_scene_rect(scene_rect: QRectF) -> None:
+    def _apply_from_scene_rect(scene_rect: QRectF) -> None:
         # Convert scene coords -> image pixel coords
         x = float(scene_rect.x() - x0)
         y = float(scene_rect.y() - y0)
         w = float(scene_rect.width())
         h = float(scene_rect.height())
 
-        # Optional: clamp into image bounds (recommended)
         if w < 1: w = 1
         if h < 1: h = 1
         if x < 0: x = 0
@@ -553,22 +656,39 @@ def build_provenance_scene(
         if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
         if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
 
-        blot.crop.x = x
-        blot.crop.y = y
-        blot.crop.w = w
-        blot.crop.h = h
+        # Per-channel crop position: each NIR channel stores its own x/y.
+        # ECL blots always update blot.crop directly.
+        _cur = blot.get_channel_crop(nir_channel_index)
+        blot.set_channel_crop(
+            nir_channel_index,
+            Crop(x=x, y=y, w=_cur.w, h=_cur.h, mode=_cur.mode),
+        )
+        # w/h go to the shared template so all blots resize together
+        ct.w = w
+        ct.h = h
+
+    def _on_move_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_commit):
+            on_crop_commit(blot)
+
+    def _on_resize_commit(scene_rect: QRectF) -> None:
+        _apply_from_scene_rect(scene_rect)
+        if callable(on_crop_resize_commit):
+            on_crop_resize_commit()
 
     crop_rect = QRectF(
         x0 + float(c.x),
         y0 + float(c.y),
-        float(c.w),
-        float(c.h)
+        float(ct.w),
+        float(ct.h),
     )
 
     rect_item = CropRectItem(
         crop_rect,
-        on_change=_apply_crop_from_scene_rect,
-        on_commit=lambda r: ( _apply_crop_from_scene_rect(r), on_crop_commit(blot) ) if callable(on_crop_commit) else _apply_crop_from_scene_rect(r)
+        on_change=_apply_from_scene_rect,
+        on_move_commit=_on_move_commit,
+        on_resize_commit=_on_resize_commit,
     )
     scene.addItem(rect_item)
 
@@ -583,6 +703,15 @@ def build_provenance_scene(
             None
         )
 
+        # Determine active channel wavelength for NIR per-channel filtering.
+        _active_wavelength: Optional[int] = None
+        if blot.is_nir() and blot.channels:
+            _active_ch = next(
+                (c for c in blot.channels if c.channel_index == nir_channel_index), None
+            )
+            if _active_ch is not None:
+                _active_wavelength = _active_ch.wavelength_nm
+
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)
         tick_pen.setCosmetic(True)
@@ -591,7 +720,7 @@ def build_provenance_scene(
         highlight_pen.setWidth(8)
         highlight_pen.setCosmetic(True)
 
-        label_font = QFont(s.font_family, 28)
+        label_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
         label_font.setBold(True)
 
         # For now, draw on the left of the image.
@@ -600,6 +729,9 @@ def build_provenance_scene(
         label_x = x0 - 125.0
 
         for assignment in ladder.bands:
+            if not bool(getattr(assignment, "show_in_final", True)):
+                continue
+
             y = y0 + float(assignment.y_px)
             kda = float(assignment.kda)
 
@@ -614,6 +746,11 @@ def build_provenance_scene(
                 if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
                     continue
 
+            # Per-channel filter: for NIR blots only show bands matching the active channel.
+            if blot.is_nir() and preset_band is not None:
+                if not _band_visible_on_channel(preset_band, _active_wavelength):
+                    continue
+
             is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
             pen = highlight_pen if is_highlighted else tick_pen
 
@@ -623,8 +760,9 @@ def build_provenance_scene(
                 label = getattr(preset_band, "label", None) if preset_band else None
                 if not label:
                     label = f"{kda:g}"
+                label = f"{label} kDa"
 
-                text_item = scene.addText(str(label), label_font)
+                text_item = scene.addText(label, label_font)
                 text_item.setDefaultTextColor(Qt.black)
                 br = text_item.boundingRect()
                 text_item.setPos(label_x, y - br.height() / 2.0)

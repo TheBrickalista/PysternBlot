@@ -701,8 +701,30 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 )
 
         legal_btn.clicked.connect(_load_legal)
-        copyright_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
-        repo_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+        copyright_btn.clicked.connect(lambda: text_view.setPlainText(
+            "PysternBlot — Copyright © 2025–2026 Etienne Boulter, Inserm\n\n"
+            "This software is free software: you can redistribute it and/or modify\n"
+            "it under the terms of the GNU General Public License v3 (GPLv3).\n\n"
+            "Third-party libraries used:\n"
+            "  • PySide6 — LGPL v3 (Qt for Python)\n"
+            "  • NumPy — BSD 3-Clause\n"
+            "  • scikit-image — BSD 3-Clause\n"
+            "  • Pydantic — MIT\n"
+            "  • tifffile — BSD 3-Clause\n\n"
+            "Full license texts are available in the Legal tab."
+        ))
+        repo_btn.clicked.connect(lambda: text_view.setPlainText(
+            "PysternBlot\n"
+            "Version 1.0.0\n\n"
+            "Source code:\n"
+            "  https://github.com/TheBrickalista/PysternBlot\n\n"
+            "Bug reports & feature requests:\n"
+            "  https://github.com/TheBrickalista/PysternBlot/issues\n\n"
+            "Citation:\n"
+            "  Boulter E. (2026). PysternBlot (v1.0.0).\n"
+            "  https://doi.org/10.5281/zenodo.XXXXXXX\n\n"
+            "  (DOI will be updated after first Zenodo release)"
+        ))
 
         _load_legal()
 

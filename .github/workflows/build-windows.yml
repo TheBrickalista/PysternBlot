@@ -1,0 +1,66 @@
+name: Build Windows App
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build .exe with PyInstaller
+        run: |
+          pyinstaller `
+            --name "PysternBlot" `
+            --windowed `
+            --onefile `
+            --noconfirm `
+            --add-data "pysternblot/resources;pysternblot/resources" `
+            launcher.py
+
+      - name: Set version tag
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=manual-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Rename .exe
+        shell: bash
+        run: |
+          mv dist/PysternBlot.exe "PysternBlot-${{ steps.version.outputs.tag }}-Windows.exe"
+
+      - name: Upload as artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PysternBlot-${{ steps.version.outputs.tag }}-Windows
+          path: PysternBlot-${{ steps.version.outputs.tag }}-Windows.exe
+          retention-days: 7
+
+      - name: Upload to GitHub Release (release runs)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PysternBlot-${{ steps.version.outputs.tag }}-Windows.exe

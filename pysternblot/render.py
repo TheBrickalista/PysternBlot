@@ -188,7 +188,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     for blot in ordered_blots:
         if blot.is_nir():
             for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-                render_rows.append((blot, ch))
+                if ch.included_in_final:
+                    render_rows.append((blot, ch))
         else:
             render_rows.append((blot, None))
 

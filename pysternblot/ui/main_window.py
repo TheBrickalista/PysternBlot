@@ -866,7 +866,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.blockSignals(False)
 
         self.include_in_final_cb.blockSignals(True)
-        self.include_in_final_cb.setChecked(bool(getattr(blot, "included_in_final", True)))
+        if blot.is_nir() and blot.channels:
+            _incl = bool(getattr(self._get_active_channel_or_blot(), "included_in_final", True))
+        else:
+            _incl = bool(getattr(blot, "included_in_final", True))
+        self.include_in_final_cb.setChecked(_incl)
         self.include_in_final_cb.blockSignals(False)
 
         self.mw_label_size_spin.blockSignals(True)
@@ -1243,7 +1247,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 asset = self.current_project.assets.get(blot.asset_sha256)
                 if asset and asset.original_source_path:
                     display_name = Path(asset.original_source_path).name
-            if not blot.included_in_final:
+            excluded = (
+                not blot.included_in_final
+                if not blot.is_nir()
+                else all(not ch.included_in_final for ch in blot.channels)
+            )
+            if excluded:
                 display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
 
@@ -1573,10 +1582,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if blot is None or not self.current_project:
             return
 
-        old = bool(blot.included_in_final)
-        new = bool(checked)
-
-        blot.included_in_final = new
+        if blot.is_nir() and blot.channels:
+            target = self._get_active_channel_or_blot()
+            old = bool(target.included_in_final)
+            new = bool(checked)
+            target.included_in_final = new
+            blot.included_in_final = any(ch.included_in_final for ch in blot.channels)
+        else:
+            old = bool(blot.included_in_final)
+            new = bool(checked)
+            blot.included_in_final = new
 
         self.log_operation(
             "included_in_final_changed",

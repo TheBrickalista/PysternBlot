@@ -140,6 +140,7 @@ class BlotChannel(BaseModel):
     )
     display: DisplaySettings = Field(default_factory=DisplaySettings)
     crop: Optional[Crop] = None                                 # None = use blot.crop (shared fallback)
+    included_in_final: bool = True
 
 
 class Blot(BaseModel):

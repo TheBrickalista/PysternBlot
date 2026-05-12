@@ -43,30 +43,12 @@ Two correctness fixes to the Original Image tab UI:
 
 ---
 
-## Phase 1 — UI Cleanup & Workflow Reorganization
+## ✅ Phase 1 — UI Cleanup *(Completed)*
 
-**Goals**
-- Improve usability
-- Align with PyMicRheo style
-- Clarify workflow structure
-
-**Tasks**
-
-- [ ] Redesign Home tab:
-  - App name
-  - Description
-  - Copyright
-  - License
-  - Version / repository (optional)
-- [ ] Rename tabs to better reflect workflow
-- [ ] Move outline/cropping tools to Final Result tab
-- [ ] Harmonize font size behavior across:
-  - Protein names
-  - Legend tab
-
-**Outcome**
-
-Cleaner, more intuitive UI with minimal risk to core functionality.
+- [x] ✅ Home tab redesigned: app name + version, description, copyright, GPLv3 mention, About/License button, scrollable layout
+- [x] ✅ About tab added with Legal/Copyright/Repository placeholder buttons
+- [x] ✅ Original Image toolbar split into two rows (navigation row + metadata row)
+- [x] ✅ Window resize regression fixed
 
 ---
 
@@ -76,10 +58,10 @@ Cleaner, more intuitive UI with minimal risk to core functionality.
 - Prepare data model for future features
 - Add flexibility to blot handling
 
-### 2.1 Hidden / Non-displayed Blots
+### ✅ 2.1 Hidden / Non-displayed Blots *(Completed)*
 
-- [ ] Add flag per blot: `included_in_final = true/false`
-- [ ] Blots remain stored in project, editable, and toggleable for inclusion
+- [x] ✅ `included_in_final` flag per blot — model field, UI checkbox in Original Image tab Row 2, audit logging, project persistence
+- [x] ✅ Blots remain stored in project, fully editable, toggleable; blot selector shows ⊘ prefix for excluded blots
 
 ### 2.2 Left-side Annotation Field
 
@@ -170,7 +152,13 @@ NIR fluorescence platforms (LI-COR Odyssey, Cytiva Typhoon) produce multichannel
 - [x] ✅ Per-channel display settings dispatched via `_active_display()`
 - [x] ✅ Per-channel crop via `get_channel_crop` / `set_channel_crop`; falls back to `blot.crop`
 - [x] ✅ Per-channel preview cache (`preview_crop_<id>_ch<i>.tif`)
-- [x] ✅ NIR blots render as per-channel greyscale rows in `build_panel_scene`; ladder column on first channel row only
+- [x] ✅ NIR blots render as per-channel greyscale rows in `build_panel_scene`; ladder bands respect per-channel wavelength tags
+- [x] ✅ `MarkerBand.channels: list[int]` — per-band channel restriction field; backward compatible (default `[]` = show on all channels)
+- [x] ✅ `_band_visible_on_channel` in `render.py` — gates band rendering by channel wavelength
+- [x] ✅ `_ladder_row_for_blot` — determines which channel row the ladder column renders on based on band wavelength tags
+- [x] ✅ Bands with `channels == []` render on all NIR channel rows; explicit channel tags render only on the matching wavelength row
+- [x] ✅ Show 685 / Show 785 checkboxes in marker set preset table (replaces free-text Channels column)
+- [x] ✅ `test_render_ladder.py` — test suite for `_band_visible_on_channel` and `_ladder_row_for_blot`
 - [x] ✅ 90° rotation buttons (↺ ↻) in Original Image toolbar Row 1
 - [x] ✅ Flip buttons (⇔ ↕) in Original Image toolbar Row 1; display-time transforms, cache stores un-flipped image
 
@@ -235,10 +223,10 @@ Reduces transcription errors between the metadata record and the published manus
 |-------|---------|----------|
 | ~~Batch 4 — Ladder System~~ | ~~Ladder presets, assignment, marker placement, final rendering~~ | ~~5~~ |
 | ~~Batch 3 — Rendering & Export~~ | ~~Structured composition, raster export (16-bit), SVG export~~ | ~~4~~ |
-| **Batch 1 — UI** | Home tab, tab renaming, move outline tools, font harmonization | 1 |
-| **Batch 2 — Data Model** | Hidden blots, left annotation field, extended metadata fields | 2 |
+| ~~Batch 1 — UI~~ | ~~Home tab redesign, About tab, toolbar split, resize fix~~ | ~~1~~ |
+| **Batch 2 — Data Model** | Hidden blots (2.1 ✅), left annotation field, extended metadata fields | 2 |
 | **Batch 5 — Composition** | Structured scene model, left-side layout zone | 3 |
-| **Batch 6 — Multichannel** | NIR/multichannel image support | 6 |
+| **Batch 6 — Multichannel** | NIR/multichannel image support (per-channel ladder filtering ✅) | 6 |
 | **Batch 7 — Archival** | Batch import, repository/ELN integration | 7 |
 | **Batch 8 — Manuscript** | Methods and legend auto-generation | 8 |
 

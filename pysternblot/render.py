@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QFont, QPixmap, QPen
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Crop, Project, LegendRow
+from .models import Blot, Crop, MarkerBand, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -23,6 +24,59 @@ from .image_utils import (
     rotate_uint16,
     uint16_to_qpixmap,
 )
+
+
+def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> bool:
+    """Returns True if the band should be rendered on a channel with the given wavelength.
+    Empty channels list means visible everywhere (ECL and all NIR channels)."""
+    if not band.channels:
+        return True
+    if wavelength_nm is None:
+        return True
+    return wavelength_nm in band.channels
+
+
+def _ladder_row_for_blot(blot: Blot, marker_sets: list) -> int:
+    """Returns the channel_index of the row that should display the ladder column.
+
+    For ECL blots: always 0 (irrelevant, there is only one row).
+    For NIR blots: the channel_index of the first channel whose wavelength_nm
+    matches at least one assigned band's channels list.
+    Falls back to channel_index 0 if no match is found (e.g. all bands have
+    empty channels list, meaning show on all — in that case first row is correct).
+    """
+    if not blot.is_nir():
+        return 0
+    if blot.overlay_ladder is None or not blot.overlay_ladder.bands:
+        return 0
+
+    marker_set = next(
+        (ms for ms in marker_sets if ms.id == blot.overlay_ladder.marker_set_id),
+        None,
+    )
+
+    # Collect wavelengths that are explicitly restricted via MarkerBand.channels.
+    # Bands with channels==[] are deliberately excluded — they mean "show everywhere".
+    explicit_wavelengths: set[int] = set()
+    if marker_set is not None:
+        for assignment in blot.overlay_ladder.bands:
+            preset_band = next(
+                (b for b in marker_set.bands if abs(float(b.kda) - float(assignment.kda)) < 0.001),
+                None,
+            )
+            if preset_band is not None and preset_band.channels:
+                explicit_wavelengths.update(preset_band.channels)
+
+    # All bands have channels==[] → fall back to first row (backward compatible).
+    if not explicit_wavelengths:
+        return 0
+
+    # Return the channel_index of the first channel (sorted) whose wavelength matches.
+    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+        if ch.wavelength_nm is not None and ch.wavelength_nm in explicit_wavelengths:
+            return ch.channel_index
+
+    return 0
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
@@ -125,23 +179,22 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     blot_by_id = {b.id: b for b in project.panel.blots if b.included_in_final}
     ordered_blots = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
 
-    # ---- expand into render rows: (blot, channel|None, is_first_row) ----
+    # ---- expand into render rows: (blot, channel|None) ----
     # NIR blots produce one row per channel (sorted by channel_index).
-    # ECL blots produce one row (channel=None, is_first_row=True).
-    # Ladder is drawn only on the first row of each blot.
+    # ECL blots produce one row (channel=None).
+    # Ladder bands render on every NIR row where they are visible:
+    #   channels==[] → all rows; explicit channels → matching wavelength only.
     render_rows: list[tuple] = []
-    _seen_blot_ids: set = set()
     for blot in ordered_blots:
         if blot.is_nir():
             for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-                render_rows.append((blot, ch, blot.id not in _seen_blot_ids))
-                _seen_blot_ids.add(blot.id)
+                render_rows.append((blot, ch))
         else:
-            render_rows.append((blot, None, True))
+            render_rows.append((blot, None))
 
     # ---- preload pixmaps (and compute max image width for consistent column layout) ----
     pixmaps: list[QPixmap] = []
-    for blot, ch, _is_first in render_rows:
+    for blot, ch in render_rows:
         if ch is not None:
             # NIR channel: load from per-channel cache
             p = workspace_root / "assets" / ch.asset_sha256 / f"preview_crop_{blot.id}_ch{ch.channel_index}.tif"
@@ -353,7 +406,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         y += 10.0  # gap before first blot
 
     # ---- render rows ----
-    for (blot, ch, is_first_row), pm in zip(render_rows, pixmaps):
+    for (blot, ch), pm in zip(render_rows, pixmaps):
         if pm.isNull():
             t = scene.addText(f"Could not load image for blot: {blot.id}", font)
             t.setPos(x0, y)
@@ -368,8 +421,8 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             pen.setCosmetic(True)
             scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
 
-        # --- MW marker annotations — ladder is shared per blot, drawn only on first row ---
-        ladder = getattr(blot, "overlay_ladder", None) if is_first_row else None
+        # --- MW marker annotations — per-band filter controls which rows each band appears on ---
+        ladder = getattr(blot, "overlay_ladder", None)
 
         if ladder is not None and getattr(ladder, "bands", None):
             marker_library = getattr(project, "marker_sets", []) or []
@@ -422,6 +475,12 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 # If marker_set is missing, do NOT silently hide everything.
                 if bool(getattr(ladder, "show_only_highlighted", False)) and marker_set is not None:
                     if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                        continue
+
+                # Per-channel filter: NIR rows only show bands whose channels list includes
+                # this channel's wavelength (empty channels list = visible everywhere).
+                if ch is not None and preset_band is not None:
+                    if not _band_visible_on_channel(preset_band, ch.wavelength_nm):
                         continue
 
                 is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
@@ -644,6 +703,15 @@ def build_provenance_scene(
             None
         )
 
+        # Determine active channel wavelength for NIR per-channel filtering.
+        _active_wavelength: Optional[int] = None
+        if blot.is_nir() and blot.channels:
+            _active_ch = next(
+                (c for c in blot.channels if c.channel_index == nir_channel_index), None
+            )
+            if _active_ch is not None:
+                _active_wavelength = _active_ch.wavelength_nm
+
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)
         tick_pen.setCosmetic(True)
@@ -661,6 +729,9 @@ def build_provenance_scene(
         label_x = x0 - 125.0
 
         for assignment in ladder.bands:
+            if not bool(getattr(assignment, "show_in_final", True)):
+                continue
+
             y = y0 + float(assignment.y_px)
             kda = float(assignment.kda)
 
@@ -673,6 +744,11 @@ def build_provenance_scene(
 
             if bool(getattr(ladder, "show_only_highlighted", False)):
                 if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                    continue
+
+            # Per-channel filter: for NIR blots only show bands matching the active channel.
+            if blot.is_nir() and preset_band is not None:
+                if not _band_visible_on_channel(preset_band, _active_wavelength):
                     continue
 
             is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False

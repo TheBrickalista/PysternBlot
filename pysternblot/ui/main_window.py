@@ -138,10 +138,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ladder_l.addLayout(ladder_top)
 
         self.marker_set_table = QTableWidget()
-        self.marker_set_table.setColumnCount(4)
+        self.marker_set_table.setColumnCount(6)
         self.marker_set_table.setHorizontalHeaderLabels([
-            "kDa", "Label", "Visible", "Highlight"
+            "kDa", "Label", "Visible", "Highlight", "Show 685", "Show 785"
         ])
+        _ch_tip = (
+            "Check to restrict this band to this wavelength channel only. "
+            "Leave both unchecked to show on all channels."
+        )
+        self.marker_set_table.horizontalHeaderItem(4).setToolTip(_ch_tip)
+        self.marker_set_table.horizontalHeaderItem(5).setToolTip(_ch_tip)
+        self.marker_set_table.setColumnWidth(4, 70)
+        self.marker_set_table.setColumnWidth(5, 70)
         self.marker_set_table.setAlternatingRowColors(True)
         ladder_l.addWidget(self.marker_set_table)
 
@@ -680,12 +688,23 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         text_view = QPlainTextEdit()
         text_view.setReadOnly(True)
-        text_view.setPlainText("— content to be added —")
         layout.addWidget(text_view)
 
-        legal_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+        def _load_legal():
+            license_path = Path(__file__).parent.parent / "resources" / "LICENSE.txt"
+            try:
+                text_view.setPlainText(license_path.read_text(encoding="utf-8"))
+            except Exception:
+                text_view.setPlainText(
+                    "License file not found.\n"
+                    "See https://www.gnu.org/licenses/gpl-3.0.html"
+                )
+
+        legal_btn.clicked.connect(_load_legal)
         copyright_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
         repo_btn.clicked.connect(lambda: text_view.setPlainText("— content to be added —"))
+
+        _load_legal()
 
         return tab
 

@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: PysternBlot
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Boulter
+    given-names: Etienne
+    orcid: "https://orcid.org/0000-0001-6597-9086"
+repository-code: "https://github.com/TheBrickalista/PysternBlot"
+license: GPL-3.0
+version: 1.0.0
+date-released: "2026-05-12"
+abstract: >
+  PysternBlot is a GPLv3 Python GUI application for building
+  publication-ready Western blot panels with hierarchical
+  lane annotations. It supports ECL and NIR fluorescence
+  imaging modalities and provides tools for image adjustment,
+  cropping, rotation, and multi-channel TIFF handling.
+keywords:
+  - western blot
+  - bioimaging
+  - scientific software
+  - PySide6
+  - Python

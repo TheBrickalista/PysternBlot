@@ -33,7 +33,7 @@ jobs:
             --windowed \
             --noconfirm \
             --add-data "pysternblot/resources:pysternblot/resources" \
-            pysternblot/__main__.py
+            launcher.py
 
       - name: Set version tag
         id: version

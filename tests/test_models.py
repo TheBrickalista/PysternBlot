@@ -469,21 +469,21 @@ class TestBlotNIRExtension:
 def _expand_render_rows(panel):
     """
     Inline expansion matching build_panel_scene — returns list of
-    (blot, channel|None, is_first_row) tuples for included blots only.
+    (blot, channel|None) tuples for included blots only.
+    NIR channels with included_in_final=False are excluded.
     """
     order = list(getattr(panel.layout, "order", []))
     blot_by_id = {b.id: b for b in panel.blots if b.included_in_final}
     ordered = [blot_by_id[i] for i in order if i in blot_by_id] or list(blot_by_id.values())
 
     rows = []
-    seen: set = set()
     for blot in ordered:
         if blot.is_nir():
             for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-                rows.append((blot, ch, blot.id not in seen))
-                seen.add(blot.id)
+                if ch.included_in_final:
+                    rows.append((blot, ch))
         else:
-            rows.append((blot, None, True))
+            rows.append((blot, None))
     return rows
 
 
@@ -494,10 +494,9 @@ class TestRenderRowExpansion:
         panel = _minimal_panel(blots=[blot])
         rows = _expand_render_rows(panel)
         assert len(rows) == 1
-        b, ch, is_first = rows[0]
+        b, ch = rows[0]
         assert b is blot
         assert ch is None
-        assert is_first is True
 
     def test_render_rows_nir_two_channels(self):
         blot = _minimal_blot("nir_01")
@@ -510,12 +509,10 @@ class TestRenderRowExpansion:
         rows = _expand_render_rows(panel)
         assert len(rows) == 2
         # must be sorted by channel_index
-        b0, ch0, first0 = rows[0]
-        b1, ch1, first1 = rows[1]
+        b0, ch0 = rows[0]
+        b1, ch1 = rows[1]
         assert ch0.channel_index == 0
         assert ch1.channel_index == 1
-        assert first0 is True
-        assert first1 is False  # ladder only on first row
         assert b0 is blot
         assert b1 is blot
 
@@ -526,9 +523,8 @@ class TestRenderRowExpansion:
         panel = _minimal_panel(blots=[blot])
         rows = _expand_render_rows(panel)
         assert len(rows) == 1
-        b, ch, is_first = rows[0]
+        b, ch = rows[0]
         assert ch.channel_index == 0
-        assert is_first is True
 
     def test_render_rows_excluded_blot(self):
         ecl = _minimal_blot("ecl_01")
@@ -541,6 +537,33 @@ class TestRenderRowExpansion:
         # excluded NIR blot must produce zero rows regardless of channel count
         assert len(rows) == 1
         assert rows[0][0] is ecl
+
+    def test_render_rows_nir_one_channel_excluded(self):
+        """NIR blot with ch1.included_in_final=False produces only one row (ch0)."""
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        ch1.included_in_final = False
+        blot.channels = [ch0, ch1]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 1
+        b, ch = rows[0]
+        assert ch.channel_index == 0
+
+    def test_render_rows_nir_all_channels_excluded(self):
+        """NIR blot with all channels excluded produces zero rows."""
+        blot = _minimal_blot("nir_01")
+        blot.modality = "nir_fluorescence"
+        ch0 = _minimal_blot_channel(0, "sha_0")
+        ch1 = _minimal_blot_channel(1, "sha_1")
+        ch0.included_in_final = False
+        ch1.included_in_final = False
+        blot.channels = [ch0, ch1]
+        panel = _minimal_panel(blots=[blot])
+        rows = _expand_render_rows(panel)
+        assert len(rows) == 0
 
 
 # ===========================================================================
@@ -665,3 +688,16 @@ class TestMarkerBandChannels:
         data = {"kda": 50.0, "label": "Test", "visible": True, "highlight": False}
         band = MarkerBand.model_validate(data)
         assert band.channels == []
+
+
+class TestBlotChannelIncludedInFinal:
+
+    def test_blot_channel_included_in_final_default(self):
+        ch = BlotChannel(asset_sha256="abc", channel_index=0)
+        assert ch.included_in_final is True
+
+    def test_blot_channel_included_backward_compat(self):
+        """BlotChannel dict without included_in_final (old project) must default to True."""
+        data = {"asset_sha256": "abc", "channel_index": 0, "wavelength_nm": 685}
+        ch = BlotChannel.model_validate(data)
+        assert ch.included_in_final is True

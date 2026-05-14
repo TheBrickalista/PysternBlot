@@ -2,6 +2,7 @@
 
 **Assemble publication-ready Western blot figures — with scientific integrity built in.**
 
+[![DOI](https://zenodo.org/badge/1157163053.svg)](https://doi.org/10.5281/zenodo.20185279)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()

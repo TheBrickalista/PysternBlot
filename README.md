@@ -3,7 +3,7 @@
 **Assemble publication-ready Western blot figures — with scientific integrity built in.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
 
 ---
@@ -41,7 +41,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 ## Requirements
 
-- Python ≥ 3.11
+- Python ≥ 3.10
 - PySide6 ≥ 6.6
 - Pydantic ≥ 2.0
 - NumPy
@@ -54,14 +54,12 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 ## Installation
 
-### Option 1 — PyPI *(coming soon)*
+### Option 1 — PyPI
 
 ```bash
 pip install pysternblot
 python -m pysternblot
 ```
-
-> **Note:** PyPI release planned alongside v1.0.0. Not yet available.
 
 ### Option 2 — From source *(all platforms)*
 
@@ -75,12 +73,12 @@ pip install -e .
 python -m pysternblot
 ```
 
-### Option 3 — Standalone app *(coming soon)*
+### Option 3 — Standalone app *(macOS and Windows)*
 
-- **macOS:** `.dmg` installer — no Python required
-- **Windows:** `.exe` installer — no Python required
+No Python required. Download the latest build for your platform directly from the **[Releases page](https://github.com/TheBrickalista/PysternBlot/releases/latest)**.
 
-> **Note:** standalone builds planned via PyInstaller. Not yet available.
+- **macOS:** download `PysternBlot-vX.X.X-macOS.zip`, unzip and open `PysternBlot.app`
+- **Windows:** download `PysternBlot-vX.X.X-Windows.exe` and run it
 
 ---
 

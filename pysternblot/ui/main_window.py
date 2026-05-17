@@ -571,7 +571,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot - 1.0.0")
+        title = QLabel("Pystern Blot - 1.0.2")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)

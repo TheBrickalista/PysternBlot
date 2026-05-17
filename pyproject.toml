@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysternblot"
-version = "1.0.0"
+version = "1.0.2"
 description = "Western blot panel builder with hierarchical lane annotations (GPLv3)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,3 +24,6 @@ dev = [
 
 [project.scripts]
 pysternblot = "pysternblot.main:main"
+
+[tool.setuptools.package-data]
+pysternblot = ["resources/*", "resources/**/*"]

@@ -723,8 +723,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "Bug reports & feature requests:\n"
             "  https://github.com/TheBrickalista/PysternBlot/issues\n\n"
             "Citation:\n"
-            "  Boulter E. (2026). PysternBlot (v1.0.0).\n"
-            "  https://doi.org/10.5281/zenodo.XXXXXXX\n\n"
+            "  Boulter E. (2026). PysternBlot (v1.0.1).\n"
+            "  https://doi.org/10.5281/zenodo.20185279\n\n"
             "  (DOI will be updated after first Zenodo release)"
         ))
 

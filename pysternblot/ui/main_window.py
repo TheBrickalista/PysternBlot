@@ -15,6 +15,8 @@ from PySide6.QtCore import Qt
 
 import re
 from pathlib import Path
+from importlib.resources import files
+from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
@@ -550,7 +552,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         logo_label = QLabel()
         logo_label.setAlignment(Qt.AlignCenter)
 
-        logo_path = Path(__file__).parent.parent / "resources" / "pb_logo.png"
+        logo_path = Path(str(files("pysternblot").joinpath("resources/pb_logo.png")))
         if logo_path.exists():
             pm = QPixmap(str(logo_path))
             if not pm.isNull():
@@ -569,7 +571,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot - 1.0.0")
+        title = QLabel("Pystern Blot - 1.0.2")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)
@@ -691,7 +693,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         layout.addWidget(text_view)
 
         def _load_legal():
-            license_path = Path(__file__).parent.parent / "resources" / "LICENSE.txt"
+            license_path = Path(str(files("pysternblot").joinpath("resources/LICENSE.txt")))
             try:
                 text_view.setPlainText(license_path.read_text(encoding="utf-8"))
             except Exception:

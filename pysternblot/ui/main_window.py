@@ -589,7 +589,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.addWidget(subtitle)
 
         copyright_lbl = QLabel(
-            "<p>Copyright &copy; 2025&ndash;2026 Etienne Boulter, Inserm</p>"
+            "<p>Copyright &copy; 2026 Etienne Boulter, Chlo&eacute; C. F&eacute;ral, IRCAN Inserm U1081</p>"
             "<p>This software is distributed under the <b>GNU General Public License v3 (GPLv3)</b>.<br>"
             "This software is provided without warranty of any kind.</p>"
         )
@@ -704,7 +704,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         legal_btn.clicked.connect(_load_legal)
         copyright_btn.clicked.connect(lambda: text_view.setPlainText(
-            "PysternBlot — Copyright © 2025–2026 Etienne Boulter, Inserm\n\n"
+            "PysternBlot — Copyright © 2026 Etienne Boulter, Chloé C. Féral, IRCAN Inserm U1081\n\n"
             "This software is free software: you can redistribute it and/or modify\n"
             "it under the terms of the GNU General Public License v3 (GPLv3).\n\n"
             "Third-party libraries used:\n"

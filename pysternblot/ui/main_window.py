@@ -717,7 +717,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ))
         repo_btn.clicked.connect(lambda: text_view.setPlainText(
             "PysternBlot\n"
-            "Version 1.0.0\n\n"
+            "Version 1.0.2\n\n"
             "Source code:\n"
             "  https://github.com/TheBrickalista/PysternBlot\n\n"
             "Bug reports & feature requests:\n"

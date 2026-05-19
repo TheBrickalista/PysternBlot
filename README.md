@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="pysternblot/resources/pb_logo2.png" alt="Pystern Blot logo" width="120"/>
+  <img src="pysternblot/resources/pb_logo.png" alt="Pystern Blot logo" width="200"/>
 </p>
 
 # Pystern Blot

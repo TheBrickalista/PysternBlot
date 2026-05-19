@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="pysternblot/resources/pb_logo2.png" alt="Pystern Blot logo" width="120"/>
+</p>
+
 # Pystern Blot
 
 **Assemble publication-ready Western blot figures — with scientific integrity built in.**
@@ -6,6 +10,8 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
+
+→ **[Quick Start](QUICKSTART.md)** — get up and running in 5 minutes
 
 ---
 
@@ -132,4 +138,5 @@ Pystern Blot is under active development. Completed phases include the full expo
 
 ## License
 
-Pystern Blot is released under the [GNU General Public License v3.0](LICENSE).
+Copyright © 2026 Etienne Boulter, Chloé C. Féral — IRCAN Inserm U1081.
+Released under the [GNU General Public License v3.0](LICENSE).

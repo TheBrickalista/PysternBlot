@@ -37,6 +37,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - **Antibody name field per blot** — persisted in project file and audit log
 - **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log, and crop/rotation metadata for every blot
 - **Export to SVG, PDF, PNG, and 16-bit TIFF** — SVG and PDF preserve text as editable objects for final tweaks in Illustrator or Affinity Designer
+- **DNA gel support** *(coming soon)* — the same integrity pipeline extended to agarose gel electrophoresis, with DNA ladder annotation and band tracking
 
 ---
 
@@ -127,6 +128,7 @@ tests/                      — pytest test suite (130+ tests)
 | Any ECL imager (ChemiDoc, ImageQuant, etc.) | Single-channel 16-bit TIFF | Import Blot… |
 | Cytiva Typhoon | NIR fluorescence, dual-channel | Import NIR Blot… |
 | LI-COR Odyssey | NIR fluorescence, dual-channel | Planned |
+| Any agarose gel imager | DNA gel (grayscale TIFF) | Coming soon |
 
 ---
 

@@ -43,7 +43,9 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 ## Screenshots
 
-<!-- Add screenshots here -->
+<p align="center">
+  <img src="pysternblot/resources/Pysternblot.gif" alt="Pystern Blot workflow demo" width="800"/>
+</p>
 
 ---
 

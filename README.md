@@ -10,6 +10,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
+[![PyPI](https://img.shields.io/pypi/v/pysternblot)](https://pypi.org/project/pysternblot/)
 
 → **[Quick Start](QUICKSTART.md)** — get up and running in 5 minutes
 
@@ -118,8 +119,10 @@ pysternblot/
     ├── widgets.py              — Shared UI widgets
     ├── zoomable_graphics_view.py — Zoomable/pannable graphics view
     └── crop_rect_item.py       — Interactive crop rectangle (move + resize)
-tests/                      — pytest test suite (130+ tests)
+tests/                      — pytest test suite (130+ tests, covering models, rendering, provenance, and archive integrity)
 ```
+
+> The test suite is run on every commit and covers models, rendering, provenance, and archive integrity.
 
 ---
 
@@ -136,7 +139,7 @@ tests/                      — pytest test suite (130+ tests)
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, and library archive. Upcoming work includes extended experimental metadata fields, structured figure composition, LI-COR Odyssey support, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
 
 ---
 

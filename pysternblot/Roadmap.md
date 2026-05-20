@@ -217,6 +217,27 @@ Reduces transcription errors between the metadata record and the published manus
 
 ---
 
+## Phase 9 — DNA Gel Support *(planned)*
+
+The core image pipeline (16-bit, non-destructive, SHA256 provenance) applies directly to DNA agarose gel electrophoresis. This phase extends Pystern Blot with a dedicated DNA gel mode — surfaced as a quiet capability alongside the primary Western blot workflow, not a rebranding of the tool.
+
+### 9.1 DNA Gel Mode
+
+- [ ] Gel type selector (Western Blot / DNA Gel) — minimal UI, no prominence over WB workflow
+- [ ] DNA ladder preset system — bp-based marker sets (100 bp ladder, 1 kb ladder, etc.) replacing kDa presets when in DNA mode
+- [ ] Band annotation and overlay in final figure — same tick/label rendering as protein ladder system, adapted for bp values
+- [ ] Per-gel metadata fields: gel percentage, buffer (TAE/TBE), voltage and run time, staining method (EtBr, SYBR Safe, GelRed)
+- [ ] Integrity report includes DNA gel entries with full provenance (same SHA256 + audit log pipeline)
+
+### 9.2 Instrument Support
+
+- [ ] Any grayscale TIFF output (gel doc systems: Bio-Rad ChemiDoc, Syngene, Azure) — same import path as ECL blots
+- [ ] UV transilluminator image support (common single-channel 8-bit or 16-bit TIFF)
+
+**Scope note:** DNA gel mode shares the rendering, crop, export, and provenance engine with WB mode. It is not a separate product — it is a mode switch with gel-type-specific ladder presets and metadata fields. The WB identity of Pystern Blot is unchanged.
+
+---
+
 ## Implementation Batches
 
 | Batch | Content | Phase(s) |
@@ -229,6 +250,7 @@ Reduces transcription errors between the metadata record and the published manus
 | **Batch 6 — Multichannel** | NIR/multichannel image support (per-channel ladder filtering ✅) | 6 |
 | **Batch 7 — Archival** | Batch import, repository/ELN integration | 7 |
 | **Batch 8 — Manuscript** | Methods and legend auto-generation | 8 |
+| **Batch 9 — DNA Gel** | Gel type selector, DNA ladder presets, bp annotation, gel metadata fields | 9 |
 
 ---
 

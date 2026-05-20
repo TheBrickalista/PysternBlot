@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="pysternblot/resources/pb_logo.png" alt="Pystern Blot logo" width="250"/>
+</p>
+
 # Pystern Blot
 
 **Assemble publication-ready Western blot figures — with scientific integrity built in.**
@@ -6,6 +10,9 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
+[![PyPI](https://img.shields.io/pypi/v/pysternblot)](https://pypi.org/project/pysternblot/)
+
+→ **[Quick Start](QUICKSTART.md)** — get up and running in 5 minutes
 
 ---
 
@@ -31,12 +38,15 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - **Antibody name field per blot** — persisted in project file and audit log
 - **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log, and crop/rotation metadata for every blot
 - **Export to SVG, PDF, PNG, and 16-bit TIFF** — SVG and PDF preserve text as editable objects for final tweaks in Illustrator or Affinity Designer
+- **DNA gel support** *(coming soon)* — the same integrity pipeline extended to agarose gel electrophoresis, with DNA ladder annotation and band tracking
 
 ---
 
 ## Screenshots
 
-<!-- Add screenshots here -->
+<p align="center">
+  <img src="pysternblot/resources/Pysternblot.gif" alt="Pystern Blot workflow demo" width="800"/>
+</p>
 
 ---
 
@@ -109,8 +119,10 @@ pysternblot/
     ├── widgets.py              — Shared UI widgets
     ├── zoomable_graphics_view.py — Zoomable/pannable graphics view
     └── crop_rect_item.py       — Interactive crop rectangle (move + resize)
-tests/                      — pytest test suite (130+ tests)
+tests/                      — pytest test suite (130+ tests, covering models, rendering, provenance, and archive integrity)
 ```
+
+> The test suite is run on every commit and covers models, rendering, provenance, and archive integrity.
 
 ---
 
@@ -121,15 +133,25 @@ tests/                      — pytest test suite (130+ tests)
 | Any ECL imager (ChemiDoc, ImageQuant, etc.) | Single-channel 16-bit TIFF | Import Blot… |
 | Cytiva Typhoon | NIR fluorescence, dual-channel | Import NIR Blot… |
 | LI-COR Odyssey | NIR fluorescence, dual-channel | Planned |
+| Any agarose gel imager | DNA gel (grayscale TIFF) | Coming soon |
 
 ---
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, and library archive. Upcoming work includes extended experimental metadata fields, structured figure composition, LI-COR Odyssey support, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
+
+---
+
+## Data Safety & Disclaimer
+
+**Always preserve your original files.** Pystern Blot is a non-destructive pipeline — it never modifies source images — but no software is a substitute for proper data archival. Before working with any blot image, ensure your originals are backed up independently (institutional storage, external drive, cloud backup) and remain accessible outside of Pystern Blot.
+
+> **Disclaimer:** Pystern Blot is provided as-is, without warranty of any kind. The authors accept no responsibility for any loss, degradation, corruption, or destruction of image data or experimental records arising from the use of this software. You are solely responsible for maintaining independent backups of your original files and raw data.
 
 ---
 
 ## License
 
-Pystern Blot is released under the [GNU General Public License v3.0](LICENSE).
+Copyright © 2026 Etienne Boulter, Chloé C. Féral — IRCAN Inserm U1081.
+Released under the [GNU General Public License v3.0](LICENSE).

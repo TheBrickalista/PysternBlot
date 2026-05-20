@@ -140,6 +140,14 @@ Pystern Blot is under active development. Completed phases include the full expo
 
 ---
 
+## Data Safety & Disclaimer
+
+**Always preserve your original files.** Pystern Blot is a non-destructive pipeline — it never modifies source images — but no software is a substitute for proper data archival. Before working with any blot image, ensure your originals are backed up independently (institutional storage, external drive, cloud backup) and remain accessible outside of Pystern Blot.
+
+> **Disclaimer:** Pystern Blot is provided as-is, without warranty of any kind. The authors accept no responsibility for any loss, degradation, corruption, or destruction of image data or experimental records arising from the use of this software. You are solely responsible for maintaining independent backups of your original files and raw data.
+
+---
+
 ## License
 
 Copyright © 2026 Etienne Boulter, Chloé C. Féral — IRCAN Inserm U1081.

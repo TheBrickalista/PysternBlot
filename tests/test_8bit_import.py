@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from pysternblot.image_utils import get_bit_depth, is_jpeg
+from pysternblot.image_utils import get_bit_depth, is_jpeg, load_image_as_uint16, load_image_uint16
 
 TYPHOON_IRSHORT = Path("tests/20260507-142651-[IRshort].tif")
 
@@ -156,3 +156,34 @@ class TestAssetInfo:
         with patch.object(ws, "asset_original_file", return_value=preview_path):
             with pytest.raises((RuntimeError, AssertionError)):
                 _asset_info(ws, project, "testdigest_preview")
+
+
+# ---------------------------------------------------------------------------
+# 10–13. load_image_as_uint16()
+# ---------------------------------------------------------------------------
+
+class TestLoadImageAsUint16:
+    def test_load_8bit_returns_uint16_values_in_0_255(self, tmp_path):
+        p = tmp_path / "eight.tif"
+        Image.new("L", (10, 10), color=128).save(str(p))
+        arr = load_image_as_uint16(p)
+        assert arr.dtype.name == "uint16"
+        assert arr.shape == (10, 10)
+        assert int(arr.max()) == 128  # no upscaling to 0–65535
+
+    def test_load_16bit_returns_uint16_values_above_255(self):
+        arr = load_image_as_uint16(TYPHOON_IRSHORT)
+        assert arr.dtype.name == "uint16"
+        assert arr.max() > 255  # confirms native 16-bit range
+
+    def test_load_rgb_raises_value_error(self, tmp_path):
+        p = tmp_path / "rgb.png"
+        Image.new("RGB", (10, 10), color=(255, 0, 0)).save(str(p))
+        with pytest.raises(ValueError):
+            load_image_as_uint16(p)
+
+    def test_strict_loader_still_rejects_8bit(self, tmp_path):
+        p = tmp_path / "eight.tif"
+        Image.new("L", (10, 10)).save(str(p))
+        with pytest.raises(ValueError):
+            load_image_uint16(p)

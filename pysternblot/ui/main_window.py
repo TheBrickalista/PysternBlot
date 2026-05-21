@@ -782,6 +782,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         a_import_lib.triggered.connect(self.import_library)
         tb.addAction(a_import_lib)
 
+    def _active_blot_bit_depth(self) -> int:
+        """Return the source bit depth of the active blot (8 or 16). Falls back to 16."""
+        try:
+            blot = self._get_active_blot()
+            if blot is None:
+                return 16
+            orig_path = self.workspace.asset_original_file(blot.asset_sha256)
+            return get_bit_depth(orig_path)
+        except Exception:
+            return 16
+
     def _sync_controls_from_project(self):
         self._populate_prov_blot_combo()
         self._update_prov_label()
@@ -816,13 +827,18 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_gamma_slider.blockSignals(True)
         self.invert_cb.blockSignals(True)
 
+        _depth = self._active_blot_bit_depth()
+        _max_white = 255 if _depth == 8 else 65535
+        self.levels_black_slider.setRange(0, _max_white)
+        self.levels_white_slider.setRange(0, _max_white)
+
         self.levels_black_slider.setValue(int(getattr(_display, "levels_black", 0)))
-        self.levels_white_slider.setValue(int(getattr(_display, "levels_white", 65535)))
+        self.levels_white_slider.setValue(int(getattr(_display, "levels_white", _max_white)))
         self.levels_gamma_slider.setValue(int(round(float(getattr(_display, "levels_gamma", 1.0)) * 100.0)))
         self.invert_cb.setChecked(bool(getattr(_display, "invert", False)))
 
         self.black_value_lbl.setText(str(int(getattr(_display, "levels_black", 0))))
-        self.white_value_lbl.setText(str(int(getattr(_display, "levels_white", 65535))))
+        self.white_value_lbl.setText(str(int(getattr(_display, "levels_white", _max_white))))
         self.gamma_value_lbl.setText(f"{float(getattr(_display, 'levels_gamma', 1.0)):.2f}")
 
         self.levels_black_slider.blockSignals(False)

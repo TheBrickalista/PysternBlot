@@ -33,6 +33,7 @@ class ImportArchiveResult:
 
 from .image_utils import (
     load_image_uint16,
+    load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
     crop_uint16,
@@ -410,7 +411,7 @@ class Workspace:
         self.ensure()
         original_path = self.asset_original_file(sha256)
 
-        img = load_image_uint16(original_path)
+        img = load_image_as_uint16(original_path)
 
         x = int(round(float(crop.get("x", 0))))
         y = int(round(float(crop.get("y", 0))))
@@ -452,7 +453,7 @@ class Workspace:
             cache_name = f"preview_crop_{blot.id}.tif"
 
         original_path = self.asset_original_file(sha256)
-        img = load_image_uint16(original_path)
+        img = load_image_as_uint16(original_path)
 
         black = int(getattr(display, "levels_black", 0))
         white = int(getattr(display, "levels_white", 65535))

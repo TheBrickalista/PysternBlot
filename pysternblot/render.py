@@ -20,6 +20,7 @@ from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
     load_image_uint16,
+    load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
     uint16_to_qpixmap,
@@ -81,12 +82,12 @@ def _ladder_row_for_blot(blot: Blot, marker_sets: list) -> int:
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
     """
-    Load assets/<sha256>/original.* as true 16-bit grayscale.
+    Load assets/<sha256>/original.* as grayscale (16-bit or 8-bit source).
     """
     asset_dir = workspace_root / "assets" / sha256
     for p in asset_dir.glob("original.*"):
         try:
-            arr = load_image_uint16(p)
+            arr = load_image_as_uint16(p)
             return uint16_to_qpixmap(arr)
         except Exception:
             continue
@@ -118,7 +119,7 @@ def _load_rotated_display_pixmap(
         return QPixmap()
 
     try:
-        img = load_image_uint16(original_path)
+        img = load_image_as_uint16(original_path)
         img = apply_levels_uint16(img, black, white, gamma, invert)
         img = rotate_uint16(img, rotation_deg, expand=False)
         if flip_horizontal:
@@ -141,7 +142,7 @@ def _load_pixmap_from_path(path: Path) -> QPixmap:
     if not path.exists():
         return QPixmap()
     try:
-        arr = load_image_uint16(path)
+        arr = load_image_as_uint16(path)
         return uint16_to_qpixmap(arr)
     except Exception:
         return QPixmap()

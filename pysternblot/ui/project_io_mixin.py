@@ -222,6 +222,7 @@ class _ProjectIOMixin:
                 },
             )
             self.active_blot_id = blot_id
+            self._sync_controls_from_project()
             self._populate_prov_blot_combo()
             self._update_prov_label()
 

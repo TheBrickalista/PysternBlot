@@ -1285,6 +1285,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             QMessageBox.critical(self, "Render error", str(e))
             return
 
+        self._sync_controls_from_project()
+
     def _on_crop_changed(self, blot):
         if not self.current_project:
             return

@@ -191,6 +191,25 @@ class Workspace:
         path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
         return path
 
+    def set_project_archived(self, project_path: str, archived: bool) -> None:
+        """Flip the is_archived flag on a project and persist it to disk."""
+        project = self.load_project(project_path)
+        old_value = project.project.is_archived
+        project.project.is_archived = archived
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+        project.operation_log.append(
+            OperationLogEntry(
+                timestamp_utc=now,
+                operation="archived" if archived else "unarchived",
+                target_type="project",
+                target_id=project.project.id,
+                field="project.is_archived",
+                old_value=old_value,
+                new_value=archived,
+            )
+        )
+        self.save_project(project)
+
     def rename_project(self, project: Project, new_name: str) -> Path:
         old_name = project.project.name
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()

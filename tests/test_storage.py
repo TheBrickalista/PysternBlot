@@ -801,6 +801,75 @@ def _minimal_blot_model(blot_id: str, sha: str) -> "Blot":
     )
 
 
+# ===========================================================================
+# set_project_archived
+# ===========================================================================
+
+class TestSetProjectArchived:
+
+    def test_set_project_archived_true(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Archive Me")
+        project = ws.load_project(str(proj_path))
+        assert project.project.is_archived is False
+
+        ws.set_project_archived(str(proj_path), True)
+
+        reloaded = ws.load_project(str(proj_path))
+        assert reloaded.project.is_archived is True
+
+    def test_set_project_archived_false(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Restore Me")
+
+        ws.set_project_archived(str(proj_path), True)
+        ws.set_project_archived(str(proj_path), False)
+
+        reloaded = ws.load_project(str(proj_path))
+        assert reloaded.project.is_archived is False
+
+    def test_set_project_archived_logs_archived_operation(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Log Test")
+
+        ws.set_project_archived(str(proj_path), True)
+
+        project = ws.load_project(str(proj_path))
+        archive_entries = [e for e in project.operation_log if e.operation == "archived"]
+        assert len(archive_entries) == 1
+        assert archive_entries[0].target_type == "project"
+
+    def test_set_project_archived_logs_unarchived_operation(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Log Unarchive Test")
+        ws.set_project_archived(str(proj_path), True)
+
+        ws.set_project_archived(str(proj_path), False)
+
+        project = ws.load_project(str(proj_path))
+        unarchive_entries = [e for e in project.operation_log if e.operation == "unarchived"]
+        assert len(unarchive_entries) == 1
+
+    def test_flag_persists_after_workspace_reload(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Persist Test")
+        ws.set_project_archived(str(proj_path), True)
+
+        ws2 = Workspace(root=tmp_path / "ws")
+        reloaded = ws2.load_project(str(proj_path))
+        assert reloaded.project.is_archived is True
+
+    def test_toggle_true_then_false_persists_correctly(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = ws.create_new_project("Toggle Test")
+
+        ws.set_project_archived(str(proj_path), True)
+        assert ws.load_project(str(proj_path)).project.is_archived is True
+
+        ws.set_project_archived(str(proj_path), False)
+        assert ws.load_project(str(proj_path)).project.is_archived is False
+
+
 class TestEnsureBlotCropPreviewNIR:
 
     def test_ensure_blot_crop_preview_ecl_unaffected(self, tmp_path):

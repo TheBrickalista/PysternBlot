@@ -70,6 +70,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         lib_top.addStretch(1)
 
+        self.lib_manage_archives_btn = QPushButton("Manage Archives…")
+        self.lib_manage_archives_btn.clicked.connect(self._open_archive_manager)
+        lib_top.addWidget(self.lib_manage_archives_btn)
+
         self.lib_refresh_btn = QPushButton("Refresh Library")
         self.lib_refresh_btn.clicked.connect(self.refresh_library)
         lib_top.addWidget(self.lib_refresh_btn)
@@ -1685,6 +1689,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         for project_json in sorted(projects_root.glob("*/project.json")):
             try:
                 project = self.workspace.load_project(str(project_json))
+
+                if project.project.is_archived:
+                    continue
 
                 name = getattr(project.project, "name", "")
                 project_id = getattr(project.project, "id", "")

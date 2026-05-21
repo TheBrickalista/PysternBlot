@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
+    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QInputDialog,
     QPushButton, QVBoxLayout,
 )
@@ -358,6 +358,7 @@ class _ProjectIOMixin:
         menu = QMenu(self)
         open_action = menu.addAction("Open")
         rename_action = menu.addAction("Rename…")
+        archive_action = menu.addAction("Archive…")
 
         action = menu.exec(self.library_table.viewport().mapToGlobal(pos))
 
@@ -365,6 +366,108 @@ class _ProjectIOMixin:
             self._open_project_from_library(row, 0)
         elif action == rename_action:
             self._rename_project_from_library(row)
+        elif action == archive_action:
+            self._archive_project_from_library(row)
+
+    def _archive_project_from_library(self, row: int):
+        path_item = self.library_table.item(row, 5)
+        if path_item is None:
+            return
+        path = path_item.text().strip()
+        try:
+            self.workspace.set_project_archived(path, True)
+            self.refresh_library()
+        except Exception as e:
+            QMessageBox.critical(self, "Error archiving project", str(e))
+
+    def _open_archive_manager(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manage Archives")
+        dialog.setMinimumSize(560, 380)
+
+        layout = QVBoxLayout(dialog)
+
+        columns_layout = QHBoxLayout()
+
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(QLabel("Active projects"))
+        active_list = QListWidget()
+        active_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        left_layout.addWidget(active_list)
+        columns_layout.addLayout(left_layout)
+
+        center_layout = QVBoxLayout()
+        center_layout.addStretch(1)
+        to_archive_btn = QPushButton("→")
+        to_archive_btn.setFixedWidth(32)
+        from_archive_btn = QPushButton("←")
+        from_archive_btn.setFixedWidth(32)
+        center_layout.addWidget(to_archive_btn)
+        center_layout.addWidget(from_archive_btn)
+        center_layout.addStretch(1)
+        columns_layout.addLayout(center_layout)
+
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(QLabel("Archived projects"))
+        archived_list = QListWidget()
+        archived_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        right_layout.addWidget(archived_list)
+        columns_layout.addLayout(right_layout)
+
+        layout.addLayout(columns_layout)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        projects_root = self.workspace.projects_dir
+        if projects_root.exists():
+            for proj_json in sorted(projects_root.glob("*/project.json")):
+                try:
+                    p = self.workspace.load_project(str(proj_json))
+                    item = QListWidgetItem(p.project.name)
+                    item.setData(Qt.UserRole, str(proj_json))
+                    if p.project.is_archived:
+                        archived_list.addItem(item)
+                    else:
+                        active_list.addItem(item)
+                except Exception:
+                    pass
+
+        def _move_to_archived():
+            for item in active_list.selectedItems():
+                active_list.takeItem(active_list.row(item))
+                archived_list.addItem(item)
+
+        def _move_to_active():
+            for item in archived_list.selectedItems():
+                archived_list.takeItem(archived_list.row(item))
+                active_list.addItem(item)
+
+        to_archive_btn.clicked.connect(_move_to_archived)
+        from_archive_btn.clicked.connect(_move_to_active)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        for i in range(active_list.count()):
+            item = active_list.item(i)
+            path = item.data(Qt.UserRole)
+            try:
+                self.workspace.set_project_archived(path, False)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+
+        for i in range(archived_list.count()):
+            item = archived_list.item(i)
+            path = item.data(Qt.UserRole)
+            try:
+                self.workspace.set_project_archived(path, True)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+
+        self.refresh_library()
 
     def _rename_project_from_library(self, row: int):
         path_item = self.library_table.item(row, 5)

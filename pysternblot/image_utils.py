@@ -247,3 +247,25 @@ def uint16_to_qpixmap(img: np.ndarray) -> QPixmap:
     """
     qimg = uint16_to_qimage(img)
     return QPixmap.fromImage(qimg, Qt.NoFormatConversion)
+
+
+def is_jpeg(path: str | Path) -> bool:
+    """Return True if the file starts with JPEG magic bytes (FF D8), regardless of extension."""
+    with open(str(path), "rb") as f:
+        header = f.read(2)
+    return header == b'\xff\xd8'
+
+
+def get_bit_depth(path: str | Path) -> int:
+    """
+    Return the bit depth of the image at path as an integer (16, 8, or 0 for unknown).
+
+    Always call on the original asset file, never on a preview or working copy.
+    """
+    with Image.open(str(path)) as im:
+        mode = im.mode
+    if mode in ("I;16", "I;16L", "I;16B", "I;16S", "F"):
+        return 16
+    if mode in ("L", "RGB", "RGBA", "P", "1"):
+        return 8
+    return 0

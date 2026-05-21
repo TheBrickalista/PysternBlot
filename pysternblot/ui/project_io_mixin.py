@@ -19,6 +19,7 @@ from pathlib import Path
 import json, zipfile
 
 from ..models import Blot, AssetEntry, OperationLogEntry
+from ..image_utils import is_jpeg, get_bit_depth
 
 
 class _ProjectIOMixin:
@@ -95,6 +96,47 @@ class _ProjectIOMixin:
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    def _check_jpeg_and_8bit(self, path: str) -> bool:
+        """Run JPEG rejection and 8-bit acknowledgement gate. Returns True to proceed, False to abort."""
+        if is_jpeg(path):
+            QMessageBox.critical(
+                self,
+                "Format not supported",
+                "JPEG files are not accepted by PysternBlot.\n\n"
+                "JPEG is a lossy format: pixel values are altered by compression "
+                "artefacts, making intensity measurements unreliable. Scanner "
+                "software also typically applies auto-contrast and gamma correction "
+                "before JPEG export, introducing additional unknown transformations.\n\n"
+                "Many journals explicitly prohibit JPEG source images for western "
+                "blot figures. Please re-export your scan as a TIFF from the "
+                "scanner software.",
+            )
+            return False
+
+        if get_bit_depth(path) == 8:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("8-bit image — reduced dynamic range")
+            msg.setText(
+                "This image has 8-bit depth (256 grey levels).\n\n"
+                "16-bit is recommended for western blot figures. 8-bit images have "
+                "limited dynamic range and your scanner may have applied "
+                "auto-contrast or gamma correction prior to export, introducing "
+                "unknown non-linear transformations.\n\n"
+                "Warning: 8-bit images should not be used for quantification "
+                "purposes. If quantification is intended, please acquire or request "
+                "a 16-bit source image.\n\n"
+                "You may proceed, but this limitation will be recorded in the "
+                "integrity report and flagged on export."
+            )
+            proceed_btn = msg.addButton("I understand, proceed", QMessageBox.AcceptRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+            msg.exec()
+            if msg.clickedButton() is cancel_btn:
+                return False
+
+        return True
+
     def import_blot(self):
         if not self.current_project:
             QMessageBox.information(
@@ -108,10 +150,16 @@ class _ProjectIOMixin:
             self,
             "Import blot",
             "",
-            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+            "Images (*.tif *.tiff *.png)"
         )
         if not path:
             return
+
+        if not self._check_jpeg_and_8bit(path):
+            return
+
+        bit_depth = get_bit_depth(path)
+        levels_white = 255 if bit_depth == 8 else 65535
 
         try:
             digest, dest = self.workspace.import_asset(path)
@@ -151,7 +199,7 @@ class _ProjectIOMixin:
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
                     "levels_black": 0,
-                    "levels_white": 65535,
+                    "levels_white": levels_white,
                     "levels_gamma": 1.0,
                 },
             }
@@ -208,6 +256,14 @@ class _ProjectIOMixin:
         if dialog.channel2_path is not None:
             file_paths.append(dialog.channel2_path)
 
+        # JPEG rejection for each channel file
+        for fp in file_paths:
+            if not self._check_jpeg_and_8bit(str(fp)):
+                return
+
+        bit_depth = get_bit_depth(str(file_paths[0]))
+        levels_white = 255 if bit_depth == 8 else 65535
+
         try:
             # Register assets (import_nir_blot_typhoon also imports but doesn't add to project.assets)
             imported_assets: dict = {}
@@ -219,6 +275,10 @@ class _ProjectIOMixin:
 
             for ch in channels:
                 ch.display.invert = True
+
+            if bit_depth == 8:
+                for ch in channels:
+                    ch.display.levels_white = 255
 
             for ch in channels:
                 if ch.asset_sha256 not in self.current_project.assets:
@@ -261,7 +321,7 @@ class _ProjectIOMixin:
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
                     "levels_black": 0,
-                    "levels_white": 65535,
+                    "levels_white": levels_white,
                     "levels_gamma": 1.0,
                 },
                 "included_in_final": True,
@@ -310,9 +370,12 @@ class _ProjectIOMixin:
             self,
             "Import membrane (overlay)",
             "",
-            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+            "Images (*.tif *.tiff *.png)"
         )
         if not path:
+            return
+
+        if not self._check_jpeg_and_8bit(path):
             return
 
         try:

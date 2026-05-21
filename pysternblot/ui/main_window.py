@@ -20,6 +20,7 @@ from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
+from ..image_utils import get_bit_depth
 from ..models import (
     Blot,
 )
@@ -355,8 +356,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_rows.addLayout(prov_row2)
         prov_l.addLayout(prov_rows)
 
+        prov_info_row = QHBoxLayout()
         self.prov_label = QLabel("Current blot: —")
-        prov_l.addWidget(self.prov_label)
+        self.prov_8bit_badge = QLabel("⚠ 8-bit")
+        self.prov_8bit_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
+        self.prov_8bit_badge.setVisible(False)
+        prov_info_row.addWidget(self.prov_label)
+        prov_info_row.addWidget(self.prov_8bit_badge)
+        prov_info_row.addStretch(1)
+        prov_l.addLayout(prov_info_row)
 
         # --- Display controls frame ---
         display_frame = QFrame()
@@ -1321,6 +1329,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if blot is None:
             self.prov_label.setText("Current blot: —")
+            self.prov_8bit_badge.setVisible(False)
             return
 
         asset = self.current_project.assets.get(blot.asset_sha256)
@@ -1331,6 +1340,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             name = blot.id  # fallback
 
         self.prov_label.setText(f"Current blot: {name}")
+
+        try:
+            orig_path = self.workspace.asset_original_file(blot.asset_sha256)
+            self.prov_8bit_badge.setVisible(get_bit_depth(orig_path) == 8)
+        except Exception:
+            self.prov_8bit_badge.setVisible(False)
 
     def _move_active_blot_up(self):
         if not self.current_project or not self.active_blot_id:

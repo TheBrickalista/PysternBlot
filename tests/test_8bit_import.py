@@ -176,14 +176,39 @@ class TestLoadImageAsUint16:
         assert arr.dtype.name == "uint16"
         assert arr.max() > 255  # confirms native 16-bit range
 
-    def test_load_rgb_raises_value_error(self, tmp_path):
+    def test_load_rgb_converts_to_greyscale(self, tmp_path):
         p = tmp_path / "rgb.png"
         Image.new("RGB", (10, 10), color=(255, 0, 0)).save(str(p))
-        with pytest.raises(ValueError):
-            load_image_as_uint16(p)
+        arr = load_image_as_uint16(p)
+        assert arr.dtype.name == "uint16"
+        assert arr.shape == (10, 10)
 
     def test_strict_loader_still_rejects_8bit(self, tmp_path):
         p = tmp_path / "eight.tif"
         Image.new("L", (10, 10)).save(str(p))
         with pytest.raises(ValueError):
             load_image_uint16(p)
+
+    def test_load_image_as_uint16_palette_mode(self, tmp_path):
+        p = tmp_path / "palette.tif"
+        img = Image.new("P", (10, 10))
+        img.putpalette([i for i in range(256) for _ in range(3)])
+        img.save(str(p))
+        arr = load_image_as_uint16(p)
+        assert arr.dtype.name == "uint16"
+        assert arr.shape == (10, 10)
+
+    def test_load_image_as_uint16_rgb_mode(self, tmp_path):
+        p = tmp_path / "rgb.tif"
+        Image.new("RGB", (10, 10), color=(128, 128, 128)).save(str(p))
+        arr = load_image_as_uint16(p)
+        assert arr.dtype.name == "uint16"
+        assert arr.shape == (10, 10)
+
+    def test_load_chemi_8_example(self):
+        path = "examples/Chemi_8.tif"
+        assert get_bit_depth(path) == 8
+        arr = load_image_as_uint16(path)
+        assert arr.ndim == 2
+        assert arr.dtype.name == "uint16"
+        assert int(arr.max()) <= 255

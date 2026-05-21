@@ -32,6 +32,11 @@ from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
 from .export_mixin import _ExportMixin
 
+try:
+    _APP_VERSION = _pkg_version("pysternblot")
+except Exception:
+    from pysternblot import __version__ as _APP_VERSION
+
 
 class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportMixin, QMainWindow):
     def __init__(self, workspace: Workspace):
@@ -589,7 +594,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot - 1.0.2")
+        title = QLabel(f"Pystern Blot - {_APP_VERSION}")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)
@@ -735,13 +740,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ))
         repo_btn.clicked.connect(lambda: text_view.setPlainText(
             "PysternBlot\n"
-            "Version 1.0.2\n\n"
+            f"Version {_APP_VERSION}\n\n"
             "Source code:\n"
             "  https://github.com/TheBrickalista/PysternBlot\n\n"
             "Bug reports & feature requests:\n"
             "  https://github.com/TheBrickalista/PysternBlot/issues\n\n"
             "Citation:\n"
-            "  Boulter E. (2026). PysternBlot (v1.0.1).\n"
+            f"  Boulter E. & Féral C.C. (2026). PysternBlot (v{_APP_VERSION}).\n"
             "  https://doi.org/10.5281/zenodo.20185279\n\n"
             "  (DOI will be updated after first Zenodo release)"
         ))

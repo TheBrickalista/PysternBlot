@@ -58,6 +58,8 @@ Project
 
 `Project` also holds `assets: dict[sha256, AssetEntry]`, `marker_sets`, and `operation_log`.
 
+`ProjectMeta` (the lightweight record stored alongside each project) has `is_archived: bool = False` — soft-hide from library; project remains on disk; default `False` ensures backward compatibility with existing `project.json` files.
+
 Key model invariants:
 - `Crop.w` and `Crop.h` are kept in the model for backward compatibility but are **ignored** at render and storage time — the authoritative size is `Panel.crop_template`.
 - `Blot.included_in_final` controls whether a blot appears in `build_panel_scene`. Excluded blots remain fully editable and visible in the blot selector.
@@ -74,9 +76,21 @@ Key model invariants:
 
 ### Image pipeline (image_utils.py)
 
-**All processing stays in uint16. No 8-bit promotion anywhere.**
+**Two loaders exist — use the correct one:**
+- `load_image_uint16(path)` — strict: only accepts native 16-bit grayscale (`I;16`, `I;16L`, `I;16B`). Use for NIR multichannel import and any path that must guarantee 16-bit input. Do not modify.
+- `load_image_as_uint16(path)` — permissive: accepts 16-bit grayscale (unchanged) and 8-bit sources (`L`, `P`, `RGB`, `RGBA` modes — converted to grayscale `L`, then cast to uint16 with values in 0–255 range). Use for display rendering and crop preview generation. Always call on the original asset file, never on preview or working-copy TIFFs.
 
-- `load_image_uint16` — rejects anything that isn't native 16-bit grayscale (`I;16`, `I;16L`, `I;16B`)
+**Bit-depth helpers:**
+- `is_jpeg(path)` — detects JPEG by magic bytes (`FF D8`)
+- `get_bit_depth(path)` — returns 16 for `I;16` family, 8 for `L`/`RGB`/`RGBA`/`P`/`1`, 0 for unknown
+
+**8-bit pipeline rules:**
+- Original asset is never converted — `import_asset()` copies bytes as-is
+- Internal processing uses uint16 throughout; 8-bit values occupy 0–255 range of the uint16 space — no upscaling to 65535
+- `levels_white` is set to 255 for 8-bit sources, 65535 for 16-bit, at import time
+- JPEG is hard-rejected at all import entry points
+
+**Processing functions (all uint16 in, uint16 out):**
 - `apply_levels_uint16` — black/white/gamma/invert in float32, clipped back to uint16
 - `rotate_uint16` — Pillow `"I"` mode (int32) rotation, clipped back to uint16
 - `crop_uint16` — clamped array slice
@@ -84,9 +98,21 @@ Key model invariants:
 
 When saving uint16 TIFFs use `Image.frombuffer("I;16", (w, h), arr.tobytes(), "raw", "I;16", 0, 1)` — `Image.fromarray(arr, mode="I;16")` is deprecated since Pillow 9.1 and will be removed in Pillow 13.
 
+### Crop handles (crop_rect_item.py)
+
+`CropRectItem` implements Inkscape-style resize handles:
+- `HANDLE_VISUAL = 8.0` — drawn square size in scene coords
+- `HANDLE_HIT = 20.0` — grabbable hit zone (larger, invisible)
+- 8 handle zones: 4 corners (resize both axes) + 4 edge midpoints (resize one axis)
+- `_handle_rects()` — returns hit-area rects, used by `_pick_handle()`
+- `_handle_visual_rects()` — returns visual rects, used by `paint()`
+- Cursor changes per zone: diagonal for corners, horizontal/vertical for edges
+
 ### Rendering (render.py)
 
 `build_panel_scene(project, workspace_root)` and `build_provenance_scene(project, workspace_root, blot_id, on_crop_commit, on_crop_resize_commit, show_grid)` both return a `QGraphicsScene`. The scene is rebuilt from scratch on every refresh — no incremental update. Callers must call `ensure_blot_crop_preview(blot, panel)` for each blot before calling these functions.
+
+Image loading in render uses `load_image_as_uint16` (permissive) — never `load_image_uint16` — to support 8-bit sources.
 
 `build_panel_scene` only stacks blots where `blot.included_in_final` is `True`. The panel uses a fixed column layout: ladder column (left) → image column → protein label column (right).
 
@@ -100,13 +126,21 @@ When saving uint16 TIFFs use `Image.frombuffer("I;16", (w, h), arr.tobytes(), "r
 MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportMixin, QMainWindow)
 ```
 
-- **`main_window.py`** — `__init__` builds all tabs and widgets; owns the rendering/refresh pipeline, display controls, and blot navigation
-- **`project_io_mixin.py`** — project create/open/import, operation logging (`log_operation`)
+- **`main_window.py`** — `__init__` builds all tabs and widgets; owns the rendering/refresh pipeline, display controls, and blot navigation; levels sliders adapt their range to the active blot's bit depth via `_active_blot_bit_depth()`; Black and White fields are `QLineEdit` (editable), not `QLabel`; `_sync_controls_from_project()` is called after every import to ensure controls reflect the new blot's actual values and range
+- **`project_io_mixin.py`** — project create/open/import, operation logging (`log_operation`); 8-bit/JPEG gating at all three import entry points; project archive manager (`_open_archive_manager`)
 - **`marker_set_mixin.py`** — protein ladder preset CRUD
 - **`overlay_ladder_mixin.py`** — overlay ladder assignment dialog, protein label controls, `eventFilter` for click-to-assign
-- **`export_mixin.py`** — PNG/PDF/SVG/TIFF/integrity report exports
-- **`crop_rect_item.py`** — interactive `QGraphicsItem` for the crop rectangle in the provenance view
+- **`export_mixin.py`** — PNG/PDF/SVG/TIFF/integrity report exports; pre-export 8-bit warning via `_has_8bit_blots()`
+- **`crop_rect_item.py`** — interactive `QGraphicsItem` for the crop rectangle in the provenance view (see Crop handles section above)
 - **`legend_tab.py`** — standalone `QWidget` for legend editing, emits `changed` signal
+
+### Project archiving
+
+Projects have `is_archived: bool = False` in `ProjectMeta` (default `False` — backward compatible). `Workspace.set_project_archived(path, archived)` flips the flag and saves. `refresh_library()` filters out archived projects from the library view. The archive manager dialog shows a two-column active/archived view with arrow buttons to move projects between columns. The right-click context menu on any project includes an **Archive** action.
+
+### Integrity report
+
+`_asset_info()` uses `get_bit_depth()` on the original asset file. For 8-bit assets, a `bit_depth_warning` field is added to the report JSON. The HTML report highlights 8-bit rows in amber.
 
 ### Operation logging
 

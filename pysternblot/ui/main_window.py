@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit
 )
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction, QPixmap, QIntValidator
 from PySide6.QtCore import Qt
 
 import re
@@ -452,9 +452,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
         row3.addWidget(self.levels_black_slider)
 
-        self.black_value_lbl = QLabel("0")
-        self.black_value_lbl.setMinimumWidth(30)
-        row3.addWidget(self.black_value_lbl)
+        self.black_value_edit = QLineEdit("0")
+        self.black_value_edit.setFixedWidth(52)
+        self.black_value_edit.setAlignment(Qt.AlignRight)
+        self.black_value_edit.setValidator(QIntValidator(0, 65535))
+        self.black_value_edit.editingFinished.connect(self._on_black_value_edited)
+        row3.addWidget(self.black_value_edit)
 
         row3.addSpacing(16)
 
@@ -469,9 +472,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
         row3.addWidget(self.levels_white_slider)
 
-        self.white_value_lbl = QLabel("65535")
-        self.white_value_lbl.setMinimumWidth(30)
-        row3.addWidget(self.white_value_lbl)
+        self.white_value_edit = QLineEdit("65535")
+        self.white_value_edit.setFixedWidth(52)
+        self.white_value_edit.setAlignment(Qt.AlignRight)
+        self.white_value_edit.setValidator(QIntValidator(0, 65535))
+        self.white_value_edit.editingFinished.connect(self._on_white_value_edited)
+        row3.addWidget(self.white_value_edit)
 
         row3.addStretch(1)
         display_layout.addLayout(row3)
@@ -782,6 +788,32 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         a_import_lib.triggered.connect(self.import_library)
         tb.addAction(a_import_lib)
 
+    def _on_black_value_edited(self):
+        try:
+            value = int(self.black_value_edit.text())
+        except ValueError:
+            return
+        max_val = self.levels_black_slider.maximum()
+        value = max(0, min(value, max_val))
+        self.black_value_edit.setText(str(value))
+        self.levels_black_slider.blockSignals(True)
+        self.levels_black_slider.setValue(value)
+        self.levels_black_slider.blockSignals(False)
+        self._on_levels_changed()
+
+    def _on_white_value_edited(self):
+        try:
+            value = int(self.white_value_edit.text())
+        except ValueError:
+            return
+        max_val = self.levels_white_slider.maximum()
+        value = max(0, min(value, max_val))
+        self.white_value_edit.setText(str(value))
+        self.levels_white_slider.blockSignals(True)
+        self.levels_white_slider.setValue(value)
+        self.levels_white_slider.blockSignals(False)
+        self._on_levels_changed()
+
     def _active_blot_bit_depth(self) -> int:
         """Return the source bit depth of the active blot (8 or 16). Falls back to 16."""
         try:
@@ -831,14 +863,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _max_white = 255 if _depth == 8 else 65535
         self.levels_black_slider.setRange(0, _max_white)
         self.levels_white_slider.setRange(0, _max_white)
+        self.black_value_edit.setValidator(QIntValidator(0, _max_white))
+        self.white_value_edit.setValidator(QIntValidator(0, _max_white))
 
         self.levels_black_slider.setValue(int(getattr(_display, "levels_black", 0)))
         self.levels_white_slider.setValue(int(getattr(_display, "levels_white", _max_white)))
         self.levels_gamma_slider.setValue(int(round(float(getattr(_display, "levels_gamma", 1.0)) * 100.0)))
         self.invert_cb.setChecked(bool(getattr(_display, "invert", False)))
 
-        self.black_value_lbl.setText(str(int(getattr(_display, "levels_black", 0))))
-        self.white_value_lbl.setText(str(int(getattr(_display, "levels_white", _max_white))))
+        self.black_value_edit.setText(str(int(getattr(_display, "levels_black", 0))))
+        self.white_value_edit.setText(str(int(getattr(_display, "levels_white", _max_white))))
         self.gamma_value_lbl.setText(f"{float(getattr(_display, 'levels_gamma', 1.0)):.2f}")
 
         self.levels_black_slider.blockSignals(False)
@@ -1572,7 +1606,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if white <= black:
             if sender is self.levels_black_slider:
-                white = min(65535, black + 1)
+                white = min(self.levels_white_slider.maximum(), black + 1)
                 self.levels_white_slider.blockSignals(True)
                 self.levels_white_slider.setValue(white)
                 self.levels_white_slider.blockSignals(False)
@@ -1602,8 +1636,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new_levels,
         )
 
-        self.black_value_lbl.setText(str(black))
-        self.white_value_lbl.setText(str(white))
+        self.black_value_edit.setText(str(black))
+        self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
 
         self.workspace.save_project(self.current_project)

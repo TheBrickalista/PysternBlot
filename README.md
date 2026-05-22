@@ -70,10 +70,10 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 - Python ≥ 3.10
 - PySide6 ≥ 6.6
-- Pydantic ≥ 2.0
-- NumPy
+- Pydantic ≥ 2.6
+- NumPy ≥ 1.24
 - Pillow ≥ 10.0
-- scikit-image
+- scikit-image ≥ 0.21
 
 > **Note:** requirements only apply to the source/PyPI install methods. Standalone ports bundle everything.
 

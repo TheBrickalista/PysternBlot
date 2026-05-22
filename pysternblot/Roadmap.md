@@ -20,6 +20,7 @@ Both export pipelines are implemented:
 
 - **4.1 Raster Export** — 16-bit TIFF and PNG, fully flattened, preserving dynamic range
 - **4.2 Editable Export** — SVG (priority), PDF, and EPS; each blot as an independent raster object, text and shapes as editable vector objects
+- [x] ✅ `CropRectItem` — Inkscape-style handles: `HANDLE_VISUAL=8px`, `HANDLE_HIT=20px`; 4 corners (resize both axes) + 4 edge midpoints (resize one axis); cursor changes per zone
 
 ---
 
@@ -49,8 +50,17 @@ Two correctness fixes to the Original Image tab UI:
 - [x] ✅ About tab added with Legal/Copyright/Repository placeholder buttons
 - [x] ✅ Original Image toolbar split into two rows (navigation row + metadata row)
 - [x] ✅ Window resize regression fixed
+- [x] ✅ Black and White levels fields changed from QLabel to QLineEdit — directly editable; dynamic range adapts to source bit depth (0–255 for 8-bit, 0–65535 for 16-bit); bidirectional sync with sliders
 
 ---
+
+## ✅ Phase 2 (partial) — 8-bit Image Support *(Completed)*
+
+- [x] ✅ `is_jpeg(path)` and `get_bit_depth(path)` helpers in `image_utils.py`
+- [x] ✅ `load_image_as_uint16(path)` — permissive loader accepting L, P, RGB, RGBA 8-bit modes alongside native 16-bit; values stay in 0–255 range, no upscaling
+- [x] ✅ JPEG hard-rejected at all import entry points with scientific explanation message
+- [x] ✅ 8-bit import warning dialog (mandatory acknowledgement); ⚠ 8-bit badge in blot panel; `levels_white` set to 255 for 8-bit sources
+- [x] ✅ 8-bit flagging in integrity report JSON and HTML (amber highlight); pre-export warning via `_has_8bit_blots()`
 
 ## Phase 2 — Project Model Extension
 
@@ -176,6 +186,13 @@ Addresses the recovery of existing image libraries and long-term data availabili
 
 **Archive export/import:**
 - [x] ✅ Export/import library archive (`.pbarchive` format — plain zip): `export_archive` and `import_archive` on `Workspace`; project selection dialog with Select All / Deselect All; SHA256 integrity verification of every asset before any file is written; `imported_from_archive` operation log entry on import; skips projects and assets already present (idempotent); full test coverage (5 tests)
+
+### 7.3 Project Archiving *(Completed)*
+
+- [x] ✅ `ProjectMeta.is_archived: bool = False` — soft-hide flag; backward compatible default; archived projects excluded from `refresh_library()` but remain fully intact on disk
+- [x] ✅ `Workspace.set_project_archived(path, archived)` — flips flag and saves; logs operation
+- [x] ✅ Archive manager dialog — two-column active/archived view with move buttons; accessible via Manage Archives… button in library panel
+- [x] ✅ Right-click context menu Archive action on library rows
 
 For researchers inheriting a dataset or bringing historical data into compliance:
 

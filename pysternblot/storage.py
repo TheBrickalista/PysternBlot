@@ -7,6 +7,11 @@
 
 from __future__ import annotations
 import hashlib, json, re, zipfile
+
+try:
+    from pysternblot import __version__ as _pysternblot_version
+except ImportError:
+    _pysternblot_version = "unknown"
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -335,7 +340,7 @@ class Workspace:
                 seen.add(s)
         path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
 
-    def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
+    def create_new_project(self, name: str, app_version: str = _pysternblot_version) -> Path:
         """
         Create a new project folder and a minimal project.json, return its path.
         """

@@ -302,6 +302,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
+        self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
         prov_row1.addWidget(self.prov_fit_btn)
 
         self.export_original_tiff_btn = QPushButton("Export Original TIFF")
@@ -311,6 +312,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.export_all_original_tiff_btn = QPushButton("Export All Originals")
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
         prov_row1.addWidget(self.export_all_original_tiff_btn)
+
+        hint = QLabel("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
+        hint.setStyleSheet("color: #888888; font-size: 11px;")
+        prov_row1.addSpacing(12)
+        prov_row1.addWidget(hint)
 
         prov_row1.addStretch(1)
 
@@ -543,6 +549,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = ZoomableGraphicsView()
+        self.prov_view.setMinimumHeight(200)
         self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 

@@ -40,6 +40,9 @@ class ZoomableGraphicsView(QGraphicsView):
         if event.angleDelta().y() > 0:
             factor = zoom_in_factor
             self._zoom += 1
+            if self._zoom > 20:
+                self._zoom = 20
+                return
         else:
             factor = zoom_out_factor
             self._zoom -= 1

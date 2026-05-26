@@ -28,12 +28,39 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Generate .icns icon from logo PNG
+        run: |
+          mkdir -p build/pysternblot.iconset
+          sips -z 16 16     pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_16x16.png
+          sips -z 32 32     pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_16x16@2x.png
+          sips -z 32 32     pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_32x32.png
+          sips -z 64 64     pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_32x32@2x.png
+          sips -z 128 128   pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_128x128.png
+          sips -z 256 256   pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_128x128@2x.png
+          sips -z 256 256   pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_256x256.png
+          sips -z 512 512   pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_256x256@2x.png
+          sips -z 512 512   pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_512x512.png
+          sips -z 1024 1024 pysternblot/resources/pb_logo2.png \
+            --out build/pysternblot.iconset/icon_512x512@2x.png
+          iconutil -c icns build/pysternblot.iconset \
+            -o build/pysternblot.icns
+
       - name: Build .app with PyInstaller
         run: |
           pyinstaller \
             --name "PysternBlot" \
             --windowed \
             --noconfirm \
+            --icon "build/pysternblot.icns" \
             --add-data "pysternblot/resources:pysternblot/resources" \
             launcher.py
 

@@ -12,7 +12,6 @@ jobs:
     permissions:
       contents: write
 
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -29,6 +28,23 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Generate .ico icon from logo PNG
+        run: |
+          python - <<'EOF'
+          from PIL import Image
+          img = Image.open("pysternblot/resources/pb_logo2.png").convert("RGBA")
+          sizes = [16, 32, 48, 64, 128, 256]
+          icons = [img.resize((s, s), Image.LANCZOS) for s in sizes]
+          icons[0].save(
+              "build/pysternblot.ico",
+              format="ICO",
+              sizes=[(s, s) for s in sizes],
+              append_images=icons[1:]
+          )
+          print("Icon generated successfully")
+          EOF
+        shell: bash
+
       - name: Build .exe with PyInstaller
         run: |
           pyinstaller `
@@ -36,6 +52,7 @@ jobs:
             --windowed `
             --onefile `
             --noconfirm `
+            --icon "build/pysternblot.ico" `
             --add-data "pysternblot/resources;pysternblot/resources" `
             launcher.py
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit
 )
-from PySide6.QtGui import QAction, QPixmap, QIntValidator
+from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
 
 import re
@@ -263,8 +263,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
         prov_row1.addWidget(self.prov_rotate_dial)
 
-        self.prov_rotate_label = QLabel("0.0°")
+        self.prov_rotate_label = QLineEdit("0.0")
+        self.prov_rotate_label.setFixedWidth(52)
+        self.prov_rotate_label.setAlignment(Qt.AlignRight)
+        self.prov_rotate_label.setValidator(QDoubleValidator(-10.0, 10.0, 1))
+        self.prov_rotate_label.setToolTip("Rotation angle in degrees (−10.0 to +10.0). Edit directly or use the dial.")
+        self.prov_rotate_label.editingFinished.connect(self._on_rotate_label_edited)
         prov_row1.addWidget(self.prov_rotate_label)
+        prov_row1.addWidget(QLabel("°"))
 
         prov_row1.addSpacing(8)
 
@@ -853,7 +859,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(rotation_deg * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
 
-        self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+        self.prov_rotate_label.setText(f"{rotation_deg:.1f}")
 
         self._flip_h_btn.blockSignals(True)
         self._flip_v_btn.blockSignals(True)
@@ -1493,7 +1499,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
@@ -1516,7 +1522,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
@@ -1542,12 +1548,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_rotate_label_edited(self):
+        try:
+            value = float(self.prov_rotate_label.text())
+        except ValueError:
+            return
+        value = max(-10.0, min(10.0, value))
+        self.prov_rotate_label.setText(f"{value:.1f}")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(value * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self._on_rotation_changed(int(round(value * 10.0)))
 
     def _on_flip_horizontal(self):
         blot = self._get_active_blot()

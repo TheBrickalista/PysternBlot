@@ -29,7 +29,9 @@ jobs:
           pip install pyinstaller
 
       - name: Generate .ico icon from logo PNG
+        shell: bash
         run: |
+          mkdir -p build
           python - <<'EOF'
           from PIL import Image
           img = Image.open("pysternblot/resources/pb_logo2.png").convert("RGBA")
@@ -43,7 +45,6 @@ jobs:
           )
           print("Icon generated successfully")
           EOF
-        shell: bash
 
       - name: Build .exe with PyInstaller
         run: |
@@ -73,7 +74,7 @@ jobs:
 
       - name: Upload as artifact (manual runs)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: PysternBlot-${{ steps.version.outputs.tag }}-Windows
           path: PysternBlot-${{ steps.version.outputs.tag }}-Windows.exe
@@ -81,6 +82,6 @@ jobs:
 
       - name: Upload to GitHub Release (release runs)
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: PysternBlot-${{ steps.version.outputs.tag }}-Windows.exe

@@ -8,7 +8,7 @@ on:
 jobs:
   build-windows:
     name: Build Windows .exe
-    runs-on: windows-latest
+    runs-on: windows-2025
     permissions:
       contents: write
 
@@ -34,16 +34,51 @@ jobs:
           mkdir -p build
           python - <<'EOF'
           from PIL import Image
-          img = Image.open("pysternblot/resources/pb_logo2.png").convert("RGBA")
-          sizes = [16, 32, 48, 64, 128, 256]
-          icons = [img.resize((s, s), Image.LANCZOS) for s in sizes]
-          icons[0].save(
-              "build/pysternblot.ico",
-              format="ICO",
-              sizes=[(s, s) for s in sizes],
-              append_images=icons[1:]
-          )
-          print("Icon generated successfully")
+          import struct, io
+
+          src = Image.open("pysternblot/resources/pb_logo2.png").convert("RGBA")
+
+          # Generate all standard Windows icon sizes
+          sizes = [16, 24, 32, 48, 64, 128, 256]
+          frames = []
+          for s in sizes:
+              frame = src.resize((s, s), Image.LANCZOS)
+              frames.append(frame)
+
+          # Save each size as PNG (lossless, best quality)
+          # then bundle into .ico with PNG-compressed frames
+          png_bufs = []
+          for frame in frames:
+              buf = io.BytesIO()
+              frame.save(buf, format="PNG", optimize=True)
+              png_bufs.append(buf.getvalue())
+
+          # Write .ico file manually with PNG-compressed frames
+          # ICO header: reserved(2) + type(2) + count(2)
+          n = len(frames)
+          header = struct.pack("<HHH", 0, 1, n)
+
+          # Each directory entry: width(1) + height(1) + colorcount(1) +
+          # reserved(1) + planes(2) + bitcount(2) + size(4) + offset(4)
+          dir_size = n * 16
+          data_offset = 6 + dir_size
+
+          entries = b""
+          data = b""
+          offset = data_offset
+          for frame, png in zip(frames, png_bufs):
+              w = frame.width if frame.width < 256 else 0  # 0 means 256 in ICO
+              h = frame.height if frame.height < 256 else 0
+              entries += struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32,
+                                    len(png), offset)
+              data += png
+              offset += len(png)
+
+          with open("build/pysternblot.ico", "wb") as f:
+              f.write(header + entries + data)
+
+          print(f"Icon generated: {len(frames)} sizes, "
+                f"{sum(len(p) for p in png_bufs)} bytes total")
           EOF
 
       - name: Build .exe with PyInstaller

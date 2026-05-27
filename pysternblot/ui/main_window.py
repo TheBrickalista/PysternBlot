@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit
 )
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
 
 import re
@@ -20,6 +20,7 @@ from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
+from ..image_utils import get_bit_depth
 from ..models import (
     Blot,
 )
@@ -30,6 +31,11 @@ from .project_io_mixin import _ProjectIOMixin
 from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
 from .export_mixin import _ExportMixin
+
+try:
+    _APP_VERSION = _pkg_version("pysternblot")
+except Exception:
+    from pysternblot import __version__ as _APP_VERSION
 
 
 class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportMixin, QMainWindow):
@@ -69,6 +75,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         lib_top.addWidget(lib_title)
 
         lib_top.addStretch(1)
+
+        self.lib_manage_archives_btn = QPushButton("Manage Archives…")
+        self.lib_manage_archives_btn.clicked.connect(self._open_archive_manager)
+        lib_top.addWidget(self.lib_manage_archives_btn)
 
         self.lib_refresh_btn = QPushButton("Refresh Library")
         self.lib_refresh_btn.clicked.connect(self.refresh_library)
@@ -253,8 +263,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
         prov_row1.addWidget(self.prov_rotate_dial)
 
-        self.prov_rotate_label = QLabel("0.0°")
+        self.prov_rotate_label = QLineEdit("0.0")
+        self.prov_rotate_label.setFixedWidth(52)
+        self.prov_rotate_label.setAlignment(Qt.AlignRight)
+        self.prov_rotate_label.setValidator(QDoubleValidator(-10.0, 10.0, 1))
+        self.prov_rotate_label.setToolTip("Rotation angle in degrees (−10.0 to +10.0). Edit directly or use the dial.")
+        self.prov_rotate_label.editingFinished.connect(self._on_rotate_label_edited)
         prov_row1.addWidget(self.prov_rotate_label)
+        prov_row1.addWidget(QLabel("°"))
 
         prov_row1.addSpacing(8)
 
@@ -292,6 +308,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
+        self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
         prov_row1.addWidget(self.prov_fit_btn)
 
         self.export_original_tiff_btn = QPushButton("Export Original TIFF")
@@ -301,6 +318,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.export_all_original_tiff_btn = QPushButton("Export All Originals")
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
         prov_row1.addWidget(self.export_all_original_tiff_btn)
+
+        hint = QLabel("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
+        hint.setStyleSheet("color: #888888; font-size: 11px;")
+        prov_row1.addSpacing(12)
+        prov_row1.addWidget(hint)
 
         prov_row1.addStretch(1)
 
@@ -351,8 +373,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_rows.addLayout(prov_row2)
         prov_l.addLayout(prov_rows)
 
+        prov_info_row = QHBoxLayout()
         self.prov_label = QLabel("Current blot: —")
-        prov_l.addWidget(self.prov_label)
+        self.prov_8bit_badge = QLabel("⚠ 8-bit")
+        self.prov_8bit_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
+        self.prov_8bit_badge.setVisible(False)
+        prov_info_row.addWidget(self.prov_label)
+        prov_info_row.addWidget(self.prov_8bit_badge)
+        prov_info_row.addStretch(1)
+        prov_l.addLayout(prov_info_row)
 
         # --- Display controls frame ---
         display_frame = QFrame()
@@ -440,9 +469,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
         row3.addWidget(self.levels_black_slider)
 
-        self.black_value_lbl = QLabel("0")
-        self.black_value_lbl.setMinimumWidth(30)
-        row3.addWidget(self.black_value_lbl)
+        self.black_value_edit = QLineEdit("0")
+        self.black_value_edit.setFixedWidth(52)
+        self.black_value_edit.setAlignment(Qt.AlignRight)
+        self.black_value_edit.setValidator(QIntValidator(0, 65535))
+        self.black_value_edit.editingFinished.connect(self._on_black_value_edited)
+        row3.addWidget(self.black_value_edit)
 
         row3.addSpacing(16)
 
@@ -457,9 +489,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
         row3.addWidget(self.levels_white_slider)
 
-        self.white_value_lbl = QLabel("65535")
-        self.white_value_lbl.setMinimumWidth(30)
-        row3.addWidget(self.white_value_lbl)
+        self.white_value_edit = QLineEdit("65535")
+        self.white_value_edit.setFixedWidth(52)
+        self.white_value_edit.setAlignment(Qt.AlignRight)
+        self.white_value_edit.setValidator(QIntValidator(0, 65535))
+        self.white_value_edit.editingFinished.connect(self._on_white_value_edited)
+        row3.addWidget(self.white_value_edit)
 
         row3.addStretch(1)
         display_layout.addLayout(row3)
@@ -520,6 +555,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = ZoomableGraphicsView()
+        self.prov_view.setMinimumHeight(200)
         self.prov_view.viewport().installEventFilter(self)
         prov_l.addWidget(self.prov_view)
 
@@ -571,7 +607,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(8)
 
-        title = QLabel("Pystern Blot - 1.0.2")
+        title = QLabel(f"Pystern Blot - {_APP_VERSION}")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 28px; font-weight: 700; color: #222222;")
         title_layout.addWidget(title)
@@ -717,13 +753,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ))
         repo_btn.clicked.connect(lambda: text_view.setPlainText(
             "PysternBlot\n"
-            "Version 1.0.2\n\n"
+            f"Version {_APP_VERSION}\n\n"
             "Source code:\n"
             "  https://github.com/TheBrickalista/PysternBlot\n\n"
             "Bug reports & feature requests:\n"
             "  https://github.com/TheBrickalista/PysternBlot/issues\n\n"
             "Citation:\n"
-            "  Boulter E. (2026). PysternBlot (v1.0.1).\n"
+            f"  Boulter E. & Féral C.C. (2026). PysternBlot (v{_APP_VERSION}).\n"
             "  https://doi.org/10.5281/zenodo.20185279\n\n"
             "  (DOI will be updated after first Zenodo release)"
         ))
@@ -770,6 +806,43 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         a_import_lib.triggered.connect(self.import_library)
         tb.addAction(a_import_lib)
 
+    def _on_black_value_edited(self):
+        try:
+            value = int(self.black_value_edit.text())
+        except ValueError:
+            return
+        max_val = self.levels_black_slider.maximum()
+        value = max(0, min(value, max_val))
+        self.black_value_edit.setText(str(value))
+        self.levels_black_slider.blockSignals(True)
+        self.levels_black_slider.setValue(value)
+        self.levels_black_slider.blockSignals(False)
+        self._on_levels_changed()
+
+    def _on_white_value_edited(self):
+        try:
+            value = int(self.white_value_edit.text())
+        except ValueError:
+            return
+        max_val = self.levels_white_slider.maximum()
+        value = max(0, min(value, max_val))
+        self.white_value_edit.setText(str(value))
+        self.levels_white_slider.blockSignals(True)
+        self.levels_white_slider.setValue(value)
+        self.levels_white_slider.blockSignals(False)
+        self._on_levels_changed()
+
+    def _active_blot_bit_depth(self) -> int:
+        """Return the source bit depth of the active blot (8 or 16). Falls back to 16."""
+        try:
+            blot = self._get_active_blot()
+            if blot is None:
+                return 16
+            orig_path = self.workspace.asset_original_file(blot.asset_sha256)
+            return get_bit_depth(orig_path)
+        except Exception:
+            return 16
+
     def _sync_controls_from_project(self):
         self._populate_prov_blot_combo()
         self._update_prov_label()
@@ -786,7 +859,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(rotation_deg * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
 
-        self.prov_rotate_label.setText(f"{rotation_deg:.1f}°")
+        self.prov_rotate_label.setText(f"{rotation_deg:.1f}")
 
         self._flip_h_btn.blockSignals(True)
         self._flip_v_btn.blockSignals(True)
@@ -804,13 +877,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_gamma_slider.blockSignals(True)
         self.invert_cb.blockSignals(True)
 
+        _depth = self._active_blot_bit_depth()
+        _max_white = 255 if _depth == 8 else 65535
+        self.levels_black_slider.setRange(0, _max_white)
+        self.levels_white_slider.setRange(0, _max_white)
+        self.black_value_edit.setValidator(QIntValidator(0, _max_white))
+        self.white_value_edit.setValidator(QIntValidator(0, _max_white))
+
         self.levels_black_slider.setValue(int(getattr(_display, "levels_black", 0)))
-        self.levels_white_slider.setValue(int(getattr(_display, "levels_white", 65535)))
+        self.levels_white_slider.setValue(int(getattr(_display, "levels_white", _max_white)))
         self.levels_gamma_slider.setValue(int(round(float(getattr(_display, "levels_gamma", 1.0)) * 100.0)))
         self.invert_cb.setChecked(bool(getattr(_display, "invert", False)))
 
-        self.black_value_lbl.setText(str(int(getattr(_display, "levels_black", 0))))
-        self.white_value_lbl.setText(str(int(getattr(_display, "levels_white", 65535))))
+        self.black_value_edit.setText(str(int(getattr(_display, "levels_black", 0))))
+        self.white_value_edit.setText(str(int(getattr(_display, "levels_white", _max_white))))
         self.gamma_value_lbl.setText(f"{float(getattr(_display, 'levels_gamma', 1.0)):.2f}")
 
         self.levels_black_slider.blockSignals(False)
@@ -1223,6 +1303,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             QMessageBox.critical(self, "Render error", str(e))
             return
 
+        self._sync_controls_from_project()
+
     def _on_crop_changed(self, blot):
         if not self.current_project:
             return
@@ -1317,6 +1399,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if blot is None:
             self.prov_label.setText("Current blot: —")
+            self.prov_8bit_badge.setVisible(False)
             return
 
         asset = self.current_project.assets.get(blot.asset_sha256)
@@ -1327,6 +1410,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             name = blot.id  # fallback
 
         self.prov_label.setText(f"Current blot: {name}")
+
+        try:
+            orig_path = self.workspace.asset_original_file(blot.asset_sha256)
+            self.prov_8bit_badge.setVisible(get_bit_depth(orig_path) == 8)
+        except Exception:
+            self.prov_8bit_badge.setVisible(False)
 
     def _move_active_blot_up(self):
         if not self.current_project or not self.active_blot_id:
@@ -1410,7 +1499,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
@@ -1433,7 +1522,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
@@ -1459,12 +1548,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.prov_rotate_label.setText(f"{new:.1f}°")
+        self.prov_rotate_label.setText(f"{new:.1f}")
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_rotate_label_edited(self):
+        try:
+            value = float(self.prov_rotate_label.text())
+        except ValueError:
+            return
+        value = max(-10.0, min(10.0, value))
+        self.prov_rotate_label.setText(f"{value:.1f}")
+        self.prov_rotate_dial.blockSignals(True)
+        self.prov_rotate_dial.setValue(int(round(value * 10.0)))
+        self.prov_rotate_dial.blockSignals(False)
+        self._on_rotation_changed(int(round(value * 10.0)))
 
     def _on_flip_horizontal(self):
         blot = self._get_active_blot()
@@ -1537,7 +1638,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if white <= black:
             if sender is self.levels_black_slider:
-                white = min(65535, black + 1)
+                white = min(self.levels_white_slider.maximum(), black + 1)
                 self.levels_white_slider.blockSignals(True)
                 self.levels_white_slider.setValue(white)
                 self.levels_white_slider.blockSignals(False)
@@ -1567,8 +1668,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new_levels,
         )
 
-        self.black_value_lbl.setText(str(black))
-        self.white_value_lbl.setText(str(white))
+        self.black_value_edit.setText(str(black))
+        self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
 
         self.workspace.save_project(self.current_project)
@@ -1685,6 +1786,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         for project_json in sorted(projects_root.glob("*/project.json")):
             try:
                 project = self.workspace.load_project(str(project_json))
+
+                if project.project.is_archived:
+                    continue
 
                 name = getattr(project.project, "name", "")
                 project_id = getattr(project.project, "id", "")

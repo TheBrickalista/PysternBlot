@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
+    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QInputDialog,
     QPushButton, QVBoxLayout,
 )
@@ -19,6 +19,7 @@ from pathlib import Path
 import json, zipfile
 
 from ..models import Blot, AssetEntry, OperationLogEntry
+from ..image_utils import is_jpeg, get_bit_depth
 
 
 class _ProjectIOMixin:
@@ -95,6 +96,47 @@ class _ProjectIOMixin:
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
+    def _check_jpeg_and_8bit(self, path: str) -> bool:
+        """Run JPEG rejection and 8-bit acknowledgement gate. Returns True to proceed, False to abort."""
+        if is_jpeg(path):
+            QMessageBox.critical(
+                self,
+                "Format not supported",
+                "JPEG files are not accepted by PysternBlot.\n\n"
+                "JPEG is a lossy format: pixel values are altered by compression "
+                "artefacts, making intensity measurements unreliable. Scanner "
+                "software also typically applies auto-contrast and gamma correction "
+                "before JPEG export, introducing additional unknown transformations.\n\n"
+                "Many journals explicitly prohibit JPEG source images for western "
+                "blot figures. Please re-export your scan as a TIFF from the "
+                "scanner software.",
+            )
+            return False
+
+        if get_bit_depth(path) == 8:
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("8-bit image — reduced dynamic range")
+            msg.setText(
+                "This image has 8-bit depth (256 grey levels).\n\n"
+                "16-bit is recommended for western blot figures. 8-bit images have "
+                "limited dynamic range and your scanner may have applied "
+                "auto-contrast or gamma correction prior to export, introducing "
+                "unknown non-linear transformations.\n\n"
+                "Warning: 8-bit images should not be used for quantification "
+                "purposes. If quantification is intended, please acquire or request "
+                "a 16-bit source image.\n\n"
+                "You may proceed, but this limitation will be recorded in the "
+                "integrity report and flagged on export."
+            )
+            proceed_btn = msg.addButton("I understand, proceed", QMessageBox.AcceptRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+            msg.exec()
+            if msg.clickedButton() is cancel_btn:
+                return False
+
+        return True
+
     def import_blot(self):
         if not self.current_project:
             QMessageBox.information(
@@ -108,10 +150,16 @@ class _ProjectIOMixin:
             self,
             "Import blot",
             "",
-            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+            "Images (*.tif *.tiff *.png)"
         )
         if not path:
             return
+
+        if not self._check_jpeg_and_8bit(path):
+            return
+
+        bit_depth = get_bit_depth(path)
+        levels_white = 255 if bit_depth == 8 else 65535
 
         try:
             digest, dest = self.workspace.import_asset(path)
@@ -151,7 +199,7 @@ class _ProjectIOMixin:
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
                     "levels_black": 0,
-                    "levels_white": 65535,
+                    "levels_white": levels_white,
                     "levels_gamma": 1.0,
                 },
             }
@@ -174,6 +222,7 @@ class _ProjectIOMixin:
                 },
             )
             self.active_blot_id = blot_id
+            self._sync_controls_from_project()
             self._populate_prov_blot_combo()
             self._update_prov_label()
 
@@ -208,6 +257,14 @@ class _ProjectIOMixin:
         if dialog.channel2_path is not None:
             file_paths.append(dialog.channel2_path)
 
+        # JPEG rejection for each channel file
+        for fp in file_paths:
+            if not self._check_jpeg_and_8bit(str(fp)):
+                return
+
+        bit_depth = get_bit_depth(str(file_paths[0]))
+        levels_white = 255 if bit_depth == 8 else 65535
+
         try:
             # Register assets (import_nir_blot_typhoon also imports but doesn't add to project.assets)
             imported_assets: dict = {}
@@ -219,6 +276,10 @@ class _ProjectIOMixin:
 
             for ch in channels:
                 ch.display.invert = True
+
+            if bit_depth == 8:
+                for ch in channels:
+                    ch.display.levels_white = 255
 
             for ch in channels:
                 if ch.asset_sha256 not in self.current_project.assets:
@@ -261,7 +322,7 @@ class _ProjectIOMixin:
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
                     "levels_black": 0,
-                    "levels_white": 65535,
+                    "levels_white": levels_white,
                     "levels_gamma": 1.0,
                 },
                 "included_in_final": True,
@@ -310,9 +371,12 @@ class _ProjectIOMixin:
             self,
             "Import membrane (overlay)",
             "",
-            "Images (*.tif *.tiff *.png *.jpg *.jpeg)"
+            "Images (*.tif *.tiff *.png)"
         )
         if not path:
+            return
+
+        if not self._check_jpeg_and_8bit(path):
             return
 
         try:
@@ -358,6 +422,7 @@ class _ProjectIOMixin:
         menu = QMenu(self)
         open_action = menu.addAction("Open")
         rename_action = menu.addAction("Rename…")
+        archive_action = menu.addAction("Archive…")
 
         action = menu.exec(self.library_table.viewport().mapToGlobal(pos))
 
@@ -365,6 +430,108 @@ class _ProjectIOMixin:
             self._open_project_from_library(row, 0)
         elif action == rename_action:
             self._rename_project_from_library(row)
+        elif action == archive_action:
+            self._archive_project_from_library(row)
+
+    def _archive_project_from_library(self, row: int):
+        path_item = self.library_table.item(row, 5)
+        if path_item is None:
+            return
+        path = path_item.text().strip()
+        try:
+            self.workspace.set_project_archived(path, True)
+            self.refresh_library()
+        except Exception as e:
+            QMessageBox.critical(self, "Error archiving project", str(e))
+
+    def _open_archive_manager(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manage Archives")
+        dialog.setMinimumSize(560, 380)
+
+        layout = QVBoxLayout(dialog)
+
+        columns_layout = QHBoxLayout()
+
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(QLabel("Active projects"))
+        active_list = QListWidget()
+        active_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        left_layout.addWidget(active_list)
+        columns_layout.addLayout(left_layout)
+
+        center_layout = QVBoxLayout()
+        center_layout.addStretch(1)
+        to_archive_btn = QPushButton("→")
+        to_archive_btn.setFixedWidth(32)
+        from_archive_btn = QPushButton("←")
+        from_archive_btn.setFixedWidth(32)
+        center_layout.addWidget(to_archive_btn)
+        center_layout.addWidget(from_archive_btn)
+        center_layout.addStretch(1)
+        columns_layout.addLayout(center_layout)
+
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(QLabel("Archived projects"))
+        archived_list = QListWidget()
+        archived_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        right_layout.addWidget(archived_list)
+        columns_layout.addLayout(right_layout)
+
+        layout.addLayout(columns_layout)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        projects_root = self.workspace.projects_dir
+        if projects_root.exists():
+            for proj_json in sorted(projects_root.glob("*/project.json")):
+                try:
+                    p = self.workspace.load_project(str(proj_json))
+                    item = QListWidgetItem(p.project.name)
+                    item.setData(Qt.UserRole, str(proj_json))
+                    if p.project.is_archived:
+                        archived_list.addItem(item)
+                    else:
+                        active_list.addItem(item)
+                except Exception:
+                    pass
+
+        def _move_to_archived():
+            for item in active_list.selectedItems():
+                active_list.takeItem(active_list.row(item))
+                archived_list.addItem(item)
+
+        def _move_to_active():
+            for item in archived_list.selectedItems():
+                archived_list.takeItem(archived_list.row(item))
+                active_list.addItem(item)
+
+        to_archive_btn.clicked.connect(_move_to_archived)
+        from_archive_btn.clicked.connect(_move_to_active)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        for i in range(active_list.count()):
+            item = active_list.item(i)
+            path = item.data(Qt.UserRole)
+            try:
+                self.workspace.set_project_archived(path, False)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+
+        for i in range(archived_list.count()):
+            item = archived_list.item(i)
+            path = item.data(Qt.UserRole)
+            try:
+                self.workspace.set_project_archived(path, True)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+
+        self.refresh_library()
 
     def _rename_project_from_library(self, row: int):
         path_item = self.library_table.item(row, 5)

@@ -9,9 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from . import __version__
+from .image_utils import get_bit_depth
 from .models import Project
 from .storage import Workspace, sha256_file
 
@@ -24,11 +23,25 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
     path = workspace.asset_original_file(sha256)
     asset = project.assets.get(sha256)
 
+    # Guard: bit depth must always be read from the original asset, never a preview
+    if "preview" in path.name:
+        raise RuntimeError(
+            f"Source bit depth must be read from the original asset, not a preview: {path}"
+        )
+
+    from PIL import Image
     with Image.open(path) as im:
         mode = im.mode
         width, height = im.size
 
-    bit_depth = 16 if mode in ("I;16", "I;16L", "I;16B") else None
+    raw_depth = get_bit_depth(path)
+    bit_depth = raw_depth if raw_depth > 0 else None
+
+    bit_depth_warning = (
+        "8-bit image: limited dynamic range. Not recommended for quantification purposes. "
+        "16-bit is recommended."
+        if bit_depth == 8 else None
+    )
 
     return {
         "sha256": sha256,
@@ -38,6 +51,7 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
         "filename": path.name,
         "image_mode": mode,
         "bit_depth": bit_depth,
+        "bit_depth_warning": bit_depth_warning,
         "width_px": width,
         "height_px": height,
     }
@@ -179,12 +193,23 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         ops = blot["operations"]
         overlay = blot["overlay"]
 
+        if src.get("bit_depth") == 8:
+            bit_depth_cell = (
+                '<td style="background:#fef3c7;color:#92400e;font-weight:bold;">'
+                "8-bit ⚠ Not recommended for quantification</td>"
+            )
+        else:
+            bit_depth_cell = f'<td>{src.get("bit_depth", "")}</td>'
+
+        warning_text = src.get("bit_depth_warning") or ""
+
         rows.append(f"""
         <tr>
           <td>{blot["blot_id"]}</td>
           <td>{blot["protein_label"]["text"]}</td>
           <td><code>{src["sha256"]}</code></td>
-          <td>{src["bit_depth"]}</td>
+          {bit_depth_cell}
+          <td>{warning_text}</td>
           <td>{src["width_px"]} × {src["height_px"]}</td>
           <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, w={ops["crop"]["w"]}, h={ops["crop"]["h"]}</td>
           <td>{ops["rotation_deg"]}</td>
@@ -265,6 +290,7 @@ code {{ font-size: 11px; word-break: break-all; }}
 <th>Protein</th>
 <th>Source SHA256</th>
 <th>Bit depth</th>
+<th>Bit depth warning</th>
 <th>Source size</th>
 <th>Crop</th>
 <th>Rotation</th>

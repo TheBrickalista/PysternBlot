@@ -247,3 +247,62 @@ def uint16_to_qpixmap(img: np.ndarray) -> QPixmap:
     """
     qimg = uint16_to_qimage(img)
     return QPixmap.fromImage(qimg, Qt.NoFormatConversion)
+
+
+def load_image_as_uint16(path: str | Path) -> np.ndarray:
+    """
+    Load a grayscale image as uint16, accepting both 16-bit and 8-bit sources.
+
+    - Native 16-bit modes (I;16, I;16L, I;16B): loaded directly, unchanged.
+    - 8-bit greyscale mode "L": loaded directly, values kept in 0–255 range.
+    - 8-bit palette mode "P", and colour modes "RGB"/"RGBA"/"LA" (common
+      scanner output for greyscale content): converted to "L" via PIL first.
+    - All other modes: raise ValueError.
+
+    Always call on the original asset file, never on a preview or working copy.
+    """
+    path = str(path)
+    with Image.open(path) as im:
+        mode = im.mode
+        if mode in ("I;16", "I;16L", "I;16B"):
+            arr = np.array(im, dtype=np.uint16)
+        elif mode == "L":
+            arr = np.array(im, dtype=np.uint8).astype(np.uint16)
+        elif mode in ("P", "RGB", "RGBA", "LA"):
+            grey = im.convert("L")
+            arr = np.array(grey, dtype=np.uint8).astype(np.uint16)
+        else:
+            raise ValueError(
+                f"Unsupported image mode {mode!r} for {path}. "
+                "Accepted: 16-bit grayscale (I;16 family), 8-bit grayscale (L), "
+                "palette (P), and colour (RGB/RGBA) modes."
+            )
+
+    if arr.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D grayscale image for {path}, got shape {arr.shape}."
+        )
+
+    return np.ascontiguousarray(arr)
+
+
+def is_jpeg(path: str | Path) -> bool:
+    """Return True if the file starts with JPEG magic bytes (FF D8), regardless of extension."""
+    with open(str(path), "rb") as f:
+        header = f.read(2)
+    return header == b'\xff\xd8'
+
+
+def get_bit_depth(path: str | Path) -> int:
+    """
+    Return the bit depth of the image at path as an integer (16, 8, or 0 for unknown).
+
+    Always call on the original asset file, never on a preview or working copy.
+    """
+    with Image.open(str(path)) as im:
+        mode = im.mode
+    if mode in ("I;16", "I;16L", "I;16B", "I;16S", "F"):
+        return 16
+    if mode in ("L", "RGB", "RGBA", "P", "1"):
+        return 8
+    return 0

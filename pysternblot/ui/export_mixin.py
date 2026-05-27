@@ -14,6 +14,7 @@ from PySide6.QtSvg import QSvgGenerator
 
 from pathlib import Path
 
+from ..image_utils import get_bit_depth
 from ..render import build_panel_scene, build_provenance_scene
 from ..integrity import (
     build_integrity_report,
@@ -24,6 +25,38 @@ from ..integrity import (
 
 
 class _ExportMixin:
+    def _has_8bit_blots(self) -> bool:
+        if not self.current_project:
+            return False
+        for blot in self.current_project.panel.blots:
+            try:
+                path = self.workspace.asset_original_file(blot.asset_sha256)
+                if get_bit_depth(path) == 8:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _warn_8bit_export(self) -> bool:
+        """Show pre-export warning if any blot is from an 8-bit source. Returns True to proceed."""
+        if not self._has_8bit_blots():
+            return True
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("8-bit source images detected")
+        msg.setText(
+            "One or more blots in this figure were generated from 8-bit source "
+            "images.\n\n"
+            "8-bit images have limited dynamic range and are not recommended for "
+            "quantification purposes. Please disclose the bit depth of source "
+            "images if submitting this figure to a journal.\n\n"
+            "This warning is recorded in the integrity report."
+        )
+        proceed_btn = msg.addButton("Proceed with export", QMessageBox.AcceptRole)
+        cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.exec()
+        return msg.clickedButton() is proceed_btn
+
     def _final_scene_and_rect(self):
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -44,6 +77,9 @@ class _ExportMixin:
     def export_final_png(self):
         scene, rect = self._final_scene_and_rect()
         if scene is None:
+            return
+
+        if not self._warn_8bit_export():
             return
 
         path, _ = QFileDialog.getSaveFileName(
@@ -105,6 +141,9 @@ class _ExportMixin:
         if scene is None:
             return
 
+        if not self._warn_8bit_export():
+            return
+
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Final Result as PDF",
@@ -160,6 +199,9 @@ class _ExportMixin:
     def export_final_svg(self):
         scene, rect = self._final_scene_and_rect()
         if scene is None:
+            return
+
+        if not self._warn_8bit_export():
             return
 
         path, _ = QFileDialog.getSaveFileName(

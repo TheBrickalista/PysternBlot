@@ -18,7 +18,9 @@ class CropRectItem(QGraphicsRectItem):
       - callback= behaves like on_change=
     """
 
-    HANDLE_SIZE = 8.0  # px in scene coords (approx)
+    HANDLE_VISUAL = 8.0   # drawn square size in scene coords
+    HANDLE_HIT    = 20.0  # grabbable area in scene coords (larger, invisible)
+    HANDLE_SIZE   = HANDLE_VISUAL  # backward-compat alias
 
     # handle identifiers
     NONE = 0
@@ -71,7 +73,27 @@ class CropRectItem(QGraphicsRectItem):
 
     def _handle_rects(self) -> dict[int, QRectF]:
         r = self.rect()
-        hs = self.HANDLE_SIZE
+        hs = self.HANDLE_HIT
+        x0, y0, x1, y1 = r.left(), r.top(), r.right(), r.bottom()
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+
+        def box(x, y):
+            return QRectF(x - hs / 2.0, y - hs / 2.0, hs, hs)
+
+        return {
+            self.TL: box(x0, y0),
+            self.T:  box(cx, y0),
+            self.TR: box(x1, y0),
+            self.R:  box(x1, cy),
+            self.BR: box(x1, y1),
+            self.B:  box(cx, y1),
+            self.BL: box(x0, y1),
+            self.L:  box(x0, cy),
+        }
+
+    def _handle_visual_rects(self) -> dict[int, QRectF]:
+        r = self.rect()
+        hs = self.HANDLE_VISUAL
         x0, y0, x1, y1 = r.left(), r.top(), r.right(), r.bottom()
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
 
@@ -112,6 +134,18 @@ class CropRectItem(QGraphicsRectItem):
             self.unsetCursor()
 
     # ---------- Qt overrides ----------
+
+    def paint(self, painter, option, widget=None):
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawRect(self.rect())
+
+        handle_pen = QPen(Qt.black, 1)
+        handle_brush = QBrush(Qt.white)
+        painter.setPen(handle_pen)
+        painter.setBrush(handle_brush)
+        for hr in self._handle_visual_rects().values():
+            painter.drawRect(hr)
 
     def hoverMoveEvent(self, event):
         handle = self._pick_handle(event.pos())

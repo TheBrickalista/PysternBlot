@@ -701,3 +701,54 @@ class TestBlotChannelIncludedInFinal:
         data = {"asset_sha256": "abc", "channel_index": 0, "wavelength_nm": 685}
         ch = BlotChannel.model_validate(data)
         assert ch.included_in_final is True
+
+
+# ===========================================================================
+# ProjectMeta.is_archived
+# ===========================================================================
+
+class TestProjectMetaIsArchived:
+
+    def test_is_archived_defaults_to_false(self):
+        meta = ProjectMeta(
+            id="proj_x",
+            name="Test",
+            created_utc="2024-01-01T00:00:00Z",
+            app_version="0.1.0",
+        )
+        assert meta.is_archived is False
+
+    def test_can_be_set_true(self):
+        meta = ProjectMeta(
+            id="proj_x",
+            name="Test",
+            created_utc="2024-01-01T00:00:00Z",
+            app_version="0.1.0",
+        )
+        meta.is_archived = True
+        assert meta.is_archived is True
+
+    def test_backward_compat_missing_field_defaults_to_false(self):
+        """A project.json without is_archived must deserialize with is_archived=False."""
+        meta_dict = {
+            "id": "proj_old",
+            "name": "Old Project",
+            "created_utc": "2024-01-01T00:00:00Z",
+            "app_version": "0.1.0",
+            "license": "GPL-3.0-only",
+        }
+        meta = ProjectMeta.model_validate(meta_dict)
+        assert meta.is_archived is False
+
+    def test_survives_round_trip_when_true(self):
+        project = _minimal_project()
+        project.project.is_archived = True
+        restored = Project.model_validate(project.model_dump())
+        assert restored.project.is_archived is True
+
+    def test_survives_json_round_trip_when_false(self):
+        project = _minimal_project()
+        assert project.project.is_archived is False
+        json_str = project.model_dump_json()
+        restored = Project.model_validate_json(json_str)
+        assert restored.project.is_archived is False

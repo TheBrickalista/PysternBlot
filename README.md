@@ -27,18 +27,34 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 ## Key features
 
 - **True 16-bit pipeline** — images never get silently downsampled to 8-bit at any step
+- **8-bit TIFF support** — legacy 8-bit images (grayscale, palette, and RGB modes) are accepted with a mandatory quality warning on import; bit depth is recorded in the integrity report and flagged at export; JPEG is explicitly rejected (lossy compression alters pixel values, not suitable for quantitative figures)
 - **ECL and NIR fluorescence western blot support** — Typhoon dual-channel (685 nm / 785 nm), per-channel display settings, levels, invert, flip, rotation
 - **Per-channel greyscale rendering in final figure** — each NIR channel appears as an independent row
 - **Per-band wavelength routing for NIR ladders** — Show 685 / Show 785 per band in ladder presets
 - **Shared crop template with per-channel independent crop for NIR** — resize once and all blots follow; per-channel override available for NIR
-- **Levels, gamma, invert, 90° rotation, horizontal/vertical flip** — all non-destructive, per channel for NIR
+- **Inkscape-style crop handles** — grab a corner to resize width and height simultaneously; grab an edge midpoint to resize one dimension only; hit zones are larger than the visual handle so you don't need to be pixel-perfect
+- **Levels, gamma, invert, 90° rotation, horizontal/vertical flip** — all non-destructive, per channel for NIR; Black and White values are directly editable as well as slider-adjustable
+- **Dynamic levels range** — slider and input fields automatically adapt to the source bit depth (0–255 for 8-bit, 0–65535 for 16-bit)
+- **Editable levels fields** — Black and White values can be typed directly (e.g. type 150 and press Enter) as well as adjusted via slider; both controls stay in sync
 - **Overlay protein ladder with per-band wavelength assignment** — Show 685 / Show 785 checkboxes per preset band; ticks and labels appear automatically in the final figure
 - **Include / exclude per blot and per NIR channel** — import multiple exposures or channels and choose which appear in the final figure without deleting the others
-- **Library archive** — export and import `.pbarchive` files for lab handover and long-term storage, with SHA256 integrity verification of every asset
+- **Library archive** — export and import `.pbarchive` files for lab handover / long-term storage, with SHA256 integrity verification of every asset
+- **Project archiving** — soft-hide projects from the library without deleting them; restore at any time via the archive manager dialog or the right-click context menu on any project
 - **Antibody name field per blot** — persisted in project file and audit log
 - **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log, and crop/rotation metadata for every blot
 - **Export to SVG, PDF, PNG, and 16-bit TIFF** — SVG and PDF preserve text as editable objects for final tweaks in Illustrator or Affinity Designer
 - **DNA gel support** *(coming soon)* — the same integrity pipeline extended to agarose gel electrophoresis, with DNA ladder annotation and band tracking
+
+---
+
+## Supported image formats
+
+| Format | Accepted | Notes |
+|---|---|---|
+| 16-bit grayscale TIFF | ✅ Recommended | Full dynamic range, no warnings |
+| 8-bit TIFF (L, P, RGB modes) | ✅ With warning | Mandatory acknowledgement on import; flagged in integrity report and at export; not recommended for quantification |
+| JPEG / JPG | ❌ Rejected | Lossy compression alters pixel values; not suitable for quantitative figures |
+| PNG (8-bit) | ✅ With warning | Same 8-bit policy as TIFF |
 
 ---
 
@@ -54,10 +70,10 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 - Python ≥ 3.10
 - PySide6 ≥ 6.6
-- Pydantic ≥ 2.0
-- NumPy
-- Pillow
-- scikit-image
+- Pydantic ≥ 2.6
+- NumPy ≥ 1.24
+- Pillow ≥ 10.0
+- scikit-image ≥ 0.21
 
 > **Note:** requirements only apply to the source/PyPI install methods. Standalone ports bundle everything.
 
@@ -106,23 +122,23 @@ pysternblot/
 ├── models.py               — Pydantic data model (Project, Panel, Blot, BlotChannel, …)
 ├── storage.py              — Workspace I/O, asset import, archive export/import, Typhoon NIR import
 ├── render.py               — QGraphicsScene builders for final figure and provenance view
-├── image_utils.py          — 16-bit image pipeline; multichannel TIFF loading and encoding detection
-├── integrity.py            — SHA256 provenance and integrity report generation
+├── image_utils.py          — 16-bit and 8-bit image pipeline; bit-depth detection helpers; multichannel TIFF loading and encoding detection
+├── integrity.py            — SHA256 provenance and integrity report generation; 8-bit source flagging
 └── ui/
-    ├── main_window.py          — Main window, tab layout, display controls
-    ├── project_io_mixin.py     — Project create/open/import, library archive export/import
+    ├── main_window.py          — Main window, tab layout, display controls; levels sliders adapt to bit depth; Black/White fields are editable QLineEdit
+    ├── project_io_mixin.py     — Project create/open/import, library archive export/import, project archiving (soft-hide and restore)
     ├── marker_set_mixin.py     — Protein ladder preset editor (Show 685/785 per band)
     ├── overlay_ladder_mixin.py — Ladder assignment and kDa annotation
-    ├── export_mixin.py         — PNG/PDF/SVG/TIFF/integrity report export
+    ├── export_mixin.py         — PNG/PDF/SVG/TIFF/integrity report export; pre-export 8-bit warning
     ├── nir_import_dialog.py    — NIR blot import dialog (1 or 2 channel Typhoon)
     ├── legend_tab.py           — Legend editor tab
     ├── widgets.py              — Shared UI widgets
     ├── zoomable_graphics_view.py — Zoomable/pannable graphics view
-    └── crop_rect_item.py       — Interactive crop rectangle (move + resize)
-tests/                      — pytest test suite (130+ tests, covering models, rendering, provenance, and archive integrity)
+    └── crop_rect_item.py       — Interactive crop rectangle with Inkscape-style corner and edge handles; generous hit zones for precise grab
+tests/                      — pytest test suite (210 tests, plus 2 skipped pending LI-COR Odyssey sample file, covering models, rendering, provenance, archive integrity, 8-bit pipeline, and crop handle behaviour)
 ```
 
-> The test suite is run on every commit and covers models, rendering, provenance, and archive integrity.
+> The test suite is run on every commit and covers models, rendering, provenance, archive integrity, 8-bit pipeline, and crop handle behaviour.
 
 ---
 
@@ -139,7 +155,7 @@ tests/                      — pytest test suite (130+ tests, covering models, 
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
 
 ---
 

@@ -14,6 +14,7 @@ This guide walks you through installing Pystern Blot and preparing your first pu
 
 - macOS or Windows
 - 16-bit TIFF images from your Western blot acquisition system (ECL or NIR/Typhoon) — or use the example files above
+- 8-bit TIFF images are also accepted (see [Importing 8-bit images](#importing-8-bit-images) below)
 
 ---
 
@@ -81,6 +82,17 @@ On launch you will see the **Home** tab.
 
 Both channels are registered as separate assets with individual SHA-256 hashes and added to the project as a single dual-channel blot.
 
+### Importing 8-bit images
+
+8-bit TIFFs from legacy scanners are accepted (grayscale, palette, or RGB mode).
+
+- **JPEG is not accepted** — lossy compression permanently alters pixel values and is not suitable for quantitative figures.
+- A **warning dialog** appears on import and must be explicitly acknowledged before the blot is added to the project.
+- After import: an **⚠ 8-bit badge** appears on the blot, the bit depth is recorded in the integrity report, and a warning fires at export.
+- The **levels sliders automatically adjust their range to 0–255** for 8-bit sources (instead of 0–65535 for 16-bit).
+
+> If quantification is intended, request a 16-bit source image from your acquisition system.
+
 ---
 
 ## 4. Adjust image display
@@ -97,7 +109,9 @@ The **Display** panel at the top of the window controls how the image is rendere
 | **⇔** | Flips horizontal (mirror left-right) |
 | **↕** | Flips vertical (mirror top-bottom) |
 
-> **Important:** These controls affect display only. The source image is never modified. The original 16-bit data is always preserved.
+> **Tip:** The Black and White fields are directly editable — click the number and type a value (e.g. 150), then press Enter or Tab to apply. The slider updates automatically. The range adapts to your image's bit depth (0–255 for 8-bit, 0–65535 for 16-bit).
+
+> **Important:** These controls affect display only. The source image is never modified. The original source data is always preserved.
 
 > **Overlay (ECL + membrane only):** The **Overlay** checkbox and **Alpha** slider are available for Cytiva ImageQuant acquisitions where the ECL signal and the membrane image were acquired simultaneously in separate channels. This lets you visualise both channels superimposed while annotating.
 
@@ -107,10 +121,13 @@ The **Display** panel at the top of the window controls how the image is rendere
 
 In the **Original Image** tab:
 
-1. Drag on the canvas to draw a crop rectangle around the region you want in your figure.
-2. The crop handles can be adjusted at any time — the operation is non-destructive.
-3. The **same crop box size is applied across all blots** in the project, ensuring consistent panel dimensions in the final figure.
-4. Crop coordinates (pixels, relative to the original image) are recorded in the operation log automatically.
+1. A dashed crop rectangle is shown over the blot image.
+2. **Drag a corner handle** to resize in both dimensions simultaneously.
+3. **Drag an edge handle** (midpoint of any side) to resize in one dimension only — width or height.
+4. **Drag inside the box** to reposition without resizing.
+5. Handles have a generous grab zone — aim near a corner or edge midpoint and the correct resize cursor will appear.
+6. The **same crop size applies across all blots** in the project, ensuring consistent panel dimensions in the final figure.
+7. Crop coordinates (pixels, relative to the original image) are recorded in the operation log automatically.
 
 ---
 
@@ -170,6 +187,8 @@ Go to the **Figure** tab:
 
 All export buttons are in the **Figure** tab.
 
+> **8-bit sources:** If any blot was imported from an 8-bit source, a warning will appear before export reminding you to disclose the bit depth in any journal submission.
+
 ### Publication figure
 
 | Button | Output |
@@ -182,7 +201,7 @@ All export buttons are in the **Figure** tab.
 
 | Button | Output |
 |---|---|
-| **Export Integrity Report** | JSON + HTML provenance record — SHA-256 hashes, crop coordinates, levels, and operation log |
+| **Export Integrity Report** | JSON + HTML provenance record — SHA-256 hashes, crop coordinates, levels, operation log, and bit-depth flags |
 | **Export Detailed Report** | Extended version with full per-operation detail |
 
 ### Original image with markers (required by most journals)
@@ -200,6 +219,8 @@ Exporting the original image satisfies the raw image submission requirements of 
 
 ## 10. Archive and share your project
 
+### Library archive (.pbarchive)
+
 Click **Export Library…** in the toolbar.
 
 1. Select which projects to include in the archive.
@@ -209,16 +230,26 @@ A `.pbarchive` bundles your source images, operation log, and integrity report i
 
 To open a received archive: click **Import Library…** in the toolbar and select the `.pbarchive` file.
 
+### Project archiving (soft-hide)
+
+To hide a project from the library without deleting it:
+
+- **Right-click** any project in the library → **Archive…** to hide it immediately.
+- **Manage Archives…** button (next to Refresh in the library panel) opens the archive manager — a two-column view of active and archived projects with arrow buttons to move projects between columns.
+
+Archived projects remain fully intact on disk and can be restored at any time.
+
 ---
 
 ## What gets recorded automatically
 
 Pystern Blot builds a timestamped operation log continuously as you work — no manual steps required:
 
-- SHA-256 hash of each source file at import
+- SHA-256 hash of each source file at import, with bit depth recorded
 - Every levels, gamma, crop, rotation, and flip operation with full parameter values
 - Band and MW marker placements with antibody names
 - Export events (format, timestamp, output path)
+- Archive and restore events
 
 ---
 

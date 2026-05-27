@@ -234,6 +234,7 @@ class ProjectMeta(BaseModel):
     modified_utc: Optional[str] = None
     app_version: str
     license: Literal["GPL-3.0-only", "GPL-3.0-or-later"] = "GPL-3.0-only"
+    is_archived: bool = False
 
 class OperationLogEntry(BaseModel):
     timestamp_utc: str

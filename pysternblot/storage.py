@@ -7,6 +7,11 @@
 
 from __future__ import annotations
 import hashlib, json, re, zipfile
+
+try:
+    from pysternblot import __version__ as _pysternblot_version
+except ImportError:
+    _pysternblot_version = "unknown"
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -33,6 +38,7 @@ class ImportArchiveResult:
 
 from .image_utils import (
     load_image_uint16,
+    load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
     crop_uint16,
@@ -191,6 +197,25 @@ class Workspace:
         path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
         return path
 
+    def set_project_archived(self, project_path: str, archived: bool) -> None:
+        """Flip the is_archived flag on a project and persist it to disk."""
+        project = self.load_project(project_path)
+        old_value = project.project.is_archived
+        project.project.is_archived = archived
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+        project.operation_log.append(
+            OperationLogEntry(
+                timestamp_utc=now,
+                operation="archived" if archived else "unarchived",
+                target_type="project",
+                target_id=project.project.id,
+                field="project.is_archived",
+                old_value=old_value,
+                new_value=archived,
+            )
+        )
+        self.save_project(project)
+
     def rename_project(self, project: Project, new_name: str) -> Path:
         old_name = project.project.name
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
@@ -315,7 +340,7 @@ class Workspace:
                 seen.add(s)
         path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
 
-    def create_new_project(self, name: str, app_version: str = "0.1.0") -> Path:
+    def create_new_project(self, name: str, app_version: str = _pysternblot_version) -> Path:
         """
         Create a new project folder and a minimal project.json, return its path.
         """
@@ -391,7 +416,7 @@ class Workspace:
         self.ensure()
         original_path = self.asset_original_file(sha256)
 
-        img = load_image_uint16(original_path)
+        img = load_image_as_uint16(original_path)
 
         x = int(round(float(crop.get("x", 0))))
         y = int(round(float(crop.get("y", 0))))
@@ -433,7 +458,7 @@ class Workspace:
             cache_name = f"preview_crop_{blot.id}.tif"
 
         original_path = self.asset_original_file(sha256)
-        img = load_image_uint16(original_path)
+        img = load_image_as_uint16(original_path)
 
         black = int(getattr(display, "levels_black", 0))
         white = int(getattr(display, "levels_white", 65535))

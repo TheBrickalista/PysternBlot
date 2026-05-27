@@ -88,6 +88,6 @@ jobs:
 
       - name: Upload to GitHub Release (release runs)
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@da05d552573ad5aba08f1b61e2a03d3af41e39c9 # v2.2.2
+        uses: softprops/action-gh-release@v2
         with:
           files: PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip

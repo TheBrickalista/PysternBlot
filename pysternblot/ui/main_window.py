@@ -533,6 +533,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.overlay_ladder_only_highlight_cb = QCheckBox("Only highlighted")
         overlay_ladder_l.addWidget(self.overlay_ladder_only_highlight_cb)
 
+        self.overlay_ladder_right_side_cb = QCheckBox("Markers on right")
+        overlay_ladder_l.addWidget(self.overlay_ladder_right_side_cb)
+
         self.overlay_ladder_save_btn = QPushButton("Save options")
         self.overlay_ladder_save_btn.clicked.connect(self._save_overlay_ladder_options)
         overlay_ladder_l.addWidget(self.overlay_ladder_save_btn)

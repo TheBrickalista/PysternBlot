@@ -725,9 +725,18 @@ def build_provenance_scene(
         label_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
         label_font.setBold(True)
 
-        # For now, draw on the left of the image.
-        tick_x0 = x0 - 65.0
-        tick_x1 = x0 - 15.0
+        TICK_LENGTH = 50.0
+        TICK_GAP    = 15.0
+        LABEL_GAP   =  4.0
+
+        img_right = x0 + float(pm.width())
+
+        if getattr(ladder, "side", "left") == "right":
+            tick_x0 = img_right + TICK_GAP
+            tick_x1 = img_right + TICK_GAP + TICK_LENGTH
+        else:
+            tick_x1 = x0 - TICK_GAP
+            tick_x0 = x0 - TICK_GAP - TICK_LENGTH
 
         for assignment in ladder.bands:
             y = y0 + float(assignment.y_px)
@@ -763,9 +772,10 @@ def build_provenance_scene(
                 text_item = scene.addText(label, label_font)
                 text_item.setDefaultTextColor(Qt.black)
                 br = text_item.boundingRect()
-                text_item.setPos(
-                    tick_x0 - br.width() - 4.0,
-                    y - br.height() / 2.0,
-                )
+
+                if getattr(ladder, "side", "left") == "right":
+                    text_item.setPos(tick_x1 + LABEL_GAP, y - br.height() / 2.0)
+                else:
+                    text_item.setPos(tick_x0 - br.width() - LABEL_GAP, y - br.height() / 2.0)
 
     return scene

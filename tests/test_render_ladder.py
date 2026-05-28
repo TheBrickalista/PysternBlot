@@ -22,7 +22,9 @@ from pysternblot.models import (
     OverlayLadder,
     ProteinLabel,
 )
-from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot
+import inspect
+
+from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot, build_panel_scene, build_provenance_scene
 
 
 def _minimal_ladder() -> Ladder:
@@ -176,3 +178,35 @@ class TestLadderRowForBlot:
         )
         blot = _nir_blot(overlay_ladder=overlay)
         assert _ladder_row_for_blot(blot, marker_sets) == 1
+
+
+class TestShowInFinalFlag:
+
+    def test_show_in_final_false_hides_in_panel_scene(self):
+        """build_panel_scene must gate band drawing on show_in_final."""
+        src = inspect.getsource(build_panel_scene)
+        assert "show_in_final" in src, (
+            "build_panel_scene must check show_in_final to hide bands in the final figure"
+        )
+
+    def test_show_in_final_does_not_gate_provenance(self):
+        """build_provenance_scene must not filter bands by show_in_final."""
+        src = inspect.getsource(build_provenance_scene)
+        assert "show_in_final" not in src, (
+            "build_provenance_scene must not filter bands by show_in_final; "
+            "all bands must always be visible in the provenance (Original Image) view"
+        )
+
+
+class TestLabelAlignment:
+
+    def test_label_x_tracks_tick_x0(self):
+        """Provenance kDa label must use font-adaptive right-edge alignment, not a fixed offset."""
+        src = inspect.getsource(build_provenance_scene)
+        assert "tick_x0 - br.width() - 4.0" in src, (
+            "provenance label x must be tick_x0 - br.width() - 4.0 so it stays "
+            "flush with the tick regardless of font size"
+        )
+        assert "label_x" not in src, (
+            "old fixed label_x offset must be removed from build_provenance_scene"
+        )

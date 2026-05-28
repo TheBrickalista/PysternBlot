@@ -24,6 +24,17 @@ from ..integrity import (
 )
 
 
+def _nir_channel_path(base_path: str, channel_index: int, wavelength_nm: int | None) -> str:
+    """Build a per-channel TIFF path by inserting a channel suffix before the extension."""
+    p = Path(base_path)
+    ext = p.suffix if p.suffix.lower() in (".tif", ".tiff") else ".tif"
+    if wavelength_nm is not None:
+        suffix = f"_ch{channel_index}_{wavelength_nm}nm"
+    else:
+        suffix = f"_ch{channel_index}"
+    return str(p.parent / f"{p.stem}{suffix}{ext}")
+
+
 class _ExportMixin:
     def _has_8bit_blots(self) -> bool:
         if not self.current_project:
@@ -263,13 +274,14 @@ class _ExportMixin:
 
         QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
 
-    def _export_provenance_scene_to_tiff(self, blot_id: str, path: str):
+    def _export_provenance_scene_to_tiff(self, blot_id: str, path: str, nir_channel_index: int = 0):
         scene = build_provenance_scene(
             self.current_project,
             self.workspace.root,
             blot_id=blot_id,
             on_crop_commit=None,
             show_grid=False,
+            nir_channel_index=nir_channel_index,
         )
 
         rect = scene.itemsBoundingRect()
@@ -326,18 +338,36 @@ class _ExportMixin:
             path += ".tif"
 
         try:
-            self._export_provenance_scene_to_tiff(blot.id, path)
-            self.log_operation(
-                "export_generated",
-                target_type="export",
-                target_id=blot.id,
-                asset_sha256=blot.asset_sha256,
-                field="original_annotated_tiff",
-                old_value=None,
-                new_value=str(path),
-            )
-            self.workspace.save_project(self.current_project)
-            QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
+            if blot.is_nir():
+                written: list[str] = []
+                for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                    ch_path = _nir_channel_path(path, ch.channel_index, ch.wavelength_nm)
+                    self._export_provenance_scene_to_tiff(blot.id, ch_path, nir_channel_index=ch.channel_index)
+                    self.log_operation(
+                        "export_generated",
+                        target_type="export",
+                        target_id=blot.id,
+                        asset_sha256=ch.asset_sha256,
+                        field="original_annotated_tiff",
+                        old_value=None,
+                        new_value=ch_path,
+                    )
+                    written.append(ch_path)
+                self.workspace.save_project(self.current_project)
+                QMessageBox.information(self, "Exported", "Saved TIFFs:\n" + "\n".join(written))
+            else:
+                self._export_provenance_scene_to_tiff(blot.id, path)
+                self.log_operation(
+                    "export_generated",
+                    target_type="export",
+                    target_id=blot.id,
+                    asset_sha256=blot.asset_sha256,
+                    field="original_annotated_tiff",
+                    old_value=None,
+                    new_value=str(path),
+                )
+                self.workspace.save_project(self.current_project)
+                QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
 
@@ -356,18 +386,32 @@ class _ExportMixin:
 
         try:
             for blot in self.current_project.panel.blots:
-                path = Path(folder) / f"{blot.id}_original_annotated.tif"
-                self._export_provenance_scene_to_tiff(blot.id, str(path))
-
-                self.log_operation(
-                    "export_generated",
-                    target_type="export",
-                    target_id=blot.id,
-                    asset_sha256=blot.asset_sha256,
-                    field="original_annotated_tiff",
-                    old_value=None,
-                    new_value=str(path),
-                )
+                if blot.is_nir():
+                    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                        base = str(Path(folder) / f"{blot.id}_original_annotated.tif")
+                        path = _nir_channel_path(base, ch.channel_index, ch.wavelength_nm)
+                        self._export_provenance_scene_to_tiff(blot.id, path, nir_channel_index=ch.channel_index)
+                        self.log_operation(
+                            "export_generated",
+                            target_type="export",
+                            target_id=blot.id,
+                            asset_sha256=ch.asset_sha256,
+                            field="original_annotated_tiff",
+                            old_value=None,
+                            new_value=path,
+                        )
+                else:
+                    path = str(Path(folder) / f"{blot.id}_original_annotated.tif")
+                    self._export_provenance_scene_to_tiff(blot.id, path)
+                    self.log_operation(
+                        "export_generated",
+                        target_type="export",
+                        target_id=blot.id,
+                        asset_sha256=blot.asset_sha256,
+                        field="original_annotated_tiff",
+                        old_value=None,
+                        new_value=path,
+                    )
             self.workspace.save_project(self.current_project)
 
             QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")

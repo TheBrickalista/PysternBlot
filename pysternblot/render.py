@@ -728,12 +728,8 @@ def build_provenance_scene(
         # For now, draw on the left of the image.
         tick_x0 = x0 - 65.0
         tick_x1 = x0 - 15.0
-        label_x = x0 - 125.0
 
         for assignment in ladder.bands:
-            if not bool(getattr(assignment, "show_in_final", True)):
-                continue
-
             y = y0 + float(assignment.y_px)
             kda = float(assignment.kda)
 
@@ -767,6 +763,9 @@ def build_provenance_scene(
                 text_item = scene.addText(label, label_font)
                 text_item.setDefaultTextColor(Qt.black)
                 br = text_item.boundingRect()
-                text_item.setPos(label_x, y - br.height() / 2.0)
+                text_item.setPos(
+                    tick_x0 - br.width() - 4.0,
+                    y - br.height() / 2.0,
+                )
 
     return scene

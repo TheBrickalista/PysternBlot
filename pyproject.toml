@@ -13,7 +13,6 @@ dependencies = [
   "PySide6>=6.6",
   "pydantic>=2.6",
   "numpy>=1.24",
-  "scikit-image>=0.21",
   "Pillow>=10.0"
 ]
 

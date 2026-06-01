@@ -749,7 +749,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "Third-party libraries used:\n"
             "  • PySide6 — LGPL v3 (Qt for Python)\n"
             "  • NumPy — BSD 3-Clause\n"
-            "  • scikit-image — BSD 3-Clause\n"
             "  • Pydantic — MIT\n"
             "  • tifffile — BSD 3-Clause\n\n"
             "Full license texts are available in the Legal tab."

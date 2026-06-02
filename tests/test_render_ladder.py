@@ -24,7 +24,7 @@ from pysternblot.models import (
 )
 import inspect
 
-from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot, build_panel_scene, build_provenance_scene
+from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot, build_panel_scene, build_provenance_scene, derive_lane_groups
 
 
 def _minimal_ladder() -> Ladder:
@@ -284,3 +284,56 @@ class TestLadderSide:
         label_x = tick_x1 + LABEL_GAP
         assert label_x == pytest.approx(379.0)
         assert label_x > tick_x1
+
+
+# ===========================================================================
+# derive_lane_groups
+# ===========================================================================
+
+class TestDeriveLaneGroups:
+
+    def test_two_groups_no_errors(self):
+        spans, errors = derive_lane_groups([0, 1, 1, 0, 2, 2, 0])
+        assert spans == {1: (1, 2), 2: (4, 5)}
+        assert errors == set()
+
+    def test_full_row_single_id(self):
+        spans, errors = derive_lane_groups([1, 1, 1])
+        assert spans == {1: (0, 2)}
+        assert errors == set()
+
+    def test_non_contiguous_is_error(self):
+        spans, errors = derive_lane_groups([1, 0, 1])
+        assert spans == {}
+        assert errors == {1}
+
+    def test_single_lane_group_no_span_no_error(self):
+        spans, errors = derive_lane_groups([0, 1, 0])
+        assert spans == {}
+        assert errors == set()
+
+    def test_empty_input(self):
+        spans, errors = derive_lane_groups([])
+        assert spans == {}
+        assert errors == set()
+
+    def test_all_zero(self):
+        spans, errors = derive_lane_groups([0, 0, 0])
+        assert spans == {}
+        assert errors == set()
+
+    def test_mixed_valid_and_error(self):
+        """id=1 is contiguous (span), id=2 is non-contiguous (error)."""
+        spans, errors = derive_lane_groups([1, 1, 0, 2, 0, 2])
+        assert spans == {1: (0, 1)}
+        assert errors == {2}
+
+    def test_three_contiguous_groups(self):
+        spans, errors = derive_lane_groups([1, 1, 2, 2, 3, 3])
+        assert spans == {1: (0, 1), 2: (2, 3), 3: (4, 5)}
+        assert errors == set()
+
+    def test_zero_id_always_ignored(self):
+        spans, errors = derive_lane_groups([0, 0, 0, 0])
+        assert 0 not in spans
+        assert 0 not in errors

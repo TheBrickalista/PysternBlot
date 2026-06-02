@@ -106,8 +106,9 @@ class LegendRow(BaseModel):
     left: str = ""
     cells: List[str] = Field(default_factory=list)
     right: str = ""
-    underline: bool = False   
-    font_size_pt: float | None = None # <- NEW
+    underline: bool = False
+    font_size_pt: float | None = None
+    cell_groups: List[int] = Field(default_factory=list)
 
 class LegendSettings(BaseModel):
     mode: Literal["protein", "dna"] = "protein"

@@ -269,20 +269,26 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         t.setPos(col_x + (col_w - br.width()) / 2.0, y)
 
     # ---- legend row renderer ----
-    def _draw_legend_row(row: LegendRow, y: float, lane_row: LegendRow | None = None) -> float:
+    def _draw_legend_row(
+        row: LegendRow,
+        y: float,
+        lane_row: LegendRow | None = None,
+        underline_above: bool = False,
+    ) -> float:
         """
         Returns next y.
 
         lane_row: the row that provides lane geometry (cell count, cell_groups).
-          - Lower rows: pass lane_row=row (self-referential; underlines drawn).
-          - Upper rows: pass lane_row=lower_rows[0] so group labels span lower lanes.
-          - None: falls back to row's own cells; no underlines drawn.
+          - Upper-only block: pass lane_row=upper[-1] for every upper row; the last
+            upper row is the per-lane reference, all rows above it group over it.
+          - Mixed (upper + lower): pass lane_row=lower_rows[0] for upper rows.
+          - Lower rows: pass lane_row=row (self-referential).
 
-        Cell positioning: each cell checks its cell_group id against
-        derive_lane_groups(lane_row.cell_groups). Valid-span ids are centered over
-        that span; others fall back to even distribution across the row's own cells.
+        underline_above: when True the underline sits above this row's text (y - 6),
+          placing it between group-label rows above and per-lane labels below.
+          When False (default / lower-rows path) it sits below (y + text_h + 4).
 
-        Underlines: only when lane_row is row (lower-row call).
+        Underlines fire only when lane_row is row (i.e. this IS the lane_ref row).
         """
         row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
         row_font = QFont(s.font_family, int(row_font_size))
@@ -351,10 +357,14 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         if row.right:
             _add_text_left(row.right, right_col_x, y)
 
-        # ----- underlines: lower row only -----
+        # ----- underlines: lane-reference row only -----
         underline_drawn = False
         if lane_row is row and spans:
-            underline_y = y + text_h + 4.0
+            # Option (a): when we are the last row of an upper block that has rows
+            # above it, draw the line ABOVE our text so it sits in the gap between
+            # group labels and per-lane labels.  For lower-rows (underline_above=False)
+            # keep the original below-text position.
+            underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
             pen = QPen(Qt.black, 2)
             pen.setCapStyle(Qt.FlatCap)
             gap_px = 40.0
@@ -368,7 +378,10 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                     scene.addLine(x1, underline_y, x2, underline_y, pen)
                     underline_drawn = True
 
-        extra = 14.0 if underline_drawn else 8.0
+        # When the underline is above our text it is already in the preceding gap,
+        # so no extra trailing space is needed.  Only inflate spacing for the
+        # original below-text case.
+        extra = 14.0 if (underline_drawn and not underline_above) else 8.0
         return y + text_h + extra
     
     
@@ -377,9 +390,21 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     # ---- upper legend ----
     legend = getattr(project.panel, "legend", None)
     if legend and getattr(legend, "upper_rows", None):
-        _lower_ref = legend.lower_rows[0] if getattr(legend, "lower_rows", None) else None
-        for row in legend.upper_rows:
-            y = _draw_legend_row(row, y, lane_row=_lower_ref)
+        upper = legend.upper_rows
+        if getattr(legend, "lower_rows", None):
+            # Mixed: upper rows reference the first lower row for lane geometry.
+            # Underline guard (lane_row is row) never fires here — lower rows draw theirs.
+            _lane_ref = legend.lower_rows[0]
+            for row in upper:
+                y = _draw_legend_row(row, y, lane_row=_lane_ref)
+        else:
+            # Upper-only (common case): the last upper row is the per-lane reference.
+            # Every row above it groups over it.  Underline draws above the lane_ref
+            # text only when there are group-label rows above it.
+            _lane_ref = upper[-1]
+            _ul_above = len(upper) > 1
+            for row in upper:
+                y = _draw_legend_row(row, y, lane_row=_lane_ref, underline_above=_ul_above)
         y += 10.0  # gap before first blot
 
     # ---- render rows ----

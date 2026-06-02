@@ -312,7 +312,99 @@ class TestCase3NonContiguous:
 
 
 # ---------------------------------------------------------------------------
-# Case 4: derive_lane_groups pure logic checks (no Qt required)
+# Case 4: upper-rows only (the common workflow) — no lower rows.
+# 2 upper rows: group-label row above + per-lane row below (the lane_ref).
+# Bug regression: underlines must draw and group labels must center correctly.
+# ---------------------------------------------------------------------------
+
+class TestCase4UpperOnlyGrouping:
+
+    @pytest.fixture(autouse=True)
+    def _scene(self, qapp, tmp_path):
+        ws, sha = _make_workspace(tmp_path)
+        legend = LegendSettings(
+            upper_rows=[
+                # Row 0: group-label row — 3 cells, each referencing one group
+                LegendRow(
+                    cells=["Total", "Elution", "Beads"],
+                    cell_groups=[1, 2, 3],
+                ),
+                # Row 1 (lane_ref): per-lane row — 6 cells, pairs form groups
+                LegendRow(
+                    cells=["Ctrl", "Ctrl", "Sg1", "Sg1", "Sg2", "Sg2"],
+                    cell_groups=[1, 1, 2, 2, 3, 3],
+                ),
+            ],
+            # No lower_rows — the common case that was broken.
+        )
+        proj = _minimal_project(sha, legend, n_lanes=6)
+        self.scene = build_panel_scene(proj, ws)
+        s = proj.panel.style
+        self.img_col_x = 20.0 + float(s.ladder_col_width_px)
+        self.img_col_w = float(IMG_W)
+        self.lane_w = self.img_col_w / 6.0
+
+    def test_three_underlines_drawn(self):
+        """Bug #1 regression: underlines must draw for upper-only grouping."""
+        lines = _lines(self.scene)
+        assert len(lines) == 3, (
+            f"Expected 3 underlines for upper-only grouping; got {len(lines)}"
+        )
+
+    def test_underline_spans_correct(self):
+        lines = _lines(self.scene)
+        gap_px = 40.0
+        pad = gap_px / 2.0
+        x = self.img_col_x
+        lw = self.lane_w
+        expected = sorted([
+            (x + 0 * lw + pad, x + 2 * lw - pad),  # group 1: lanes 0-1
+            (x + 2 * lw + pad, x + 4 * lw - pad),  # group 2: lanes 2-3
+            (x + 4 * lw + pad, x + 6 * lw - pad),  # group 3: lanes 4-5
+        ])
+        actual = sorted(
+            [(item.line().x1(), item.line().x2()) for item in lines],
+            key=lambda t: t[0],
+        )
+        for (ex1, ex2), (ax1, ax2) in zip(expected, actual):
+            assert abs(ax1 - ex1) < 0.5, f"x1: expected {ex1:.1f}, got {ax1:.1f}"
+            assert abs(ax2 - ex2) < 0.5, f"x2: expected {ex2:.1f}, got {ax2:.1f}"
+
+    def test_group_labels_centered_over_spans(self):
+        """Bug #2 regression: group-label row must use lane_ref geometry, not own."""
+        x = self.img_col_x
+        lw = self.lane_w
+        expected_cx = {
+            "Total":   x + 1.0 * lw,   # group 1: (0,1) midpoint
+            "Elution": x + 3.0 * lw,   # group 2: (2,3) midpoint
+            "Beads":   x + 5.0 * lw,   # group 3: (4,5) midpoint
+        }
+        for label, ecx in expected_cx.items():
+            items = [t for t in _texts(self.scene) if t.toPlainText().strip() == label]
+            assert len(items) >= 1, f"Label '{label}' not found in scene"
+            br = items[0].boundingRect()
+            acx = items[0].x() + br.width() / 2.0
+            assert abs(acx - ecx) < 2.0, (
+                f"'{label}' center {acx:.1f} ≠ expected {ecx:.1f}"
+            )
+
+    def test_underlines_above_lane_ref_text(self):
+        """Option (a): underline must be above the lane_ref row's text (between rows)."""
+        lines = _lines(self.scene)
+        # Find y of any lane_ref label ("Ctrl" or "Sg1")
+        lane_texts = [t for t in _texts(self.scene)
+                      if t.toPlainText().strip() in ("Ctrl", "Sg1", "Sg2")]
+        assert lane_texts, "No lane_ref labels found"
+        min_lane_y = min(t.y() for t in lane_texts)
+        for line in lines:
+            ul_y = line.line().y1()
+            assert ul_y < min_lane_y, (
+                f"Underline at y={ul_y:.1f} must be above lane labels at y≥{min_lane_y:.1f}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Case 5: derive_lane_groups pure logic checks (no Qt required)
 # ---------------------------------------------------------------------------
 
 class TestDeriveLaneGroupsStep0:

@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import Qt, Signal, QPoint, QEvent
 
 
 class LevelsHistogramWidget(QWidget):
@@ -297,3 +297,14 @@ class LevelsHistogramWidget(QWidget):
             self.unsetCursor()
             self.gate_commit.emit()
         event.accept()
+
+    def changeEvent(self, event):  # noqa: N802
+        # If the window loses focus while a drag is active (e.g. Cmd+Tab on
+        # macOS), the OS consumes the button release without delivering it to
+        # Qt.  Commit the drag here so the histogram and main_window state
+        # don't remain in a half-dragged limbo.
+        if event.type() == QEvent.Type.WindowDeactivate and self._active_gate is not None:
+            self._active_gate = None
+            self.unsetCursor()
+            self.gate_commit.emit()
+        super().changeEvent(event)

@@ -855,6 +855,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             return 16
 
     def _sync_controls_from_project(self):
+        # Cancel any in-progress histogram drag so stale _drag_start_levels
+        # from a previous blot can never contaminate the next log entry.
+        self._dragging_histogram = False
+        self._drag_start_levels = None
+
         self._populate_prov_blot_combo()
         self._update_prov_label()
         blot = self._get_active_blot()

@@ -462,6 +462,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.gamma_value_lbl.setMinimumWidth(40)
         row2.addWidget(self.gamma_value_lbl)
 
+        self.gamma_warning_badge = QLabel("⚠ γ≠1 (disclose)")
+        self.gamma_warning_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
+        self.gamma_warning_badge.setVisible(False)
+        self.gamma_warning_badge.setToolTip(
+            "Nonlinear gamma adjustment active. Permitted for display, but must be "
+            "disclosed in the figure legend or Methods per journal image-integrity "
+            "guidelines (Nature, JCB). Not suitable for densitometric quantification."
+        )
+        row2.addWidget(self.gamma_warning_badge)
+
         row2.addStretch(1)
         display_layout.addLayout(row2)
 
@@ -1046,6 +1056,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.mw_label_size_spin.blockSignals(False)
 
         self._refresh_overlay_ladder_ui()
+        self._update_gamma_badge()
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1503,6 +1514,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         except Exception:
             self.prov_8bit_badge.setVisible(False)
 
+    def _update_gamma_badge(self):
+        _display = self._active_display()
+        if _display is None:
+            self.gamma_warning_badge.setVisible(False)
+            return
+        _g = float(getattr(_display, "levels_gamma", 1.0))
+        self.gamma_warning_badge.setVisible(abs(_g - 1.0) > 1e-3)
+
     def _on_blot_rename(self):
         blot = self._get_active_blot()
         if blot is None or not self.current_project:
@@ -1793,6 +1812,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.black_value_edit.setText(str(black))
         self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
+        self._update_gamma_badge()
 
         self.levels_histogram.set_gates(black, white)
 

@@ -907,26 +907,31 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # ---- histogram ----
         try:
-            _hist_sha256, _ = blot.channel_asset_and_display(self._active_nir_channel)
-            if _hist_sha256 not in self._histogram_cache:
-                _arr = load_image_as_uint16(
-                    self.workspace.asset_original_file(_hist_sha256)
-                )
-                _max_val_hist = 255 if _depth == 8 else 65535
-                self.levels_histogram.set_image(_arr, _max_val_hist)
-                self._histogram_cache[_hist_sha256] = (
-                    self.levels_histogram._counts.copy(),
-                    self.levels_histogram._edges.copy(),
-                    self.levels_histogram._max_val,
-                )
+            _active = self._get_active_channel_or_blot()
+            _hist_sha256 = _active.asset_sha256 if _active is not None else None
+            if _hist_sha256 is None:
+                self.levels_histogram.clear()
             else:
-                self.levels_histogram.set_precomputed(
-                    *self._histogram_cache[_hist_sha256]
-                )
-            _cur_black = int(getattr(_display, "levels_black", 0))
-            _cur_white = int(getattr(_display, "levels_white", _max_white))
-            self.levels_histogram.set_gates(_cur_black, _cur_white)
-        except Exception:
+                if _hist_sha256 not in self._histogram_cache:
+                    _arr = load_image_as_uint16(
+                        self.workspace.asset_original_file(_hist_sha256)
+                    )
+                    _max_val_hist = 255 if _depth == 8 else 65535
+                    self.levels_histogram.set_image(_arr, _max_val_hist)
+                    self._histogram_cache[_hist_sha256] = (
+                        self.levels_histogram._counts.copy(),
+                        self.levels_histogram._edges.copy(),
+                        self.levels_histogram._max_val,
+                    )
+                else:
+                    self.levels_histogram.set_precomputed(
+                        *self._histogram_cache[_hist_sha256]
+                    )
+                _cur_black = int(getattr(_display, "levels_black", 0))
+                _cur_white = int(getattr(_display, "levels_white", _max_white))
+                self.levels_histogram.set_gates(_cur_black, _cur_white)
+        except Exception as e:
+            print(f"[histogram] failed: {e}")
             self.levels_histogram.clear()
 
         # Overlay settings remain on blot.display (ECL-only concept)

@@ -54,6 +54,7 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
         "bit_depth_warning": bit_depth_warning,
         "width_px": width,
         "height_px": height,
+        "acquisition_metadata": getattr(asset, "acquisition_metadata", None) if asset else None,
     }
 
 
@@ -70,12 +71,39 @@ def _blot_record(workspace: Workspace, project: Project, blot) -> dict[str, Any]
     display = blot.display
     crop = blot.crop
 
+    _gamma = float(display.levels_gamma)
+    gamma_warning = (
+        f"Nonlinear gamma adjustment applied (γ = {_gamma:.2f}). "
+        f"This is a permitted display adjustment but MUST be disclosed in the figure "
+        f"legend or Methods per journal image-integrity guidelines (e.g. Nature, JCB). "
+        f"Not suitable for densitometric quantification."
+        if abs(_gamma - 1.0) > 1e-3 else None
+    )
+
+    # For NIR blots, rendering uses per-channel display, not blot.display.
+    # Inspect each channel's gamma independently so non-default channel gammas
+    # are not silently missed.
+    if getattr(blot, "is_nir", lambda: False)() and getattr(blot, "channels", None):
+        nir_flagged = [
+            f"ch{ch.channel_index} (γ={float(ch.display.levels_gamma):.2f})"
+            for ch in blot.channels
+            if abs(float(ch.display.levels_gamma) - 1.0) > 1e-3
+        ]
+        if nir_flagged:
+            nir_msg = (
+                f"Nonlinear gamma on NIR channel(s): {', '.join(nir_flagged)}. "
+                f"Permitted but must be declared in figure legend/Methods "
+                f"(Nature, JCB image-integrity guidelines)."
+            )
+            gamma_warning = f"{gamma_warning} {nir_msg}" if gamma_warning else nir_msg
+
     record = {
         "blot_id": blot.id,
         "protein_label": {
             "text": blot.protein_label.text,
             "font_size_pt": blot.protein_label.font_size_pt,
         },
+        "gamma_warning": gamma_warning,
         "source_image": _asset_info(workspace, project, blot.asset_sha256),
         "operations": {
             "crop": {
@@ -203,6 +231,40 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
 
         warning_text = src.get("bit_depth_warning") or ""
 
+        gamma_warning_val = blot.get("gamma_warning") or ""
+        if gamma_warning_val:
+            gamma_cell = (
+                '<td style="background:#fef3c7;color:#92400e;font-weight:bold;">'
+                f"{gamma_warning_val}</td>"
+            )
+        else:
+            gamma_cell = "<td></td>"
+
+        acq = src.get("acquisition_metadata") or {}
+        if acq:
+            acq_parts = []
+            if acq.get("scale_type"):
+                acq_parts.append(f"<b>Scale: {acq['scale_type']}</b>")
+            if acq.get("scan_mode"):
+                acq_parts.append(f"Mode: {acq['scan_mode']}")
+            if acq.get("scan_speed"):
+                acq_parts.append(f"Speed: {acq['scan_speed']}")
+            if acq.get("laser_name"):
+                acq_parts.append(f"Laser: {acq['laser_name']}")
+            if acq.get("pmt_voltage") is not None:
+                acq_parts.append(f"PMT: {acq['pmt_voltage']} V")
+            if acq.get("laser_power_mode"):
+                acq_parts.append(f"Laser power: {acq['laser_power_mode']}")
+            if acq.get("corrections"):
+                corr_str = ", ".join(f"{k}={v}" for k, v in acq["corrections"].items())
+                acq_parts.append(f"Corrections: {corr_str}")
+            if acq.get("signal_process"):
+                sp_str = ", ".join(f"{k}={v}" for k, v in acq["signal_process"].items())
+                acq_parts.append(f"Signal: {sp_str}")
+            acq_cell = f'<td style="font-size:11px;">{"<br>".join(acq_parts)}</td>'
+        else:
+            acq_cell = "<td></td>"
+
         rows.append(f"""
         <tr>
           <td>{blot["blot_id"]}</td>
@@ -210,6 +272,8 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
           <td><code>{src["sha256"]}</code></td>
           {bit_depth_cell}
           <td>{warning_text}</td>
+          {gamma_cell}
+          {acq_cell}
           <td>{src["width_px"]} × {src["height_px"]}</td>
           <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, w={ops["crop"]["w"]}, h={ops["crop"]["h"]}</td>
           <td>{ops["rotation_deg"]}</td>
@@ -291,6 +355,8 @@ code {{ font-size: 11px; word-break: break-all; }}
 <th>Source SHA256</th>
 <th>Bit depth</th>
 <th>Bit depth warning</th>
+<th>Gamma warning</th>
+<th>Acquisition</th>
 <th>Source size</th>
 <th>Crop</th>
 <th>Rotation</th>

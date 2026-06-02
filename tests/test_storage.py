@@ -738,7 +738,7 @@ class TestImportNirBlotTyphoon:
             pytest.skip("Typhoon test files not found in tests/")
 
         # Pass in reverse order to verify sort-by-channel_index
-        channels = ws.import_nir_blot_typhoon([ch_short, ch_long], project)
+        channels, _acq_meta = ws.import_nir_blot_typhoon([ch_short, ch_long], project)
 
         assert len(channels) == 2
         assert all(isinstance(c, BlotChannel) for c in channels)

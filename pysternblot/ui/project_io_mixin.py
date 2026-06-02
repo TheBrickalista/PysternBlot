@@ -272,7 +272,7 @@ class _ProjectIOMixin:
                 digest, dest = self.workspace.import_asset(str(fp))
                 imported_assets[digest] = (fp, dest)
 
-            channels = self.workspace.import_nir_blot_typhoon(file_paths, self.current_project)
+            channels, acq_meta = self.workspace.import_nir_blot_typhoon(file_paths, self.current_project)
 
             for ch in channels:
                 ch.display.invert = True
@@ -282,6 +282,7 @@ class _ProjectIOMixin:
                     ch.display.levels_white = 255
 
             for ch in channels:
+                acq_meta_val = acq_meta.get(ch.asset_sha256) or None
                 if ch.asset_sha256 not in self.current_project.assets:
                     fp, dest = imported_assets[ch.asset_sha256]
                     self.current_project.assets[ch.asset_sha256] = AssetEntry(
@@ -289,7 +290,11 @@ class _ProjectIOMixin:
                         stored_original_path=str(dest),
                         original_source_path=str(fp),
                         stored_preview_path=None,
+                        acquisition_metadata=acq_meta_val,
                     )
+                elif acq_meta_val and not self.current_project.assets[ch.asset_sha256].acquisition_metadata:
+                    # Dedup hit on re-import: populate metadata if not yet captured.
+                    self.current_project.assets[ch.asset_sha256].acquisition_metadata = acq_meta_val
 
             blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
 

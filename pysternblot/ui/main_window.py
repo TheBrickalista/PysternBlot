@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -20,13 +20,14 @@ from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..image_utils import get_bit_depth
+from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..models import (
     Blot,
 )
 from .legend_tab import LegendTab
 from .zoomable_graphics_view import ZoomableGraphicsView
 
+from .levels_histogram import LevelsHistogramWidget
 from .project_io_mixin import _ProjectIOMixin
 from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
@@ -51,6 +52,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.pending_overlay_ladder_kda = None
         self.overlay_ladder_dialog = None
         self.overlay_ladder_assignment_table = None
+        self._histogram_cache: dict = {}    # sha256 → (counts, edges, max_val)
+        self._dragging_histogram: bool = False
+        self._drag_start_levels: dict | None = None
 
         self.setWindowTitle("Pystern Blot")
         self.setMinimumSize(900, 600)
@@ -243,6 +247,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_row1 = QHBoxLayout()
         prov_row1.addWidget(QLabel("Blot"))
         self.prov_blot_combo = QComboBox()
+        self.prov_blot_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.prov_blot_combo.view().setTextElideMode(Qt.ElideNone)
         self.prov_blot_combo.currentIndexChanged.connect(self._on_active_blot_changed)
         prov_row1.addWidget(self.prov_blot_combo)
 
@@ -253,6 +259,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_down_btn = QPushButton("Down")
         self.prov_down_btn.clicked.connect(self._move_active_blot_down)
         prov_row1.addWidget(self.prov_down_btn)
+
+        self.prov_rename_btn = QPushButton("Rename…")
+        self.prov_rename_btn.setToolTip("Set a display name for this blot (cosmetic only — does not affect the source file or integrity report)")
+        self.prov_rename_btn.clicked.connect(self._on_blot_rename)
+        prov_row1.addWidget(self.prov_rename_btn)
 
         prov_row1.addWidget(QLabel("Rotate"))
 
@@ -451,6 +462,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.gamma_value_lbl.setMinimumWidth(40)
         row2.addWidget(self.gamma_value_lbl)
 
+        self.gamma_warning_badge = QLabel("⚠ γ≠1 (disclose)")
+        self.gamma_warning_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
+        self.gamma_warning_badge.setVisible(False)
+        self.gamma_warning_badge.setToolTip(
+            "Nonlinear gamma adjustment active. Permitted for display, but must be "
+            "disclosed in the figure legend or Methods per journal image-integrity "
+            "guidelines (Nature, JCB). Not suitable for densitometric quantification."
+        )
+        row2.addWidget(self.gamma_warning_badge)
+
         row2.addStretch(1)
         display_layout.addLayout(row2)
 
@@ -458,7 +479,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row3 = QHBoxLayout()
         row3.setSpacing(10)
 
-        black_lbl = QLabel("Black")
+        black_lbl = QLabel("Min")
         black_lbl.setMinimumWidth(45)
         row3.addWidget(black_lbl)
 
@@ -478,7 +499,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         row3.addSpacing(16)
 
-        white_lbl = QLabel("White")
+        white_lbl = QLabel("Max")
         white_lbl.setMinimumWidth(45)
         row3.addWidget(white_lbl)
 
@@ -498,6 +519,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         row3.addStretch(1)
         display_layout.addLayout(row3)
+
+        hist_header = QHBoxLayout()
+        hist_header.addStretch(1)
+        self.hist_log_cb = QCheckBox("Log scale")
+        self.hist_log_cb.setChecked(True)
+        self.hist_log_cb.toggled.connect(
+            lambda checked: self.levels_histogram.set_log_scale(checked)
+        )
+        hist_header.addWidget(self.hist_log_cb)
+        display_layout.addLayout(hist_header)
+
+        self.levels_histogram = LevelsHistogramWidget()
+        self.levels_histogram.gate_changed.connect(self._on_histogram_gate_changed)
+        self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)
+        display_layout.addWidget(self.levels_histogram)
 
         prov_l.addWidget(display_frame)
 
@@ -532,6 +568,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.overlay_ladder_only_highlight_cb = QCheckBox("Only highlighted")
         overlay_ladder_l.addWidget(self.overlay_ladder_only_highlight_cb)
+
+        self.overlay_ladder_right_side_cb = QCheckBox("Markers on right")
+        overlay_ladder_l.addWidget(self.overlay_ladder_right_side_cb)
 
         self.overlay_ladder_save_btn = QPushButton("Save options")
         self.overlay_ladder_save_btn.clicked.connect(self._save_overlay_ladder_options)
@@ -746,7 +785,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "Third-party libraries used:\n"
             "  • PySide6 — LGPL v3 (Qt for Python)\n"
             "  • NumPy — BSD 3-Clause\n"
-            "  • scikit-image — BSD 3-Clause\n"
             "  • Pydantic — MIT\n"
             "  • tifffile — BSD 3-Clause\n\n"
             "Full license texts are available in the Legal tab."
@@ -844,6 +882,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             return 16
 
     def _sync_controls_from_project(self):
+        # Cancel any in-progress histogram drag so stale _drag_start_levels
+        # from a previous blot can never contaminate the next log entry.
+        self._dragging_histogram = False
+        self._drag_start_levels = None
+
         self._populate_prov_blot_combo()
         self._update_prov_label()
         blot = self._get_active_blot()
@@ -897,6 +940,35 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_white_slider.blockSignals(False)
         self.levels_gamma_slider.blockSignals(False)
         self.invert_cb.blockSignals(False)
+
+        # ---- histogram ----
+        try:
+            _active = self._get_active_channel_or_blot()
+            _hist_sha256 = _active.asset_sha256 if _active is not None else None
+            if _hist_sha256 is None:
+                self.levels_histogram.clear()
+            else:
+                if _hist_sha256 not in self._histogram_cache:
+                    _arr = load_image_as_uint16(
+                        self.workspace.asset_original_file(_hist_sha256)
+                    )
+                    _max_val_hist = 255 if _depth == 8 else 65535
+                    self.levels_histogram.set_image(_arr, _max_val_hist)
+                    self._histogram_cache[_hist_sha256] = (
+                        self.levels_histogram._counts.copy(),
+                        self.levels_histogram._edges.copy(),
+                        self.levels_histogram._max_val,
+                    )
+                else:
+                    self.levels_histogram.set_precomputed(
+                        *self._histogram_cache[_hist_sha256]
+                    )
+                _cur_black = int(getattr(_display, "levels_black", 0))
+                _cur_white = int(getattr(_display, "levels_white", _max_white))
+                self.levels_histogram.set_gates(_cur_black, _cur_white)
+        except Exception as e:
+            print(f"[histogram] failed: {e}")
+            self.levels_histogram.clear()
 
         # Overlay settings remain on blot.display (ECL-only concept)
         overlay_vis = getattr(blot.display, "overlay_visible", True)
@@ -984,6 +1056,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.mw_label_size_spin.blockSignals(False)
 
         self._refresh_overlay_ladder_ui()
+        self._update_gamma_badge()
 
     def _on_legend_changed(self):
         if not self.current_project:
@@ -1342,17 +1415,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if blot.is_nir() and blot.channels:
                 first_ch = min(blot.channels, key=lambda c: c.channel_index)
                 first_asset = self.current_project.assets.get(first_ch.asset_sha256)
+                orig_name = None
                 if first_asset and first_asset.original_source_path:
+                    orig_name = Path(first_asset.original_source_path).name
                     stem = Path(first_asset.original_source_path).stem
-                    prefix = re.sub(r"-?\[.*?\]$", "", stem)
-                    display_name = f"{prefix} (NIR {len(blot.channels)}ch)"
+                    auto_prefix = re.sub(r"-?\[.*?\]$", "", stem)
                 else:
-                    display_name = f"{blot.id} (NIR {len(blot.channels)}ch)"
+                    auto_prefix = blot.id
+                label_prefix = blot.display_name if blot.display_name else auto_prefix
+                display_name = f"{label_prefix} (NIR {len(blot.channels)}ch)"
             else:
-                display_name = blot.id
                 asset = self.current_project.assets.get(blot.asset_sha256)
+                orig_name = None
                 if asset and asset.original_source_path:
-                    display_name = Path(asset.original_source_path).name
+                    orig_name = Path(asset.original_source_path).name
+                display_name = blot.display_name if blot.display_name else (orig_name or blot.id)
             excluded = (
                 not blot.included_in_final
                 if not blot.is_nir()
@@ -1361,6 +1438,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if excluded:
                 display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
+            # Tooltip always shows the true original filename so provenance is
+            # never hidden when a display_name overrides the shown label.
+            item_idx = self.prov_blot_combo.count() - 1
+            self.prov_blot_combo.setItemData(
+                item_idx, orig_name or blot.id, Qt.ToolTipRole
+            )
 
         idx = -1
         if self.active_blot_id is not None:
@@ -1371,6 +1454,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_blot_combo.setCurrentIndex(idx)
         self.active_blot_id = self.prov_blot_combo.currentData()
+
+        # Ensure the popup list is wide enough to show the longest item without
+        # elision on Windows (no-op on macOS where the popup already expands).
+        fm = self.prov_blot_combo.fontMetrics()
+        max_text_w = max(
+            (fm.horizontalAdvance(self.prov_blot_combo.itemText(i))
+             for i in range(self.prov_blot_combo.count())),
+            default=0,
+        )
+        self.prov_blot_combo.view().setMinimumWidth(max_text_w + 40)
 
         self.prov_blot_combo.blockSignals(False)
 
@@ -1399,23 +1492,66 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if blot is None:
             self.prov_label.setText("Current blot: —")
+            self.prov_label.setToolTip("")
             self.prov_8bit_badge.setVisible(False)
             return
 
         asset = self.current_project.assets.get(blot.asset_sha256)
+        orig_name = (
+            Path(asset.original_source_path).name
+            if asset and asset.original_source_path
+            else blot.id
+        )
 
-        if asset and asset.original_source_path:
-            name = Path(asset.original_source_path).name
-        else:
-            name = blot.id  # fallback
-
+        name = blot.display_name if blot.display_name else orig_name
         self.prov_label.setText(f"Current blot: {name}")
+        # When a display name is active, expose the true filename as a tooltip.
+        self.prov_label.setToolTip(orig_name if blot.display_name else "")
 
         try:
             orig_path = self.workspace.asset_original_file(blot.asset_sha256)
             self.prov_8bit_badge.setVisible(get_bit_depth(orig_path) == 8)
         except Exception:
             self.prov_8bit_badge.setVisible(False)
+
+    def _update_gamma_badge(self):
+        _display = self._active_display()
+        if _display is None:
+            self.gamma_warning_badge.setVisible(False)
+            return
+        _g = float(getattr(_display, "levels_gamma", 1.0))
+        self.gamma_warning_badge.setVisible(abs(_g - 1.0) > 1e-3)
+
+    def _on_blot_rename(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Blot",
+            "Display name (leave empty to revert to original filename):",
+            text=blot.display_name or "",
+        )
+        if not ok:
+            return
+
+        new_val = new_name.strip() or None
+        old_val = blot.display_name
+        blot.display_name = new_val
+
+        self.log_operation(
+            "blot_renamed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display_name",
+            old_value=old_val,
+            new_value=new_val,
+        )
+        self._populate_prov_blot_combo()
+        self._update_prov_label()
+        self.workspace.save_project(self.current_project)
 
     def _move_active_blot_up(self):
         if not self.current_project or not self.active_blot_id:
@@ -1624,7 +1760,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if _display is None:
             return
 
-        old_levels = {
+        _is_drag = self._dragging_histogram
+
+        # During a drag, _drag_start_levels holds the pre-drag state so the
+        # commit log entry shows the full start→end range, not end→end.
+        old_levels = self._drag_start_levels or {
             "black": int(_display.levels_black),
             "white": int(_display.levels_white),
             "gamma": float(_display.levels_gamma),
@@ -1658,22 +1798,68 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _display.levels_white = white
         _display.levels_gamma = gamma
 
-        self.log_operation(
-            "levels_changed",
-            target_type="blot",
-            target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
-            field="display.levels",
-            old_value=old_levels,
-            new_value=new_levels,
-        )
+        if not _is_drag:
+            self.log_operation(
+                "levels_changed",
+                target_type="blot",
+                target_id=blot.id,
+                asset_sha256=blot.asset_sha256,
+                field="display.levels",
+                old_value=old_levels,
+                new_value=new_levels,
+            )
 
         self.black_value_edit.setText(str(black))
         self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
+        self._update_gamma_badge()
 
-        self.workspace.save_project(self.current_project)
-        self.refresh_previews()
+        self.levels_histogram.set_gates(black, white)
+
+        if not _is_drag:
+            self.workspace.save_project(self.current_project)
+            self.refresh_previews()
+
+    def _on_histogram_gate_changed(self, which: str, value: int):
+        """Receive continuous drag updates from the histogram widget.
+
+        Pushes the value into the matching slider, which fires _on_levels_changed
+        with _dragging_histogram=True — that path updates _display and the text
+        edits but skips logging, saving, and preview refresh for responsiveness.
+        """
+        if which == "black":
+            slider = self.levels_black_slider
+            edit   = self.black_value_edit
+        else:
+            slider = self.levels_white_slider
+            edit   = self.white_value_edit
+        value = max(0, min(int(value), slider.maximum()))
+
+        # Snapshot levels at the very start of this drag for commit logging.
+        if self._drag_start_levels is None:
+            _display = self._active_display()
+            if _display is not None:
+                self._drag_start_levels = {
+                    "black": int(_display.levels_black),
+                    "white": int(_display.levels_white),
+                    "gamma": float(_display.levels_gamma),
+                }
+
+        self._dragging_histogram = True
+        slider.setValue(value)   # fires _on_levels_changed (drag path)
+        self._dragging_histogram = False
+        edit.setText(str(value))
+
+    def _on_histogram_gate_commit(self):
+        """Receive end-of-drag from the histogram widget.
+
+        Calls _on_levels_changed once with _dragging_histogram=False so that
+        the full save+log+refresh cycle runs exactly once per drag, using
+        _drag_start_levels as the old_value for a meaningful log entry.
+        """
+        self._dragging_histogram = False
+        self._on_levels_changed()      # one log entry: drag_start → drag_end
+        self._drag_start_levels = None
 
     def _on_invert_toggled(self, checked: bool):
         blot = self._get_active_blot()

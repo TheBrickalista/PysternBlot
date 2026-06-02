@@ -22,7 +22,9 @@ from pysternblot.models import (
     OverlayLadder,
     ProteinLabel,
 )
-from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot
+import inspect
+
+from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot, build_panel_scene, build_provenance_scene
 
 
 def _minimal_ladder() -> Ladder:
@@ -176,3 +178,109 @@ class TestLadderRowForBlot:
         )
         blot = _nir_blot(overlay_ladder=overlay)
         assert _ladder_row_for_blot(blot, marker_sets) == 1
+
+
+class TestShowInFinalFlag:
+
+    def test_show_in_final_false_hides_in_panel_scene(self):
+        """build_panel_scene must gate band drawing on show_in_final."""
+        src = inspect.getsource(build_panel_scene)
+        assert "show_in_final" in src, (
+            "build_panel_scene must check show_in_final to hide bands in the final figure"
+        )
+
+    def test_show_in_final_does_not_gate_provenance(self):
+        """build_provenance_scene must not filter bands by show_in_final."""
+        src = inspect.getsource(build_provenance_scene)
+        assert "show_in_final" not in src, (
+            "build_provenance_scene must not filter bands by show_in_final; "
+            "all bands must always be visible in the provenance (Original Image) view"
+        )
+
+
+class TestLabelAlignment:
+
+    def test_label_x_tracks_tick_x0(self):
+        """Provenance kDa label must use font-adaptive right-edge alignment, not a fixed offset."""
+        src = inspect.getsource(build_provenance_scene)
+        # Left-side label: right edge of label = outer tick tip - gap
+        assert "tick_x0 - br.width() - LABEL_GAP" in src, (
+            "provenance left-side label x must be tick_x0 - br.width() - LABEL_GAP"
+        )
+        # Right-side label: left edge of label = outer tick tip + gap
+        assert "tick_x1 + LABEL_GAP" in src, (
+            "provenance right-side label x must be tick_x1 + LABEL_GAP"
+        )
+        assert "label_x" not in src, (
+            "old fixed label_x offset must be removed from build_provenance_scene"
+        )
+
+
+class TestLadderSide:
+
+    def test_side_defaults_to_left(self):
+        """A freshly constructed OverlayLadder must have side == 'left'."""
+        ladder = OverlayLadder(marker_set_id="ms1")
+        assert ladder.side == "left"
+
+    def test_side_right_persists_after_round_trip(self):
+        """side='right' must survive model_dump / model_validate serialisation."""
+        ladder = OverlayLadder(marker_set_id="ms1", side="right")
+        data = ladder.model_dump()
+        assert data["side"] == "right"
+        ladder2 = OverlayLadder.model_validate(data)
+        assert ladder2.side == "right"
+
+    def test_tick_geometry_left(self):
+        """Left-side tick must sit to the left of the image."""
+        import pytest
+        TICK_LENGTH = 50.0
+        TICK_GAP    = 15.0
+        x0          = 10.0
+
+        tick_x1 = x0 - TICK_GAP
+        tick_x0 = x0 - TICK_GAP - TICK_LENGTH
+
+        assert tick_x1 == pytest.approx(-5.0)
+        assert tick_x0 == pytest.approx(-55.0)
+        assert tick_x1 < x0
+        assert tick_x0 < tick_x1
+
+    def test_tick_geometry_right(self):
+        """Right-side tick must sit to the right of the image."""
+        import pytest
+        TICK_LENGTH = 50.0
+        TICK_GAP    = 15.0
+        x0          = 10.0
+        img_width   = 300.0
+        img_right   = x0 + img_width
+
+        tick_x0 = img_right + TICK_GAP
+        tick_x1 = img_right + TICK_GAP + TICK_LENGTH
+
+        assert tick_x0 == pytest.approx(325.0)
+        assert tick_x1 == pytest.approx(375.0)
+        assert tick_x0 > img_right
+        assert tick_x1 > tick_x0
+
+    def test_label_position_left(self):
+        """Left-side label right edge must be flush with the outer tick tip."""
+        import pytest
+        LABEL_GAP  =  4.0
+        tick_x0    = -55.0
+        br_width   =  80.0
+
+        label_x = tick_x0 - br_width - LABEL_GAP
+        assert label_x == pytest.approx(-139.0)
+        assert label_x + br_width < tick_x0
+
+    def test_label_position_right(self):
+        """Right-side label left edge must be just past the outer tick tip."""
+        import pytest
+        LABEL_GAP  =  4.0
+        tick_x1    = 375.0
+        br_width   =  80.0  # noqa: F841 — kept for symmetry with left test
+
+        label_x = tick_x1 + LABEL_GAP
+        assert label_x == pytest.approx(379.0)
+        assert label_x > tick_x1

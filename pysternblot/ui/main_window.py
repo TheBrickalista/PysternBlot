@@ -503,6 +503,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row3.addStretch(1)
         display_layout.addLayout(row3)
 
+        hist_header = QHBoxLayout()
+        hist_header.addStretch(1)
+        self.hist_log_cb = QCheckBox("Log scale")
+        self.hist_log_cb.setChecked(True)
+        self.hist_log_cb.toggled.connect(
+            lambda checked: self.levels_histogram.set_log_scale(checked)
+        )
+        hist_header.addWidget(self.hist_log_cb)
+        display_layout.addLayout(hist_header)
+
         self.levels_histogram = LevelsHistogramWidget()
         self.levels_histogram.gate_changed.connect(self._on_histogram_gate_changed)
         self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)

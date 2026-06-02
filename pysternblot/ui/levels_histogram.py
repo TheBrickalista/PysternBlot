@@ -57,16 +57,18 @@ class LevelsHistogramWidget(QWidget):
         self._white: int   = 65535
 
         self._active_gate: str | None = None   # "black" or "white" while dragging
+        self._log_scale: bool = True
 
         self.setMinimumHeight(90)
         self.setFixedHeight(90)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMouseTracking(True)
         self.setToolTip(
-            "Source-image intensity histogram (log scale).\n"
-            "Drag the black or white gate line to adjust levels.\n"
+            "Source-image intensity histogram.\n"
+            "Drag the Min or Max gate line to adjust levels.\n"
             "The x-axis zooms to the selected window — closing the gates\n"
-            "reveals fine structure in the band region."
+            "reveals fine structure in the band region.\n"
+            "Use the Log scale toggle to switch between log and linear y-axis."
         )
 
     # ------------------------------------------------------------------
@@ -99,6 +101,11 @@ class LevelsHistogramWidget(QWidget):
         """Update gate positions and repaint. Does not recompute the histogram."""
         self._black = int(black)
         self._white = int(white)
+        self.update()
+
+    def set_log_scale(self, enabled: bool) -> None:
+        """Switch between log (True) and linear (False) y-axis. No recompute."""
+        self._log_scale = bool(enabled)
         self.update()
 
     def clear(self) -> None:
@@ -153,12 +160,22 @@ class LevelsHistogramWidget(QWidget):
 
         x_min, visible_range = self._window()
 
-        # ---- log-scale bar heights ----
-        counts    = self._counts
-        edges     = self._edges
-        log_counts = np.log1p(counts.astype(np.float64))
-        max_log   = log_counts.max()
-        if max_log == 0.0:
+        counts = self._counts
+        edges  = self._edges
+        bin_lo = edges[:-1]
+        bin_hi = edges[1:]
+
+        # ---- height transform (log or linear) ----
+        raw     = counts.astype(np.float64)
+        heights = np.log1p(raw) if self._log_scale else raw
+
+        # Normalize to the max of the currently visible bins so the zoom is
+        # useful: when gates exclude the background peak the remaining bars
+        # still fill the panel height rather than collapsing to pixels.
+        visible_hi_bound = x_min + visible_range
+        visible_mask = (bin_hi > x_min) & (bin_lo < visible_hi_bound)
+        vis_max = heights[visible_mask].max() if visible_mask.any() else 0.0
+        if vis_max == 0.0:
             painter.end()
             return
 
@@ -169,9 +186,6 @@ class LevelsHistogramWidget(QWidget):
         # ---- draw histogram bars — dark on white ----
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor("#1a1a1a")))
-
-        bin_lo = edges[:-1]
-        bin_hi = edges[1:]
 
         for i in range(len(counts)):
             lo = float(bin_lo[i])
@@ -188,7 +202,7 @@ class LevelsHistogramWidget(QWidget):
             if px1 <= px0:
                 px1 = px0 + 1
 
-            bar_h = int(log_counts[i] / max_log * draw_h)
+            bar_h = int(heights[i] / vis_max * draw_h)
             if bar_h < 1:
                 continue
 

@@ -34,7 +34,7 @@ class LevelsHistogramWidget(QWidget):
 
     Public API
     ----------
-    set_image(arr, max_val)       — compute 256-bin log histogram, cache, repaint.
+    set_image(arr, max_val)       — compute 1024-bin histogram, cache, repaint.
     set_precomputed(counts, edges, max_val) — install pre-computed data, repaint.
     set_gates(black, white)       — update gate positions, repaint (no recompute).
     clear()                       — reset to blank, repaint.
@@ -43,7 +43,7 @@ class LevelsHistogramWidget(QWidget):
     gate_changed = Signal(str, int)
     gate_commit  = Signal()
 
-    _BINS: int          = 256
+    _BINS: int          = 1024
     _MARGIN_FRAC: float = 0.05   # margin beyond each gate as fraction of span
     _MIN_WINDOW: int    = 16     # minimum window to prevent near-zero division
     _HIT_TOLERANCE: int = 8      # px within which a click grabs a gate
@@ -76,7 +76,7 @@ class LevelsHistogramWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_image(self, arr: np.ndarray, max_val: int) -> None:
-        """Compute and cache a 256-bin log histogram from a pixel array."""
+        """Compute and cache a 1024-bin histogram from a pixel array."""
         counts, edges = np.histogram(
             arr.ravel(), bins=self._BINS, range=(0, max_val)
         )

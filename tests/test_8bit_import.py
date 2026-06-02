@@ -159,6 +159,129 @@ class TestAssetInfo:
 
 
 # ---------------------------------------------------------------------------
+# 10 & 11. _blot_record() gamma_warning
+# ---------------------------------------------------------------------------
+
+def _minimal_blot_for_integrity(levels_gamma: float = 1.0):
+    from pysternblot.models import (
+        Blot, Crop, Ladder, ProteinLabel, DisplaySettings, CalibrationPoint,
+    )
+    return Blot(
+        id="blot_gamma_test",
+        asset_sha256="deadbeef",
+        crop=Crop(x=0, y=0, w=300, h=200),
+        ladder=Ladder(
+            lane_index=0,
+            marker_set_id="ms_test",
+            calibration_points=[
+                CalibrationPoint(y_px=50, kda=55),
+                CalibrationPoint(y_px=120, kda=36),
+            ],
+        ),
+        protein_label=ProteinLabel(text="TEST"),
+        display=DisplaySettings(levels_gamma=levels_gamma),
+    )
+
+
+_MOCK_ASSET_INFO = {
+    "sha256": "deadbeef",
+    "stored_original_path": "/fake/path.tif",
+    "stored_original_sha256_check": "deadbeef",
+    "original_source_path": "/fake/original.tif",
+    "filename": "original.tif",
+    "image_mode": "I;16",
+    "bit_depth": 16,
+    "bit_depth_warning": None,
+    "width_px": 300,
+    "height_px": 200,
+}
+
+
+class TestGammaWarning:
+    def test_gamma_warning_absent_for_default(self, tmp_path):
+        from pysternblot.integrity import _blot_record
+        from pysternblot.storage import Workspace
+
+        ws = Workspace(tmp_path)
+        project = _minimal_project()
+        blot = _minimal_blot_for_integrity(levels_gamma=1.0)
+
+        with patch("pysternblot.integrity._asset_info", return_value=_MOCK_ASSET_INFO):
+            record = _blot_record(ws, project, blot)
+
+        assert record["gamma_warning"] is None
+
+    def test_gamma_warning_present_for_nondefault(self, tmp_path):
+        from pysternblot.integrity import _blot_record
+        from pysternblot.storage import Workspace
+
+        ws = Workspace(tmp_path)
+        project = _minimal_project()
+        blot = _minimal_blot_for_integrity(levels_gamma=1.4)
+
+        with patch("pysternblot.integrity._asset_info", return_value=_MOCK_ASSET_INFO):
+            record = _blot_record(ws, project, blot)
+
+        assert record["gamma_warning"] is not None
+        assert "1.40" in record["gamma_warning"]
+
+    def test_gamma_warning_float_noise_ignored(self, tmp_path):
+        """Values within 1e-3 of 1.0 must not trigger a warning."""
+        from pysternblot.integrity import _blot_record
+        from pysternblot.storage import Workspace
+
+        ws = Workspace(tmp_path)
+        project = _minimal_project()
+        blot = _minimal_blot_for_integrity(levels_gamma=1.0005)
+
+        with patch("pysternblot.integrity._asset_info", return_value=_MOCK_ASSET_INFO):
+            record = _blot_record(ws, project, blot)
+
+        assert record["gamma_warning"] is None
+
+    def test_gamma_warning_nir_channel(self, tmp_path):
+        """NIR blot with non-default channel gamma is flagged."""
+        from pysternblot.integrity import _blot_record
+        from pysternblot.storage import Workspace
+        from pysternblot.models import (
+            Blot, BlotChannel, Crop, Ladder, ProteinLabel, DisplaySettings,
+            CalibrationPoint,
+        )
+
+        ws = Workspace(tmp_path)
+        project = _minimal_project()
+
+        ch = BlotChannel(
+            asset_sha256="deadbeef",
+            channel_index=0,
+            display=DisplaySettings(levels_gamma=1.6),
+        )
+        blot = Blot(
+            id="nir_gamma_test",
+            asset_sha256="deadbeef",
+            modality="nir_fluorescence",
+            channels=[ch],
+            crop=Crop(x=0, y=0, w=300, h=200),
+            ladder=Ladder(
+                lane_index=0,
+                marker_set_id="ms_test",
+                calibration_points=[
+                    CalibrationPoint(y_px=50, kda=55),
+                    CalibrationPoint(y_px=120, kda=36),
+                ],
+            ),
+            protein_label=ProteinLabel(text="NIR_TEST"),
+        )
+
+        with patch("pysternblot.integrity._asset_info", return_value=_MOCK_ASSET_INFO):
+            record = _blot_record(ws, project, blot)
+
+        assert record["gamma_warning"] is not None
+        assert "ch0" in record["gamma_warning"]
+        assert "1.60" in record["gamma_warning"]
+
+
+# ---------------------------------------------------------------------------
 # 10–13. load_image_as_uint16()
 # ---------------------------------------------------------------------------
 

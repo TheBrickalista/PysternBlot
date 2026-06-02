@@ -391,7 +391,6 @@ class TestCase4UpperOnlyGrouping:
     def test_underlines_above_lane_ref_text(self):
         """Option (a): underline must be above the lane_ref row's text (between rows)."""
         lines = _lines(self.scene)
-        # Find y of any lane_ref label ("Ctrl" or "Sg1")
         lane_texts = [t for t in _texts(self.scene)
                       if t.toPlainText().strip() in ("Ctrl", "Sg1", "Sg2")]
         assert lane_texts, "No lane_ref labels found"
@@ -401,6 +400,45 @@ class TestCase4UpperOnlyGrouping:
             assert ul_y < min_lane_y, (
                 f"Underline at y={ul_y:.1f} must be above lane labels at y≥{min_lane_y:.1f}"
             )
+
+    def test_lane_ref_cells_at_per_lane_positions(self):
+        """Bug fix: lane_ref row cells must not collapse to group center.
+
+        lane_ref: cells=["Ctrl","Ctrl","Sg1","Sg1","Sg2","Sg2"],
+                  cell_groups=[1,1,2,2,3,3], 6 lanes.
+        After fix each cell is at its own lane center (i+0.5)*lane_w, not the
+        group-span center that caused overprinting.
+        """
+        x = self.img_col_x
+        lw = self.lane_w
+        expected = [x + (i + 0.5) * lw for i in range(6)]
+
+        def _cx(item):
+            return item.x() + item.boundingRect().width() / 2.0
+
+        ctrl_items = sorted(
+            [t for t in _texts(self.scene) if t.toPlainText().strip() == "Ctrl"],
+            key=_cx,
+        )
+        sg1_items = sorted(
+            [t for t in _texts(self.scene) if t.toPlainText().strip() == "Sg1"],
+            key=_cx,
+        )
+        sg2_items = sorted(
+            [t for t in _texts(self.scene) if t.toPlainText().strip() == "Sg2"],
+            key=_cx,
+        )
+
+        assert len(ctrl_items) == 2, f"Expected 2 'Ctrl' items; got {len(ctrl_items)}"
+        assert len(sg1_items) == 2, f"Expected 2 'Sg1' items; got {len(sg1_items)}"
+        assert len(sg2_items) == 2, f"Expected 2 'Sg2' items; got {len(sg2_items)}"
+
+        for item, exp in zip(ctrl_items, expected[0:2]):
+            assert abs(_cx(item) - exp) < 2.0, f"Ctrl center {_cx(item):.1f} ≠ {exp:.1f}"
+        for item, exp in zip(sg1_items, expected[2:4]):
+            assert abs(_cx(item) - exp) < 2.0, f"Sg1 center {_cx(item):.1f} ≠ {exp:.1f}"
+        for item, exp in zip(sg2_items, expected[4:6]):
+            assert abs(_cx(item) - exp) < 2.0, f"Sg2 center {_cx(item):.1f} ≠ {exp:.1f}"
 
 
 # ---------------------------------------------------------------------------

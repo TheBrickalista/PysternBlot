@@ -336,15 +336,22 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
 
         # ----- compute per-cell centers -----
+        # Lane-reference row: every cell sits at its own per-lane position so that
+        # per-lane labels (e.g. "Control"/"PNGase F") do not collapse to the group
+        # center and overprint.  Group ids on this row drive the underline only.
+        # Non-lane-ref rows (group-label rows above): span-center when grouped.
+        is_lane_ref_row = (row is _lr)
         own_step = img_col_w / float(n_cells) if n_cells > 0 else img_col_w
         centers: list[float] = []
         for i in range(n_cells):
             gid = cell_group_ids[i]
-            if gid != 0 and gid in spans:
+            if (not is_lane_ref_row) and gid != 0 and gid in spans:
                 a, b = spans[gid]
                 cx = img_col_x + (a + b + 1) / 2.0 * lane_w
             else:
-                cx = img_col_x + (i + 0.5) * own_step
+                # Lane-ref: per-lane center (lane_w = img_col_w/n_lanes = own_step here).
+                # Non-lane-ref ungrouped: per-cell even distribution.
+                cx = img_col_x + (i + 0.5) * (lane_w if is_lane_ref_row else own_step)
             centers.append(cx)
 
         for cx, txt in zip(centers, cells):

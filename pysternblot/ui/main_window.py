@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -259,6 +259,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_down_btn = QPushButton("Down")
         self.prov_down_btn.clicked.connect(self._move_active_blot_down)
         prov_row1.addWidget(self.prov_down_btn)
+
+        self.prov_rename_btn = QPushButton("Rename…")
+        self.prov_rename_btn.setToolTip("Set a display name for this blot (cosmetic only — does not affect the source file or integrity report)")
+        self.prov_rename_btn.clicked.connect(self._on_blot_rename)
+        prov_row1.addWidget(self.prov_rename_btn)
 
         prov_row1.addWidget(QLabel("Rotate"))
 
@@ -1399,17 +1404,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if blot.is_nir() and blot.channels:
                 first_ch = min(blot.channels, key=lambda c: c.channel_index)
                 first_asset = self.current_project.assets.get(first_ch.asset_sha256)
+                orig_name = None
                 if first_asset and first_asset.original_source_path:
+                    orig_name = Path(first_asset.original_source_path).name
                     stem = Path(first_asset.original_source_path).stem
-                    prefix = re.sub(r"-?\[.*?\]$", "", stem)
-                    display_name = f"{prefix} (NIR {len(blot.channels)}ch)"
+                    auto_prefix = re.sub(r"-?\[.*?\]$", "", stem)
                 else:
-                    display_name = f"{blot.id} (NIR {len(blot.channels)}ch)"
+                    auto_prefix = blot.id
+                label_prefix = blot.display_name if blot.display_name else auto_prefix
+                display_name = f"{label_prefix} (NIR {len(blot.channels)}ch)"
             else:
-                display_name = blot.id
                 asset = self.current_project.assets.get(blot.asset_sha256)
+                orig_name = None
                 if asset and asset.original_source_path:
-                    display_name = Path(asset.original_source_path).name
+                    orig_name = Path(asset.original_source_path).name
+                display_name = blot.display_name if blot.display_name else (orig_name or blot.id)
             excluded = (
                 not blot.included_in_final
                 if not blot.is_nir()
@@ -1418,6 +1427,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if excluded:
                 display_name = f"⊘ {display_name}"
             self.prov_blot_combo.addItem(display_name, blot.id)
+            # Tooltip always shows the true original filename so provenance is
+            # never hidden when a display_name overrides the shown label.
+            item_idx = self.prov_blot_combo.count() - 1
+            self.prov_blot_combo.setItemData(
+                item_idx, orig_name or blot.id, Qt.ToolTipRole
+            )
 
         idx = -1
         if self.active_blot_id is not None:
@@ -1466,23 +1481,58 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         if blot is None:
             self.prov_label.setText("Current blot: —")
+            self.prov_label.setToolTip("")
             self.prov_8bit_badge.setVisible(False)
             return
 
         asset = self.current_project.assets.get(blot.asset_sha256)
+        orig_name = (
+            Path(asset.original_source_path).name
+            if asset and asset.original_source_path
+            else blot.id
+        )
 
-        if asset and asset.original_source_path:
-            name = Path(asset.original_source_path).name
-        else:
-            name = blot.id  # fallback
-
+        name = blot.display_name if blot.display_name else orig_name
         self.prov_label.setText(f"Current blot: {name}")
+        # When a display name is active, expose the true filename as a tooltip.
+        self.prov_label.setToolTip(orig_name if blot.display_name else "")
 
         try:
             orig_path = self.workspace.asset_original_file(blot.asset_sha256)
             self.prov_8bit_badge.setVisible(get_bit_depth(orig_path) == 8)
         except Exception:
             self.prov_8bit_badge.setVisible(False)
+
+    def _on_blot_rename(self):
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Blot",
+            "Display name (leave empty to revert to original filename):",
+            text=blot.display_name or "",
+        )
+        if not ok:
+            return
+
+        new_val = new_name.strip() or None
+        old_val = blot.display_name
+        blot.display_name = new_val
+
+        self.log_operation(
+            "blot_renamed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="display_name",
+            old_value=old_val,
+            new_value=new_val,
+        )
+        self._populate_prov_blot_combo()
+        self._update_prov_label()
+        self.workspace.save_project(self.current_project)
 
     def _move_active_blot_up(self):
         if not self.current_project or not self.active_blot_id:

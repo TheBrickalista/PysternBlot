@@ -154,6 +154,7 @@ class Blot(BaseModel):
     overlay_ladder: Optional[OverlayLadder] = None
     included_in_final: bool = True
     antibody_name: str = ""
+    display_name: Optional[str] = None
     modality: Literal["ecl", "nir_fluorescence"] = "ecl"
     channels: List[BlotChannel] = Field(default_factory=list)
 

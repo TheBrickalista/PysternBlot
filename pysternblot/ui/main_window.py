@@ -52,7 +52,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.pending_overlay_ladder_kda = None
         self.overlay_ladder_dialog = None
         self.overlay_ladder_assignment_table = None
-        self._histogram_cache: dict = {}  # sha256 → (counts, edges, max_val)
+        self._histogram_cache: dict = {}    # sha256 → (counts, edges, max_val)
+        self._dragging_histogram: bool = False
+        self._drag_start_levels: dict | None = None
 
         self.setWindowTitle("Pystern Blot")
         self.setMinimumSize(900, 600)
@@ -502,6 +504,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         display_layout.addLayout(row3)
 
         self.levels_histogram = LevelsHistogramWidget()
+        self.levels_histogram.gate_changed.connect(self._on_histogram_gate_changed)
+        self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)
         display_layout.addWidget(self.levels_histogram)
 
         prov_l.addWidget(display_frame)
@@ -1660,7 +1664,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if _display is None:
             return
 
-        old_levels = {
+        _is_drag = self._dragging_histogram
+
+        # During a drag, _drag_start_levels holds the pre-drag state so the
+        # commit log entry shows the full start→end range, not end→end.
+        old_levels = self._drag_start_levels or {
             "black": int(_display.levels_black),
             "white": int(_display.levels_white),
             "gamma": float(_display.levels_gamma),
@@ -1694,23 +1702,67 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _display.levels_white = white
         _display.levels_gamma = gamma
 
-        self.log_operation(
-            "levels_changed",
-            target_type="blot",
-            target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
-            field="display.levels",
-            old_value=old_levels,
-            new_value=new_levels,
-        )
+        if not _is_drag:
+            self.log_operation(
+                "levels_changed",
+                target_type="blot",
+                target_id=blot.id,
+                asset_sha256=blot.asset_sha256,
+                field="display.levels",
+                old_value=old_levels,
+                new_value=new_levels,
+            )
 
         self.black_value_edit.setText(str(black))
         self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
 
         self.levels_histogram.set_gates(black, white)
-        self.workspace.save_project(self.current_project)
-        self.refresh_previews()
+
+        if not _is_drag:
+            self.workspace.save_project(self.current_project)
+            self.refresh_previews()
+
+    def _on_histogram_gate_changed(self, which: str, value: int):
+        """Receive continuous drag updates from the histogram widget.
+
+        Pushes the value into the matching slider, which fires _on_levels_changed
+        with _dragging_histogram=True — that path updates _display and the text
+        edits but skips logging, saving, and preview refresh for responsiveness.
+        """
+        if which == "black":
+            slider = self.levels_black_slider
+            edit   = self.black_value_edit
+        else:
+            slider = self.levels_white_slider
+            edit   = self.white_value_edit
+        value = max(0, min(int(value), slider.maximum()))
+
+        # Snapshot levels at the very start of this drag for commit logging.
+        if self._drag_start_levels is None:
+            _display = self._active_display()
+            if _display is not None:
+                self._drag_start_levels = {
+                    "black": int(_display.levels_black),
+                    "white": int(_display.levels_white),
+                    "gamma": float(_display.levels_gamma),
+                }
+
+        self._dragging_histogram = True
+        slider.setValue(value)   # fires _on_levels_changed (drag path)
+        self._dragging_histogram = False
+        edit.setText(str(value))
+
+    def _on_histogram_gate_commit(self):
+        """Receive end-of-drag from the histogram widget.
+
+        Calls _on_levels_changed once with _dragging_histogram=False so that
+        the full save+log+refresh cycle runs exactly once per drag, using
+        _drag_start_levels as the old_value for a meaningful log entry.
+        """
+        self._dragging_histogram = False
+        self._on_levels_changed()      # one log entry: drag_start → drag_end
+        self._drag_start_levels = None
 
     def _on_invert_toggled(self, checked: bool):
         blot = self._get_active_blot()

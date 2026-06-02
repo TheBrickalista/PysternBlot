@@ -20,13 +20,14 @@ from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
-from ..image_utils import get_bit_depth
+from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..models import (
     Blot,
 )
 from .legend_tab import LegendTab
 from .zoomable_graphics_view import ZoomableGraphicsView
 
+from .levels_histogram import LevelsHistogramWidget
 from .project_io_mixin import _ProjectIOMixin
 from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
@@ -51,6 +52,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.pending_overlay_ladder_kda = None
         self.overlay_ladder_dialog = None
         self.overlay_ladder_assignment_table = None
+        self._histogram_cache: dict = {}  # sha256 → (counts, edges, max_val)
 
         self.setWindowTitle("Pystern Blot")
         self.setMinimumSize(900, 600)
@@ -499,6 +501,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row3.addStretch(1)
         display_layout.addLayout(row3)
 
+        self.levels_histogram = LevelsHistogramWidget()
+        display_layout.addWidget(self.levels_histogram)
+
         prov_l.addWidget(display_frame)
 
         # --- Overlay ladder annotation compact controls ---
@@ -899,6 +904,30 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_white_slider.blockSignals(False)
         self.levels_gamma_slider.blockSignals(False)
         self.invert_cb.blockSignals(False)
+
+        # ---- histogram ----
+        try:
+            _hist_sha256, _ = blot.channel_asset_and_display(self._active_nir_channel)
+            if _hist_sha256 not in self._histogram_cache:
+                _arr = load_image_as_uint16(
+                    self.workspace.asset_original_file(_hist_sha256)
+                )
+                _max_val_hist = 255 if _depth == 8 else 65535
+                self.levels_histogram.set_image(_arr, _max_val_hist)
+                self._histogram_cache[_hist_sha256] = (
+                    self.levels_histogram._counts.copy(),
+                    self.levels_histogram._edges.copy(),
+                    self.levels_histogram._max_val,
+                )
+            else:
+                self.levels_histogram.set_precomputed(
+                    *self._histogram_cache[_hist_sha256]
+                )
+            _cur_black = int(getattr(_display, "levels_black", 0))
+            _cur_white = int(getattr(_display, "levels_white", _max_white))
+            self.levels_histogram.set_gates(_cur_black, _cur_white)
+        except Exception:
+            self.levels_histogram.clear()
 
         # Overlay settings remain on blot.display (ECL-only concept)
         overlay_vis = getattr(blot.display, "overlay_visible", True)
@@ -1674,6 +1703,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.white_value_edit.setText(str(white))
         self.gamma_value_lbl.setText(f"{gamma:.2f}")
 
+        self.levels_histogram.set_gates(black, white)
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 

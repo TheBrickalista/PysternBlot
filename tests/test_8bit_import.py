@@ -335,3 +335,76 @@ class TestLoadImageAsUint16:
         assert arr.ndim == 2
         assert arr.dtype.name == "uint16"
         assert int(arr.max()) <= 255
+
+
+# ---------------------------------------------------------------------------
+# parse_typhoon_inf()
+# ---------------------------------------------------------------------------
+
+_SAMPLE_INF = """\
+20260521-151221-[IRlong]
+*** more info ***
+H,ScaleType=Linear
+S,V=399
+S,LaserName=785 nm
+S,FilterName=IRlong 825BP30
+S,ScanMode=Fluorescence
+S,ScanSpeed=Normal
+H,LaserPowerMode=High
+H,Correction1=On
+H,Correction2=Off
+H,Shading1=On
+S,SignalProcess2=Log
+H,Hash=ABC123DEF456
+S,Software=Amersham TYPHOON Scanner Control Software 4.0.0.4
+S,SerialNumber=36651188
+"""
+
+
+class TestParseTyphoonInf:
+    def test_extracts_scale_type_pmt_and_correction(self, tmp_path):
+        from pysternblot.storage import parse_typhoon_inf
+
+        inf_path = tmp_path / "20260521-151221-[IRlong].inf"
+        inf_path.write_text(_SAMPLE_INF, encoding="utf-8")
+
+        result = parse_typhoon_inf(inf_path)
+
+        assert result["scale_type"] == "Linear"
+        assert result["pmt_voltage"] == 399
+        assert result["scan_mode"] == "Fluorescence"
+        assert result["laser_name"] == "785 nm"
+        assert result["laser_power_mode"] == "High"
+        assert result["corrections"]["Correction1"] == "On"
+        assert result["corrections"]["Correction2"] == "Off"
+        assert result["corrections"]["Shading1"] == "On"
+        assert result["signal_process"]["SignalProcess2"] == "Log"
+        assert result["instrument_hash"] == "ABC123DEF456"
+        assert result["serial_number"] == "36651188"
+
+    def test_returns_empty_for_nonexistent_path(self, tmp_path):
+        from pysternblot.storage import parse_typhoon_inf
+
+        result = parse_typhoon_inf(tmp_path / "does_not_exist.inf")
+        assert result == {}
+
+    def test_no_inf_section_still_parsed(self, tmp_path):
+        """Files without '*** more info ***' are parsed as-is."""
+        from pysternblot.storage import parse_typhoon_inf
+
+        inf_path = tmp_path / "flat.inf"
+        inf_path.write_text("H,ScaleType=Sqrt\nS,V=512\n", encoding="utf-8")
+
+        result = parse_typhoon_inf(inf_path)
+        assert result["scale_type"] == "Sqrt"
+        assert result["pmt_voltage"] == 512
+
+    def test_returns_empty_on_malformed_file(self, tmp_path):
+        """Completely non-key=value content returns {}."""
+        from pysternblot.storage import parse_typhoon_inf
+
+        inf_path = tmp_path / "garbage.inf"
+        inf_path.write_text("this is not an inf file\njust plain text\n", encoding="utf-8")
+
+        result = parse_typhoon_inf(inf_path)
+        assert result == {}

@@ -227,6 +227,7 @@ class AssetEntry(BaseModel):
     stored_original_path: str
     original_source_path: Optional[str] = None
     stored_preview_path: Optional[str] = None
+    acquisition_metadata: Optional[dict] = None
 
 class ProjectMeta(BaseModel):
     id: str

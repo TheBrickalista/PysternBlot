@@ -54,6 +54,7 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
         "bit_depth_warning": bit_depth_warning,
         "width_px": width,
         "height_px": height,
+        "acquisition_metadata": getattr(asset, "acquisition_metadata", None) if asset else None,
     }
 
 
@@ -239,6 +240,31 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         else:
             gamma_cell = "<td></td>"
 
+        acq = src.get("acquisition_metadata") or {}
+        if acq:
+            acq_parts = []
+            if acq.get("scale_type"):
+                acq_parts.append(f"<b>Scale: {acq['scale_type']}</b>")
+            if acq.get("scan_mode"):
+                acq_parts.append(f"Mode: {acq['scan_mode']}")
+            if acq.get("scan_speed"):
+                acq_parts.append(f"Speed: {acq['scan_speed']}")
+            if acq.get("laser_name"):
+                acq_parts.append(f"Laser: {acq['laser_name']}")
+            if acq.get("pmt_voltage") is not None:
+                acq_parts.append(f"PMT: {acq['pmt_voltage']} V")
+            if acq.get("laser_power_mode"):
+                acq_parts.append(f"Laser power: {acq['laser_power_mode']}")
+            if acq.get("corrections"):
+                corr_str = ", ".join(f"{k}={v}" for k, v in acq["corrections"].items())
+                acq_parts.append(f"Corrections: {corr_str}")
+            if acq.get("signal_process"):
+                sp_str = ", ".join(f"{k}={v}" for k, v in acq["signal_process"].items())
+                acq_parts.append(f"Signal: {sp_str}")
+            acq_cell = f'<td style="font-size:11px;">{"<br>".join(acq_parts)}</td>'
+        else:
+            acq_cell = "<td></td>"
+
         rows.append(f"""
         <tr>
           <td>{blot["blot_id"]}</td>
@@ -247,6 +273,7 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
           {bit_depth_cell}
           <td>{warning_text}</td>
           {gamma_cell}
+          {acq_cell}
           <td>{src["width_px"]} × {src["height_px"]}</td>
           <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, w={ops["crop"]["w"]}, h={ops["crop"]["h"]}</td>
           <td>{ops["rotation_deg"]}</td>
@@ -329,6 +356,7 @@ code {{ font-size: 11px; word-break: break-all; }}
 <th>Bit depth</th>
 <th>Bit depth warning</th>
 <th>Gamma warning</th>
+<th>Acquisition</th>
 <th>Source size</th>
 <th>Crop</th>
 <th>Rotation</th>

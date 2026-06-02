@@ -462,7 +462,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row3 = QHBoxLayout()
         row3.setSpacing(10)
 
-        black_lbl = QLabel("Black")
+        black_lbl = QLabel("Min")
         black_lbl.setMinimumWidth(45)
         row3.addWidget(black_lbl)
 
@@ -482,7 +482,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         row3.addSpacing(16)
 
-        white_lbl = QLabel("White")
+        white_lbl = QLabel("Max")
         white_lbl.setMinimumWidth(45)
         row3.addWidget(white_lbl)
 

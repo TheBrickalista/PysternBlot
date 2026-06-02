@@ -247,6 +247,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_row1 = QHBoxLayout()
         prov_row1.addWidget(QLabel("Blot"))
         self.prov_blot_combo = QComboBox()
+        self.prov_blot_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.prov_blot_combo.view().setTextElideMode(Qt.ElideNone)
         self.prov_blot_combo.currentIndexChanged.connect(self._on_active_blot_changed)
         prov_row1.addWidget(self.prov_blot_combo)
 
@@ -1426,6 +1428,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_blot_combo.setCurrentIndex(idx)
         self.active_blot_id = self.prov_blot_combo.currentData()
+
+        # Ensure the popup list is wide enough to show the longest item without
+        # elision on Windows (no-op on macOS where the popup already expands).
+        fm = self.prov_blot_combo.fontMetrics()
+        max_text_w = max(
+            (fm.horizontalAdvance(self.prov_blot_combo.itemText(i))
+             for i in range(self.prov_blot_combo.count())),
+            default=0,
+        )
+        self.prov_blot_combo.view().setMinimumWidth(max_text_w + 40)
 
         self.prov_blot_combo.blockSignals(False)
 

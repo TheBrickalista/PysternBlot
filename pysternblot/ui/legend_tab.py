@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QScrollArea, QFrame, QCheckBox, QDoubleSpinBox
+    QScrollArea, QFrame, QDoubleSpinBox
 )
 from PySide6.QtCore import Signal, Qt
 
@@ -244,12 +244,6 @@ class LegendRowEditor(QFrame):
         self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
         header.addWidget(self.font_size_spin)
 
-        header.addSpacing(12)
-        self.underline_cb = QCheckBox("Underline")
-        self.underline_cb.setChecked(bool(getattr(self.row, "underline", False)))
-        self.underline_cb.toggled.connect(self._on_underline_toggled)
-        header.addWidget(self.underline_cb)
-
         # main row layout: Left | cells... | Right
         self.row_layout = QHBoxLayout()
         self.row_layout.setSpacing(8)
@@ -319,7 +313,6 @@ class LegendRowEditor(QFrame):
     def _sync_from_widgets(self):
         self.row.left = self.left_combo.currentText().strip()
         self.row.right = self.right_combo.currentText().strip()
-        self.row.underline = bool(self.underline_cb.isChecked())
 
         cells = []
         for cb in self._cell_combos:
@@ -406,10 +399,6 @@ class LegendRowEditor(QFrame):
             cb.setCurrentText(txt)
 
         self._sync_from_widgets()
-        self.on_row_changed()
-
-    def _on_underline_toggled(self, checked: bool):
-        self.row.underline = bool(checked)
         self.on_row_changed()
 
     def _on_font_size_changed(self, value: float):

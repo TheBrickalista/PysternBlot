@@ -106,7 +106,7 @@ class LegendRow(BaseModel):
     left: str = ""
     cells: List[str] = Field(default_factory=list)
     right: str = ""
-    underline: bool = False
+    underline: bool = False  # deprecated — kept for backward compat (existing project.json files); renderer uses cell_groups instead
     font_size_pt: float | None = None
     cell_groups: List[int] = Field(default_factory=list)
 

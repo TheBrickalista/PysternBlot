@@ -6,9 +6,8 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Literal
-from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Literal, Any
+from pydantic import BaseModel, Field
 
 class Group(BaseModel):
     label: str

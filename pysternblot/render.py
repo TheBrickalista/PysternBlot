@@ -19,7 +19,6 @@ from .models import Blot, Crop, MarkerBand, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
-    load_image_uint16,
     load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
@@ -196,8 +195,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     x0, y0 = 20.0, 20.0
     ladder_w = float(s.ladder_col_width_px)
     gap_between_blots = float(s.gap_between_blots_px)
-    protein_w = float(s.protein_col_width_px)
-
     left_col_x = x0
     img_col_x = x0 + ladder_w
     col_gap = 10.0  # gap between image and protein column
@@ -454,8 +451,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
 
             _row_crop = blot.get_channel_crop(ch.channel_index) if ch is not None else blot.crop
             crop_y = float(getattr(_row_crop, "y", 0.0))
-            crop_h_scene = float(pm.height())
-
             tick_x0 = left_col_x + 45.0
             tick_x1 = img_col_x - 8.0
 

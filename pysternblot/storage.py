@@ -37,7 +37,6 @@ class ImportArchiveResult:
     integrity_errors: list[str] = field(default_factory=list)
 
 from .image_utils import (
-    load_image_uint16,
     load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,

@@ -304,6 +304,49 @@ class TestLegendRow:
 
 
 # ===========================================================================
+# LegendRow.cell_groups
+# ===========================================================================
+
+class TestLegendRowCellGroups:
+
+    def test_cell_groups_defaults_to_empty(self):
+        row = LegendRow()
+        assert row.cell_groups == []
+
+    def test_backward_compat_no_cell_groups_key(self):
+        """Old project.json without cell_groups deserializes with []."""
+        d = LegendRow(cells=["A", "B"], underline=True).model_dump()
+        d.pop("cell_groups", None)
+        restored = LegendRow.model_validate(d)
+        assert restored.cell_groups == []
+        assert restored.underline is True  # unrelated field unaffected
+
+    def test_cell_groups_json_roundtrip(self):
+        row = LegendRow(
+            cells=["WT", "Sg1", "Sg2", "rPAI1"],
+            cell_groups=[0, 1, 1, 0],
+        )
+        restored = LegendRow.model_validate_json(row.model_dump_json())
+        assert restored.cells == ["WT", "Sg1", "Sg2", "rPAI1"]
+        assert restored.cell_groups == [0, 1, 1, 0]
+
+    def test_cell_groups_multiple_groups(self):
+        row = LegendRow(
+            cells=["A", "B", "C", "D", "E", "F"],
+            cell_groups=[1, 1, 0, 2, 2, 2],
+        )
+        restored = LegendRow.model_validate(row.model_dump())
+        assert restored.cell_groups == [1, 1, 0, 2, 2, 2]
+
+    def test_underline_bool_still_persists(self):
+        """underline: bool kept for backward JSON compat even though renderer ignores it."""
+        row = LegendRow(underline=True, cell_groups=[1, 1])
+        restored = LegendRow.model_validate(row.model_dump())
+        assert restored.underline is True
+        assert restored.cell_groups == [1, 1]
+
+
+# ===========================================================================
 # OperationLogEntry
 # ===========================================================================
 

@@ -5,12 +5,13 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox,
-    QScrollArea, QFrame, QCheckBox, QDoubleSpinBox
+    QScrollArea, QFrame, QDoubleSpinBox
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 
 from .widgets import EditableHistoryCombo
 from ..models import LegendRow
+from ..render import derive_lane_groups
 
 class LegendTab(QWidget):
     """
@@ -243,12 +244,6 @@ class LegendRowEditor(QFrame):
         self.font_size_spin.valueChanged.connect(self._on_font_size_changed)
         header.addWidget(self.font_size_spin)
 
-        header.addSpacing(12)
-        self.underline_cb = QCheckBox("Underline")
-        self.underline_cb.setChecked(bool(getattr(self.row, "underline", False)))
-        self.underline_cb.toggled.connect(self._on_underline_toggled)
-        header.addWidget(self.underline_cb)
-
         # main row layout: Left | cells... | Right
         self.row_layout = QHBoxLayout()
         self.row_layout.setSpacing(8)
@@ -268,6 +263,14 @@ class LegendRowEditor(QFrame):
         self.row_layout.addSpacing(8)
         self.row_layout.addWidget(QLabel("Right"))
         self.row_layout.addWidget(self.right_combo, 1)
+
+        hint = QLabel(
+            "Group #: 0 = ungrouped. Same # on adjacent cells forms a group "
+            "(≥2 cells get an underline). An upper-row cell with that # labels the group."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #6b7280; font-size: 10px;")
+        outer.addWidget(hint)
 
         self._rebuild_cells()
 
@@ -311,20 +314,25 @@ class LegendRowEditor(QFrame):
         self.row.left = self.left_combo.currentText().strip()
         self.row.right = self.right_combo.currentText().strip()
 
-        # NEW: always sync underline state
-        self.row.underline = bool(self.underline_cb.isChecked())
-
         cells = []
         for cb in self._cell_combos:
             cells.append(cb.currentText().strip())
         self.row.cells = cells
 
+        self.row.cell_groups = [int(s.value()) for s in self._cell_group_spins]
+        self._update_group_warnings()
+
     def _on_n_cells_changed(self, n: int):
-        # resize row.cells to n
         while len(self.row.cells) < n:
             self.row.cells.append("")
         while len(self.row.cells) > n:
             self.row.cells.pop()
+
+        # Keep cell_groups length in sync so spinboxes init from the right values
+        while len(self.row.cell_groups) < n:
+            self.row.cell_groups.append(0)
+        while len(self.row.cell_groups) > n:
+            self.row.cell_groups.pop()
 
         self._rebuild_cells()
         self._sync_from_widgets()
@@ -340,28 +348,48 @@ class LegendRowEditor(QFrame):
     def _rebuild_cells(self):
         self._clear_cells_container()
         self._cell_combos = []
+        self._cell_group_spins = []
+
+        _cg = list(getattr(self.row, "cell_groups", []) or [])
 
         for i in range(len(self.row.cells)):
+            # Each cell slot: vertical widget holding combo (top) + group spinbox (bottom)
+            cell_widget = QWidget()
+            cell_vbox = QVBoxLayout(cell_widget)
+            cell_vbox.setContentsMargins(0, 0, 0, 0)
+            cell_vbox.setSpacing(2)
+
+            # --- text combo ---
             cb = EditableHistoryCombo(self.get_suggestions())
             cb.setMinimumWidth(90)
             cb.setCurrentText(self.row.cells[i] or "")
-
-            # 1) commit (typing / enter / focus-out depending on your widget)
             cb.committed.connect(lambda txt, idx=i, cbox=cb: self._on_cell_committed(idx, cbox, txt))
 
-            # 2) NEW: selecting an item from dropdown should refresh immediately
             def _on_pick(_=None, idx=i, cbox=cb):
                 self._sync_from_widgets()
                 self.on_row_changed()
 
-            # depending on how EditableHistoryCombo is implemented, one or both exist
             if hasattr(cb, "activated"):
                 cb.activated.connect(_on_pick)
             if hasattr(cb, "currentIndexChanged"):
                 cb.currentIndexChanged.connect(_on_pick)
 
             self._cell_combos.append(cb)
-            self.cells_container.addWidget(cb, 1)
+            cell_vbox.addWidget(cb)
+
+            # --- group # spinbox ---
+            spin = QSpinBox()
+            spin.setRange(0, 20)
+            spin.setFixedWidth(54)
+            spin.setAlignment(Qt.AlignCenter)
+            spin.setValue(_cg[i] if i < len(_cg) else 0)
+            spin.valueChanged.connect(self._on_group_spin_changed)
+            self._cell_group_spins.append(spin)
+            cell_vbox.addWidget(spin, 0, Qt.AlignHCenter)
+
+            self.cells_container.addWidget(cell_widget, 1)
+
+        self._update_group_warnings()
 
     def _on_cell_committed(self, idx: int, cb: EditableHistoryCombo, txt: str):
         txt = (txt or "").strip()
@@ -373,10 +401,26 @@ class LegendRowEditor(QFrame):
         self._sync_from_widgets()
         self.on_row_changed()
 
-    def _on_underline_toggled(self, checked: bool):
-        self.row.underline = bool(checked)
-        self.on_row_changed()
-
     def _on_font_size_changed(self, value: float):
         self.row.font_size_pt = float(value)
         self.on_row_changed()
+
+    def _on_group_spin_changed(self, _value: int):
+        self._sync_from_widgets()
+        self.on_row_changed()
+
+    def _update_group_warnings(self):
+        """Tint spinboxes whose group id is non-contiguous (will not draw underline)."""
+        cg = list(getattr(self.row, "cell_groups", []) or [])
+        _, errors = derive_lane_groups(cg)
+        for spin in getattr(self, "_cell_group_spins", []):
+            gid = spin.value()
+            if gid != 0 and gid in errors:
+                spin.setStyleSheet("background-color: #fef3c7; color: #92400e;")
+                spin.setToolTip(
+                    "This group number is non-contiguous — no underline will be drawn. "
+                    "Group numbers must be on adjacent cells."
+                )
+            else:
+                spin.setStyleSheet("")
+                spin.setToolTip("")

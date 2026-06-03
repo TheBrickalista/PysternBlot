@@ -25,12 +25,15 @@ class _OverlayLadderMixin:
         if getattr(blot, "overlay_ladder", None) is None:
             self.overlay_ladder_show_labels_cb.blockSignals(True)
             self.overlay_ladder_only_highlight_cb.blockSignals(True)
+            self.overlay_ladder_right_side_cb.blockSignals(True)
 
             self.overlay_ladder_show_labels_cb.setChecked(True)
             self.overlay_ladder_only_highlight_cb.setChecked(False)
+            self.overlay_ladder_right_side_cb.setChecked(False)
 
             self.overlay_ladder_show_labels_cb.blockSignals(False)
             self.overlay_ladder_only_highlight_cb.blockSignals(False)
+            self.overlay_ladder_right_side_cb.blockSignals(False)
             return
 
         ladder = blot.overlay_ladder
@@ -43,12 +46,15 @@ class _OverlayLadderMixin:
 
         self.overlay_ladder_show_labels_cb.blockSignals(True)
         self.overlay_ladder_only_highlight_cb.blockSignals(True)
+        self.overlay_ladder_right_side_cb.blockSignals(True)
 
         self.overlay_ladder_show_labels_cb.setChecked(bool(ladder.show_labels))
         self.overlay_ladder_only_highlight_cb.setChecked(bool(ladder.show_only_highlighted))
+        self.overlay_ladder_right_side_cb.setChecked(ladder.side == "right")
 
         self.overlay_ladder_show_labels_cb.blockSignals(False)
         self.overlay_ladder_only_highlight_cb.blockSignals(False)
+        self.overlay_ladder_right_side_cb.blockSignals(False)
 
     def _save_overlay_ladder_options(self):
         blot = self._get_active_blot()
@@ -75,6 +81,7 @@ class _OverlayLadderMixin:
             bands=existing_bands,
             show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
             show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+            side="right" if self.overlay_ladder_right_side_cb.isChecked() else "left",
         )
 
         new_value = blot.overlay_ladder.model_dump()
@@ -359,6 +366,7 @@ class _OverlayLadderMixin:
             bands=existing,
             show_labels=bool(self.overlay_ladder_show_labels_cb.isChecked()),
             show_only_highlighted=bool(self.overlay_ladder_only_highlight_cb.isChecked()),
+            side="right" if self.overlay_ladder_right_side_cb.isChecked() else "left",
         )
 
         self.log_operation(

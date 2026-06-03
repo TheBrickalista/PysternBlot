@@ -19,7 +19,6 @@ from .models import Blot, Crop, MarkerBand, Project, LegendRow
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
-    load_image_uint16,
     load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
@@ -148,6 +147,33 @@ def _load_pixmap_from_path(path: Path) -> QPixmap:
         return QPixmap()
 
 
+def derive_lane_groups(
+    cell_groups: list[int],
+) -> tuple[dict[int, tuple[int, int]], set[int]]:
+    """Given per-lane group ids (0 = ungrouped), return:
+      spans  — {group_id: (start_lane, end_lane)} for valid groups
+               (contiguous run of >=2 lanes sharing that id).
+      errors — set of group_ids whose occurrences are non-contiguous.
+
+    Rules:
+      - id 0 is always ignored.
+      - Contiguous run of exactly 1 lane: valid but not in spans, not in errors.
+      - Contiguous run of >=2 lanes: in spans.
+      - Non-contiguous occurrences: in errors, not in spans.
+    """
+    spans: dict[int, tuple[int, int]] = {}
+    errors: set[int] = set()
+    ids = {g for g in cell_groups if g != 0}
+    for gid in ids:
+        positions = [i for i, g in enumerate(cell_groups) if g == gid]
+        contiguous = positions[-1] - positions[0] == len(positions) - 1
+        if not contiguous:
+            errors.add(gid)
+        elif len(positions) >= 2:
+            spans[gid] = (positions[0], positions[-1])
+    return spans, errors
+
+
 def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     """
     Final Result view = (optional) legend + stacked cropped previews + protein labels.
@@ -169,8 +195,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     x0, y0 = 20.0, 20.0
     ladder_w = float(s.ladder_col_width_px)
     gap_between_blots = float(s.gap_between_blots_px)
-    protein_w = float(s.protein_col_width_px)
-
     left_col_x = x0
     img_col_x = x0 + ladder_w
     col_gap = 10.0  # gap between image and protein column
@@ -242,29 +266,29 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         t.setPos(col_x + (col_w - br.width()) / 2.0, y)
 
     # ---- legend row renderer ----
-    def _draw_legend_row(row: LegendRow, y: float) -> float:
+    def _draw_legend_row(
+        row: LegendRow,
+        y: float,
+        lane_row: LegendRow | None = None,
+        underline_above: bool = False,
+    ) -> float:
         """
         Returns next y.
-        Placement strategy:
-        1) if len(cells) == n_lanes -> per-lane centers
-        2) elif len(cells) == len(groups) -> per-group centers (group spans use n_lanes)
-        3) else -> evenly distribute across image width
+
+        lane_row: the row that provides lane geometry (cell count, cell_groups).
+          - Upper-only block: pass lane_row=upper[-1] for every upper row; the last
+            upper row is the per-lane reference, all rows above it group over it.
+          - Mixed (upper + lower): pass lane_row=lower_rows[0] for upper rows.
+          - Lower rows: pass lane_row=row (self-referential).
+
+        underline_above: when True the underline sits above this row's text (y - 6),
+          placing it between group-label rows above and per-lane labels below.
+          When False (default / lower-rows path) it sits below (y + text_h + 4).
+
+        Underlines fire only when lane_row is row (i.e. this IS the lane_ref row).
         """
-        
         row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
         row_font = QFont(s.font_family, int(row_font_size))
-
-        # ----- lane/group geometry -----
-        hb = project.panel.lane_layout.header_block
-        groups = list(getattr(hb, "groups", []) or [])
-        n_lanes = int(hb.total_lanes() or 0)
-
-        cells = list(row.cells or [])
-        n_cells = len(cells)
-
-        if n_lanes <= 0:
-            # fallback: at least keep things on the image
-            n_lanes = max(1, n_cells)
 
         # helper: accurate text centering using boundingRect (not QFontMetrics)
         def _add_text_centered(text: str, cx: float, y0: float) -> None:
@@ -284,44 +308,49 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             br = t.boundingRect()
             t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
 
-        # --- measure one text height once (and reuse) ---
+        # --- measure text height once ---
         tmp = scene.addText("Ag", row_font)
         text_h = tmp.boundingRect().height()
         scene.removeItem(tmp)
+
+        # ----- lane geometry from the lane reference row -----
+        _lr = lane_row if lane_row is not None else row
+        n_lanes = max(1, len(_lr.cells)) if _lr.cells else 1
+        lane_w = img_col_w / float(n_lanes)
+
+        _raw_lg = list(getattr(_lr, "cell_groups", []) or [])
+        _lane_cell_groups = (_raw_lg + [0] * n_lanes)[:n_lanes]
+        spans, _errors = derive_lane_groups(_lane_cell_groups)
+
+        # ----- this row's cells and per-cell group ids -----
+        cells = list(row.cells or [])
+        n_cells = len(cells)
+        _raw_cg = list(getattr(row, "cell_groups", []) or [])
+        cell_group_ids = (_raw_cg + [0] * n_cells)[:n_cells]
 
         # Left label (centered in ladder column)
         if row.left:
             _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
 
-        # ----- compute centers for the "cells" across the image column -----
+        # ----- compute per-cell centers -----
+        # Lane-reference row: every cell sits at its own per-lane position so that
+        # per-lane labels (e.g. "Control"/"PNGase F") do not collapse to the group
+        # center and overprint.  Group ids on this row drive the underline only.
+        # Non-lane-ref rows (group-label rows above): span-center when grouped.
+        is_lane_ref_row = (row is _lr)
+        own_step = img_col_w / float(n_cells) if n_cells > 0 else img_col_w
         centers: list[float] = []
+        for i in range(n_cells):
+            gid = cell_group_ids[i]
+            if (not is_lane_ref_row) and gid != 0 and gid in spans:
+                a, b = spans[gid]
+                cx = img_col_x + (a + b + 1) / 2.0 * lane_w
+            else:
+                # Lane-ref: per-lane center (lane_w = img_col_w/n_lanes = own_step here).
+                # Non-lane-ref ungrouped: per-cell even distribution.
+                cx = img_col_x + (i + 0.5) * (lane_w if is_lane_ref_row else own_step)
+            centers.append(cx)
 
-        # Case 1: per-lane labels
-        if n_cells == n_lanes:
-            lane_w = img_col_w / float(n_lanes)
-            centers = [img_col_x + (i + 0.5) * lane_w for i in range(n_cells)]
-
-        # Case 2: per-group labels (best when n_cells == len(groups))
-        elif groups and n_cells == len(groups):
-            lane_w = img_col_w / float(n_lanes)
-            lane_cursor = 0
-            for g in groups:
-                span = int(getattr(g, "n_lanes", 1) or 1)
-                start = lane_cursor
-                end = lane_cursor + span
-                cx = img_col_x + ((start + end) / 2.0) * lane_w
-                centers.append(cx)
-                lane_cursor = end
-
-            centers = [min(max(img_col_x, c), img_col_x + img_col_w) for c in centers]
-
-        # Case 3: evenly distribute across full image width
-        else:
-            if n_cells > 0:
-                step = img_col_w / float(n_cells)
-                centers = [img_col_x + (i + 0.5) * step for i in range(n_cells)]
-
-        # draw center cells
         for cx, txt in zip(centers, cells):
             txt = (txt or "").strip()
             if not txt:
@@ -332,69 +361,31 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         if row.right:
             _add_text_left(row.right, right_col_x, y)
 
-        # --- underline groups if requested for this row ---
+        # ----- underlines: lane-reference row only -----
         underline_drawn = False
-        if bool(getattr(row, "underline", False)):
-
-            # slightly below the text row
-            underline_y = y + text_h + 4.0
-
+        if lane_row is row and spans:
+            # Option (a): when we are the last row of an upper block that has rows
+            # above it, draw the line ABOVE our text so it sits in the gap between
+            # group labels and per-lane labels.  For lower-rows (underline_above=False)
+            # keep the original below-text position.
+            underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
             pen = QPen(Qt.black, 2)
             pen.setCapStyle(Qt.FlatCap)
-
-            gap_px = 40.0  # visible gap between segments
+            gap_px = 40.0
             pad = gap_px / 2.0
+            for gid, (a, b) in spans.items():
+                x_start = img_col_x + a * lane_w
+                x_end = img_col_x + (b + 1) * lane_w
+                x1 = x_start + pad
+                x2 = x_end - pad
+                if x2 > x1 + 1.0:
+                    scene.addLine(x1, underline_y, x2, underline_y, pen)
+                    underline_drawn = True
 
-            # Prefer true header groups only if there are *multiple* groups
-            use_header_groups = bool(groups) and len(groups) > 1
-
-            if use_header_groups and n_lanes > 0:
-                # --- group-based segments using lane geometry ---
-                lane_w = img_col_w / float(n_lanes)
-                lane_cursor = 0
-
-                for g in groups:
-                    span = int(getattr(g, "n_lanes", 1) or 1)
-
-                    x_start = img_col_x + lane_cursor * lane_w
-                    x_end = img_col_x + (lane_cursor + span) * lane_w
-
-                    x1 = x_start + pad
-                    x2 = x_end - pad
-
-                    if x2 > x1 + 1.0:
-                        scene.addLine(x1, underline_y, x2, underline_y, pen)
-                        underline_drawn = True
-
-                    lane_cursor += span
-
-            else:
-                # --- fallback: derive segments from *this row's* non-empty cells ---
-                blocks = [c for c in (cells or []) if (c or "").strip()]
-                n_blocks = len(blocks)
-
-                if n_blocks <= 1:
-                    # one block -> one underline across entire image column
-                    x1 = img_col_x + pad
-                    x2 = img_col_x + img_col_w - pad
-                    if x2 > x1 + 1.0:
-                        scene.addLine(x1, underline_y, x2, underline_y, pen)
-                        underline_drawn = True
-                else:
-                    block_w = img_col_w / float(n_blocks)
-
-                    for i in range(n_blocks):
-                        x_start = img_col_x + i * block_w
-                        x_end = img_col_x + (i + 1) * block_w
-
-                        x1 = x_start + pad
-                        x2 = x_end - pad
-
-                        if x2 > x1 + 1.0:
-                            scene.addLine(x1, underline_y, x2, underline_y, pen)
-                            underline_drawn = True
-                # row spacing (account for underline)
-        extra = 14.0 if underline_drawn else 8.0
+        # When the underline is above our text it is already in the preceding gap,
+        # so no extra trailing space is needed.  Only inflate spacing for the
+        # original below-text case.
+        extra = 14.0 if (underline_drawn and not underline_above) else 8.0
         return y + text_h + extra
     
     
@@ -403,8 +394,21 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     # ---- upper legend ----
     legend = getattr(project.panel, "legend", None)
     if legend and getattr(legend, "upper_rows", None):
-        for row in legend.upper_rows:
-            y = _draw_legend_row(row, y)
+        upper = legend.upper_rows
+        if getattr(legend, "lower_rows", None):
+            # Mixed: upper rows reference the first lower row for lane geometry.
+            # Underline guard (lane_row is row) never fires here — lower rows draw theirs.
+            _lane_ref = legend.lower_rows[0]
+            for row in upper:
+                y = _draw_legend_row(row, y, lane_row=_lane_ref)
+        else:
+            # Upper-only (common case): the last upper row is the per-lane reference.
+            # Every row above it groups over it.  Underline draws above the lane_ref
+            # text only when there are group-label rows above it.
+            _lane_ref = upper[-1]
+            _ul_above = len(upper) > 1
+            for row in upper:
+                y = _draw_legend_row(row, y, lane_row=_lane_ref, underline_above=_ul_above)
         y += 10.0  # gap before first blot
 
     # ---- render rows ----
@@ -447,8 +451,6 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
 
             _row_crop = blot.get_channel_crop(ch.channel_index) if ch is not None else blot.crop
             crop_y = float(getattr(_row_crop, "y", 0.0))
-            crop_h_scene = float(pm.height())
-
             tick_x0 = left_col_x + 45.0
             tick_x1 = img_col_x - 8.0
 
@@ -529,7 +531,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     if legend and getattr(legend, "lower_rows", None):
         y += 10.0
         for row in legend.lower_rows:
-            y = _draw_legend_row(row, y)
+            y = _draw_legend_row(row, y, lane_row=row)
 
     return scene
 
@@ -725,15 +727,20 @@ def build_provenance_scene(
         label_font = QFont(s.font_family, int(s.kda_label_font_size_pt))
         label_font.setBold(True)
 
-        # For now, draw on the left of the image.
-        tick_x0 = x0 - 65.0
-        tick_x1 = x0 - 15.0
-        label_x = x0 - 125.0
+        TICK_LENGTH = 50.0
+        TICK_GAP    = 15.0
+        LABEL_GAP   =  4.0
+
+        img_right = x0 + float(pm.width())
+
+        if getattr(ladder, "side", "left") == "right":
+            tick_x0 = img_right + TICK_GAP
+            tick_x1 = img_right + TICK_GAP + TICK_LENGTH
+        else:
+            tick_x1 = x0 - TICK_GAP
+            tick_x0 = x0 - TICK_GAP - TICK_LENGTH
 
         for assignment in ladder.bands:
-            if not bool(getattr(assignment, "show_in_final", True)):
-                continue
-
             y = y0 + float(assignment.y_px)
             kda = float(assignment.kda)
 
@@ -767,6 +774,10 @@ def build_provenance_scene(
                 text_item = scene.addText(label, label_font)
                 text_item.setDefaultTextColor(Qt.black)
                 br = text_item.boundingRect()
-                text_item.setPos(label_x, y - br.height() / 2.0)
+
+                if getattr(ladder, "side", "left") == "right":
+                    text_item.setPos(tick_x1 + LABEL_GAP, y - br.height() / 2.0)
+                else:
+                    text_item.setPos(tick_x0 - br.width() - LABEL_GAP, y - br.height() / 2.0)
 
     return scene

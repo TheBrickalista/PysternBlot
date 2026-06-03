@@ -6,9 +6,8 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Literal
-from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Literal, Any
+from pydantic import BaseModel, Field
 
 class Group(BaseModel):
     label: str
@@ -28,10 +27,15 @@ class SpanRow(BaseModel):
     spans: List[Span]
 
 class HeaderBlock(BaseModel):
+    """Legacy legend grouping structure. Retained for backward compatibility with
+    existing project.json files (panel.header_block is a required, serialized field),
+    but NO LONGER used for legend rendering — current legends are driven by
+    LegendRow.cell_groups (see render.derive_lane_groups). Do not remove without a
+    schema migration for existing projects."""
     left_title: str
-    groups: List[Group]
-    condition_rows: List[ConditionRow]
-    span_rows: List[SpanRow] = []
+    groups: List[Group]        # legacy — part of HeaderBlock, not read by renderer
+    condition_rows: List[ConditionRow]  # legacy — part of HeaderBlock, not read by renderer
+    span_rows: List[SpanRow] = []       # legacy — part of HeaderBlock, not read by renderer
 
     def total_lanes(self) -> int:
         return sum(g.n_lanes for g in self.groups)
@@ -106,8 +110,9 @@ class LegendRow(BaseModel):
     left: str = ""
     cells: List[str] = Field(default_factory=list)
     right: str = ""
-    underline: bool = False   
-    font_size_pt: float | None = None # <- NEW
+    underline: bool = False  # deprecated — kept for backward compat (existing project.json files); renderer uses cell_groups instead
+    font_size_pt: float | None = None
+    cell_groups: List[int] = Field(default_factory=list)
 
 class LegendSettings(BaseModel):
     mode: Literal["protein", "dna"] = "protein"
@@ -154,6 +159,7 @@ class Blot(BaseModel):
     overlay_ladder: Optional[OverlayLadder] = None
     included_in_final: bool = True
     antibody_name: str = ""
+    display_name: Optional[str] = None
     modality: Literal["ecl", "nir_fluorescence"] = "ecl"
     channels: List[BlotChannel] = Field(default_factory=list)
 
@@ -226,6 +232,7 @@ class AssetEntry(BaseModel):
     stored_original_path: str
     original_source_path: Optional[str] = None
     stored_preview_path: Optional[str] = None
+    acquisition_metadata: Optional[dict] = None
 
 class ProjectMeta(BaseModel):
     id: str

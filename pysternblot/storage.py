@@ -37,7 +37,6 @@ class ImportArchiveResult:
     integrity_errors: list[str] = field(default_factory=list)
 
 from .image_utils import (
-    load_image_uint16,
     load_image_as_uint16,
     apply_levels_uint16,
     rotate_uint16,
@@ -120,6 +119,93 @@ def parse_typhoon_tag270(tag_text: str) -> dict:
     except Exception:
         pass
     return result
+
+
+def parse_typhoon_inf(inf_path: Path) -> dict:
+    """Parse an Amersham Typhoon .inf sidecar.
+
+    The file has an optional header block of bare values, then a
+    '*** more info ***' separator, then key=value lines prefixed with
+    'S,' or 'H,' (e.g. 'H,ScaleType=Linear', 'S,V=399').
+
+    Returns a dict of selected acquisition-provenance fields, or {} if
+    the file is absent, unreadable, or yields no parseable data.
+    """
+    try:
+        if not inf_path.exists():
+            return {}
+        text = inf_path.read_text(encoding="utf-8", errors="replace")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Only parse the structured key=value section.
+        if "*** more info ***" in text:
+            _, _, kv_section = text.partition("*** more info ***")
+        else:
+            kv_section = text
+
+        raw: dict[str, str] = {}
+        for line in kv_section.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Strip the optional 'S,' / 'H,' type prefix.
+            if len(line) >= 2 and line[1] == "," and line[0].upper() in ("S", "H"):
+                line = line[2:]
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            raw[key.strip()] = value.strip()
+
+        if not raw:
+            return {}
+
+        def _get(k: str):
+            v = raw.get(k)
+            return v if v else None
+
+        result: dict = {}
+
+        if _get("ScaleType"):
+            result["scale_type"] = _get("ScaleType")
+        if _get("ScanMode"):
+            result["scan_mode"] = _get("ScanMode")
+        if _get("ScanSpeed"):
+            result["scan_speed"] = _get("ScanSpeed")
+        if _get("LaserName"):
+            result["laser_name"] = _get("LaserName")
+        if _get("FilterName"):
+            result["filter_name"] = _get("FilterName")
+        if _get("V"):
+            try:
+                result["pmt_voltage"] = int(raw["V"])
+            except (ValueError, TypeError):
+                result["pmt_voltage"] = raw["V"]
+        if _get("LaserPowerMode"):
+            result["laser_power_mode"] = _get("LaserPowerMode")
+        if _get("Hash"):
+            result["instrument_hash"] = _get("Hash")
+        if _get("Software"):
+            result["software"] = _get("Software")
+        if _get("SerialNumber"):
+            result["serial_number"] = _get("SerialNumber")
+
+        corrections = {
+            k: v for k, v in raw.items()
+            if re.match(r"Correction\d+|Shading\d*", k)
+        }
+        if corrections:
+            result["corrections"] = corrections
+
+        signal_process = {
+            k: v for k, v in raw.items()
+            if re.match(r"SignalProcess\d*$", k)
+        }
+        if signal_process:
+            result["signal_process"] = signal_process
+
+        return result
+    except Exception:
+        return {}
 
 
 def sha256_file(path: str) -> str:
@@ -515,19 +601,28 @@ class Workspace:
         self,
         file_paths: list[Path],
         project: Project,
-    ) -> list[BlotChannel]:
+    ) -> tuple[list[BlotChannel], dict[str, dict]]:
         """
         Import 1 or 2 Typhoon NIR channel files into the workspace and return
-        a list of BlotChannel objects sorted by channel_index ascending.
+        a (channels, sha_to_inf_meta) tuple.
+
+        channels           — BlotChannel objects sorted by channel_index ascending.
+        sha_to_inf_meta    — {sha256: acquisition_metadata} for any channel whose
+                             sibling .inf sidecar was found and parsed; empty dict
+                             when no .inf is present (clean no-op).
 
         Each file is hashed and stored via import_asset (SHA256-deduplicated).
-        Metadata is read from TIFF Tag 270 via parse_typhoon_tag270.
+        Metadata is read from TIFF Tag 270 via parse_typhoon_tag270 and from the
+        sibling .inf sidecar (same stem, .inf extension) via parse_typhoon_inf.
+        The .inf lookup is performed here against the original source path fp,
+        before the caller creates AssetEntry objects; the asset store holds only
+        the .tif.
         One OperationLogEntry is appended to project.operation_log per channel.
-        The caller is responsible for attaching the returned channels to a Blot
-        and saving the project.
+        The caller is responsible for attaching the returned channels to a Blot,
+        populating project.assets, and saving the project.
         """
-        # Collect (channel_index, sha256, parsed_meta) for each file.
-        entries: list[tuple[int, str, dict]] = []
+        # Collect (channel_index, sha256, tag270_meta, inf_meta) per file.
+        entries: list[tuple[int, str, dict, dict]] = []
         for i, fp in enumerate(file_paths):
             sha, _ = self.import_asset(str(fp))
             meta: dict = {}
@@ -537,11 +632,19 @@ class Workspace:
                 meta = parse_typhoon_tag270(tag270)
             except Exception:
                 pass
+
+            # .inf sidecar: same stem, .inf extension — fp.with_suffix handles
+            # the bracketed channel names (e.g. [IRlong].tif → [IRlong].inf).
+            inf_meta: dict = {}
+            inf_path = fp.with_suffix(".inf")
+            if inf_path.exists():
+                inf_meta = parse_typhoon_inf(inf_path)
+
             # Fall back to file order if channel_index is not in metadata.
             idx = meta.get("channel_index")
             if idx is None:
                 idx = i
-            entries.append((idx, sha, meta))
+            entries.append((idx, sha, meta, inf_meta))
 
         entries.sort(key=lambda e: e[0])
 
@@ -551,7 +654,9 @@ class Workspace:
             .isoformat()
         )
         channels: list[BlotChannel] = []
-        for channel_index, sha, meta in entries:
+        sha_to_inf: dict[str, dict] = {}
+
+        for channel_index, sha, meta, inf_meta in entries:
             filter_name = meta.get("filter_name") or ""
             wavelength_nm = meta.get("laser_nm")
             channel_total = meta.get("channel_total") or len(file_paths)
@@ -560,6 +665,9 @@ class Workspace:
                 f"Typhoon: {filter_name}, {wavelength_nm}nm, "
                 f"channel {channel_index + 1}/{channel_total}"
             )
+            if inf_meta.get("scale_type"):
+                note += f", scale={inf_meta['scale_type']}"
+
             project.operation_log.append(
                 OperationLogEntry(
                     timestamp_utc=now,
@@ -577,7 +685,10 @@ class Workspace:
                     filter_name=filter_name or None,
                 )
             )
-        return channels
+            if inf_meta:
+                sha_to_inf[sha] = inf_meta
+
+        return channels, sha_to_inf
 
     def import_nir_blot_odyssey(
         self,

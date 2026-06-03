@@ -11,21 +11,21 @@ authors:
     orcid: "https://orcid.org/0000-0001-9756-2082"
 repository-code: "https://github.com/TheBrickalista/PysternBlot"
 license: GPL-3.0
-version: 1.0.3
-date-released: "2026-05-21"
+version: 1.0.4
+date-released: "2026-06-03"
 abstract: >
   PysternBlot is a GPLv3 Python GUI application for building
   publication-ready Western blot panels with hierarchical
   lane annotations. It supports ECL and NIR fluorescence
   imaging modalities and provides tools for image adjustment,
   cropping, rotation, and multi-channel TIFF handling.
-  Version 1.0.3 adds 8-bit TIFF support with mandatory quality
-  warnings on import and flagging in integrity reports and at
-  export, Inkscape-style crop handles (corner and edge midpoint
-  resize with generous hit zones), project archiving (soft-hide
-  and restore without deleting data), and editable levels
-  controls where Black and White values can be typed directly
-  as well as adjusted via slider.
+  Version 1.0.4 adds a live pixel-intensity histogram with
+  draggable gate lines, gamma-adjustment integrity flagging
+  per journal guidelines, asymmetric legend grouping via
+  per-cell group numbers, Typhoon .inf sidecar metadata
+  capture in the integrity report, blot display names, a
+  saved-dropdown-entries manager, and a dedicated Library tab
+  for project navigation.
 keywords:
   - western blot
   - bioimaging

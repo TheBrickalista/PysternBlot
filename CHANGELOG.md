@@ -6,6 +6,60 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.0.4] — 2026-06-03
+
+### Added
+- **Levels histogram** — live pixel-intensity histogram in the Original Image tab alongside
+  the levels sliders, with log/linear scale toggle, adaptive x-axis zoom to the gate
+  window, draggable gate lines linked to the sliders, and 1024 bins. Sliders relabeled
+  "Min"/"Max" (from "Black"/"White") for correctness under inversion.
+- **Gamma integrity flag** — non-default gamma is flagged in the integrity report
+  (per-blot and per-NIR-channel) and shown as a live amber badge in the UI, with a
+  note that gamma adjustment must be disclosed per journal image-integrity guidelines
+  (Nature, JCB).
+- **Blot display name** — blots can be given a cosmetic display label; the original
+  filename is preserved in the integrity report and tooltip. Rename is logged as an
+  operation.
+- **Typhoon `.inf` sidecar capture** — on NIR Typhoon import, the sibling `.inf` sidecar
+  is parsed and key acquisition fields (scale type, scan mode, PMT/laser settings,
+  corrections) are stored per-asset and surfaced in the integrity report (scale type
+  shown prominently).
+- **Asymmetric legend grouping** — legend cells can be grouped via per-cell group numbers;
+  contiguous same-group cells (≥ 2) draw an underline with the group label centred over
+  the span. Supports mixed group sizes and ungrouped singletons. Replaces the old
+  all-or-nothing per-row underline flag.
+- **Saved-dropdown-entries manager** — Preferences tab includes a manager to delete,
+  rename, and reorder entries in the legend / protein-label / antibody-name autocomplete
+  histories.
+- **Library tab** — the project list moved from Preferences into its own "Library" tab
+  (immediately after Home). Tab order reworked to
+  Home → Library → Figure → Original Image → Legend → Preferences → About.
+- **PyPI metadata** — `pyproject.toml` now includes `authors`, `keywords`, `classifiers`,
+  and `[project.urls]` for a complete PyPI page.
+
+### Fixed
+- **Windows ellipsis truncation** — legend and blot dropdown popups no longer truncate
+  long filenames with an ellipsis on Windows.
+
+### Removed
+- **`scikit-image` dependency** — declared in `pyproject.toml` but never imported; removed.
+- **Per-row "Underline" checkbox** — dead checkbox removed from the legend row editor;
+  rendering is now driven entirely by `cell_groups`. `LegendRow.underline` is retained
+  in the model for backward compatibility with existing `project.json` files.
+
+### Documentation
+- Added `CONTRIBUTING.md` and `docs/ARCHITECTURE.md`.
+- `Roadmap.md` moved from the package directory to the repository root (no longer
+  shipped in the wheel).
+- Legacy `HeaderBlock`, `Group`, `ConditionRow`, and `SpanRow` structures documented
+  as retained-for-compat in `models.py`.
+
+### Internal
+- Dead imports (`load_image_uint16`, duplicate `QFrame`, duplicate `typing` import)
+  and unused locals (`protein_w`, `crop_h_scene`) cleaned up.
+
+---
+
 ## [1.0.3] — 2026-05-21
 
 ### Added

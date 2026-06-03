@@ -931,3 +931,102 @@ class TestEnsureBlotCropPreviewNIR:
         assert out1.exists()
         # Must be distinct paths
         assert out0 != out1
+
+
+# ===========================================================================
+# Suggestions (legend / protein label / antibody name) round-trip
+# ===========================================================================
+
+class TestSuggestionsRoundTrip:
+    """load_X_suggestions / save_X_suggestions preserve order, dedup, strip."""
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_empty_history_returns_empty_list(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        load_fn = getattr(ws, load_name)
+        assert load_fn() == []
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_saved_items_reload_in_same_order(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        items = ["Beta-actin", "GAPDH", "p53"]
+        getattr(ws, save_name)(items)
+        assert getattr(ws, load_name)() == items
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_delete_entry_persists(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        items = ["Alpha", "Beta", "Gamma"]
+        getattr(ws, save_name)(items)
+        items.remove("Beta")
+        getattr(ws, save_name)(items)
+        assert getattr(ws, load_name)() == ["Alpha", "Gamma"]
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_rename_entry_persists(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        items = ["Old name", "Other"]
+        getattr(ws, save_name)(items)
+        items[0] = "New name"
+        getattr(ws, save_name)(items)
+        result = getattr(ws, load_name)()
+        assert result == ["New name", "Other"]
+        assert "Old name" not in result
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_reorder_persists(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        original = ["First", "Second", "Third"]
+        getattr(ws, save_name)(original)
+        reordered = ["Third", "First", "Second"]
+        getattr(ws, save_name)(reordered)
+        assert getattr(ws, load_name)() == reordered
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_duplicates_collapsed_on_save(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        getattr(ws, save_name)(["A", "B", "A", "C", "B"])
+        assert getattr(ws, load_name)() == ["A", "B", "C"]
+
+    @pytest.mark.parametrize("load_name,save_name", [
+        ("load_legend_suggestions", "save_legend_suggestions"),
+        ("load_protein_label_suggestions", "save_protein_label_suggestions"),
+        ("load_antibody_name_suggestions", "save_antibody_name_suggestions"),
+    ])
+    def test_empty_strings_stripped_on_save(self, tmp_path, load_name, save_name):
+        ws = _make_workspace(tmp_path)
+        getattr(ws, save_name)(["  ", "Valid", "", "Also valid"])
+        assert getattr(ws, load_name)() == ["Valid", "Also valid"]
+
+    def test_three_histories_are_independent(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        ws.save_legend_suggestions(["legend_entry"])
+        ws.save_protein_label_suggestions(["protein_entry"])
+        ws.save_antibody_name_suggestions(["antibody_entry"])
+        assert ws.load_legend_suggestions() == ["legend_entry"]
+        assert ws.load_protein_label_suggestions() == ["protein_entry"]
+        assert ws.load_antibody_name_suggestions() == ["antibody_entry"]

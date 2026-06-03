@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QFrame, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -183,6 +183,68 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         ladder_l.addLayout(ladder_buttons)
 
         lib_l.addWidget(ladder_frame)
+
+        # --- Saved dropdown entries manager ---
+        history_frame = QFrame()
+        history_frame.setFrameShape(QFrame.StyledPanel)
+        history_frame.setStyleSheet("""
+            QFrame {
+                background: #f7f7f7;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+
+        history_fl = QVBoxLayout(history_frame)
+        history_fl.setContentsMargins(10, 10, 10, 10)
+        history_fl.setSpacing(8)
+
+        history_title = QLabel("Saved dropdown entries")
+        history_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        history_fl.addWidget(history_title)
+
+        history_top = QHBoxLayout()
+        history_top.addWidget(QLabel("History"))
+        self.history_selector = QComboBox()
+        self.history_selector.addItem("Legend text")
+        self.history_selector.addItem("Protein labels")
+        self.history_selector.addItem("Antibody names")
+        self.history_selector.currentIndexChanged.connect(self._on_history_selector_changed)
+        history_top.addWidget(self.history_selector)
+        history_top.addStretch(1)
+        history_fl.addLayout(history_top)
+
+        self.history_list = QListWidget()
+        self.history_list.setDragDropMode(QListWidget.InternalMove)
+        self.history_list.setAlternatingRowColors(True)
+        self.history_list.model().rowsMoved.connect(self._on_history_reordered)
+        history_fl.addWidget(self.history_list)
+
+        history_btn_row = QHBoxLayout()
+        self.history_delete_btn = QPushButton("Delete selected")
+        self.history_delete_btn.clicked.connect(self._on_history_delete)
+        history_btn_row.addWidget(self.history_delete_btn)
+
+        self.history_rename_btn = QPushButton("Rename selected")
+        self.history_rename_btn.clicked.connect(self._on_history_rename)
+        history_btn_row.addWidget(self.history_rename_btn)
+
+        self.history_move_up_btn = QPushButton("Move up")
+        self.history_move_up_btn.clicked.connect(self._on_history_move_up)
+        history_btn_row.addWidget(self.history_move_up_btn)
+
+        self.history_move_down_btn = QPushButton("Move down")
+        self.history_move_down_btn.clicked.connect(self._on_history_move_down)
+        history_btn_row.addWidget(self.history_move_down_btn)
+
+        history_btn_row.addStretch(1)
+        history_fl.addLayout(history_btn_row)
+
+        history_hint = QLabel("Drag rows to reorder. Changes save immediately.")
+        history_hint.setStyleSheet("color: #6b7280; font-size: 10px;")
+        history_fl.addWidget(history_hint)
+
+        lib_l.addWidget(history_frame)
 
         self.tabs.addTab(lib, "Preferences")
 
@@ -614,6 +676,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.refresh_library()
 
         self.refresh_marker_sets()
+
+        self._history_reload_list()
 
     def _build_home_tab(self) -> QWidget:
         container = QWidget()
@@ -1174,6 +1238,81 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    # -------------------------
+    # Dropdown history manager
+    # -------------------------
+
+    def _history_load_save(self) -> tuple:
+        """Return (load_fn, save_fn) for the currently selected history."""
+        idx = self.history_selector.currentIndex()
+        if idx == 0:
+            return (self.workspace.load_legend_suggestions,
+                    self.workspace.save_legend_suggestions)
+        elif idx == 1:
+            return (self.workspace.load_protein_label_suggestions,
+                    self.workspace.save_protein_label_suggestions)
+        else:
+            return (self.workspace.load_antibody_name_suggestions,
+                    self.workspace.save_antibody_name_suggestions)
+
+    def _history_reload_list(self):
+        load_fn, _ = self._history_load_save()
+        items = load_fn()
+        self.history_list.clear()
+        for s in items:
+            self.history_list.addItem(s)
+
+    def _history_save_current(self):
+        _, save_fn = self._history_load_save()
+        items = [self.history_list.item(i).text()
+                 for i in range(self.history_list.count())]
+        save_fn(items)
+
+    def _on_history_selector_changed(self, _idx: int):
+        self._history_reload_list()
+
+    def _on_history_delete(self):
+        row = self.history_list.currentRow()
+        if row < 0:
+            return
+        self.history_list.takeItem(row)
+        self._history_save_current()
+
+    def _on_history_rename(self):
+        row = self.history_list.currentRow()
+        if row < 0:
+            return
+        old_text = self.history_list.item(row).text()
+        new_text, ok = QInputDialog.getText(self, "Rename entry", "New text:", text=old_text)
+        if not ok:
+            return
+        new_text = new_text.strip()
+        if not new_text or new_text == old_text:
+            return
+        self.history_list.item(row).setText(new_text)
+        self._history_save_current()
+
+    def _on_history_move_up(self):
+        row = self.history_list.currentRow()
+        if row <= 0:
+            return
+        item = self.history_list.takeItem(row)
+        self.history_list.insertItem(row - 1, item)
+        self.history_list.setCurrentRow(row - 1)
+        self._history_save_current()
+
+    def _on_history_move_down(self):
+        row = self.history_list.currentRow()
+        if row < 0 or row >= self.history_list.count() - 1:
+            return
+        item = self.history_list.takeItem(row)
+        self.history_list.insertItem(row + 1, item)
+        self.history_list.setCurrentRow(row + 1)
+        self._history_save_current()
+
+    def _on_history_reordered(self):
+        self._history_save_current()
 
     def _get_legend_suggestions(self) -> list[str]:
         return self.workspace.load_legend_suggestions()

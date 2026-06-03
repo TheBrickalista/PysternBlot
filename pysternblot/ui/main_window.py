@@ -68,10 +68,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.tabs.addTab(home, "Home")
 
         # Library tab
-        lib = QWidget()
-        lib_l = QVBoxLayout(lib)
-        lib_l.setContentsMargins(16, 16, 16, 16)
-        lib_l.setSpacing(10)
+        library_widget = QWidget()
+        library_l = QVBoxLayout(library_widget)
+        library_l.setContentsMargins(16, 16, 16, 16)
+        library_l.setSpacing(10)
 
         lib_top = QHBoxLayout()
         lib_title = QLabel("Projects")
@@ -88,7 +88,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.lib_refresh_btn.clicked.connect(self.refresh_library)
         lib_top.addWidget(self.lib_refresh_btn)
 
-        lib_l.addLayout(lib_top)
+        library_l.addLayout(lib_top)
 
         self.library_table = QTableWidget()
         self.library_table.setColumnCount(6)
@@ -103,9 +103,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.library_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.library_table.customContextMenuRequested.connect(self._on_library_context_menu)
 
-        lib_l.addWidget(self.library_table)
+        library_l.addWidget(self.library_table)
 
-                # --- Protein ladder presets ---
+        self.tabs.addTab(library_widget, "Library")
+
+        # Preferences tab
+        lib = QWidget()
+        lib_l = QVBoxLayout(lib)
+        lib_l.setContentsMargins(16, 16, 16, 16)
+        lib_l.setSpacing(10)
+
+        # --- Protein ladder presets ---
         ladder_frame = QFrame()
         ladder_frame.setFrameShape(QFrame.StyledPanel)
         ladder_frame.setStyleSheet("""
@@ -245,8 +253,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         history_fl.addWidget(history_hint)
 
         lib_l.addWidget(history_frame)
-
-        self.tabs.addTab(lib, "Preferences")
 
         # Final Result tab
         final = QWidget()
@@ -666,6 +672,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_tab = LegendTab()
         self.legend_tab.changed.connect(self._on_legend_changed)
         self.tabs.addTab(self.legend_tab, "Legend")
+
+        self.tabs.addTab(lib, "Preferences")
 
         # About tab
         self._about_tab = self._build_about_tab()

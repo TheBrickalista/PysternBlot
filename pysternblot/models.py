@@ -27,10 +27,15 @@ class SpanRow(BaseModel):
     spans: List[Span]
 
 class HeaderBlock(BaseModel):
+    """Legacy legend grouping structure. Retained for backward compatibility with
+    existing project.json files (panel.header_block is a required, serialized field),
+    but NO LONGER used for legend rendering — current legends are driven by
+    LegendRow.cell_groups (see render.derive_lane_groups). Do not remove without a
+    schema migration for existing projects."""
     left_title: str
-    groups: List[Group]
-    condition_rows: List[ConditionRow]
-    span_rows: List[SpanRow] = []
+    groups: List[Group]        # legacy — part of HeaderBlock, not read by renderer
+    condition_rows: List[ConditionRow]  # legacy — part of HeaderBlock, not read by renderer
+    span_rows: List[SpanRow] = []       # legacy — part of HeaderBlock, not read by renderer
 
     def total_lanes(self) -> int:
         return sum(g.n_lanes for g in self.groups)

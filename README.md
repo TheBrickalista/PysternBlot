@@ -38,6 +38,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - **Editable levels fields** — Black and White values can be typed directly (e.g. type 150 and press Enter) as well as adjusted via slider; both controls stay in sync
 - **Overlay protein ladder with per-band wavelength assignment** — Show 685 / Show 785 checkboxes per preset band; ticks and labels appear automatically in the final figure
 - **Include / exclude per blot and per NIR channel** — import multiple exposures or channels and choose which appear in the final figure without deleting the others
+- **Flexible legend annotation** — per-lane condition labels with grouped headers: assign cells to groups to draw shared underlines and centred group labels (e.g. one "Total" label spanning two lanes), supporting asymmetric layouts with mixed group sizes and standalone lanes
 - **Library archive** — export and import `.pbarchive` files for lab handover / long-term storage, with SHA256 integrity verification of every asset
 - **Project archiving** — soft-hide projects from the library without deleting them; restore at any time via the archive manager dialog or the right-click context menu on any project
 - **Antibody name field per blot** — persisted in project file and audit log
@@ -154,7 +155,7 @@ tests/                      — pytest test suite (210 tests, plus 2 skipped pen
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [pysternblot/Roadmap.md](pysternblot/Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [Roadmap.md](Roadmap.md) for the full plan.
 
 ---
 

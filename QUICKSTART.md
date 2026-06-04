@@ -166,9 +166,29 @@ Each row has three editable zones:
 | **Center cells** | Per-lane annotations — set **# cells** to match your lane count, one cell per lane |
 | **Right** | Any trailing annotation (e.g. molecular weight, condition) |
 
-Per row you can also set **Font** size (pt) and toggle **Underline** for header rows.
+Per row you can also set **Font** size (pt).
 
 All text fields have autocomplete from previously entered values across the project, so antibody names and condition labels only need to be typed once.
+
+### Grouping lanes under shared labels
+
+Each center cell has a small **group #** control beneath it (0 = ungrouped). Cells in the same row that share the same non-zero group number and are adjacent form a group. A group of two or more adjacent cells draws an underline spanning those lanes, and an upper-row cell carrying the same group number is centered as the label over the group.
+
+**Worked example — Total / Elution / Beads across 6 lanes:**
+
+1. Set **# Upper rows** to 1, **# Lower rows** to 1, **# cells** to 6 in each row.
+2. In the **lower row** enter the per-lane labels: `Control`, `PNGase F`, `Control`, `PNGase F`, `Control`, `PNGase F`. Set their group numbers to `1 1 2 2 3 3`.
+3. In the **upper row** enter `Total`, `Elution`, `Beads` (cells 1–3; cells 4–6 can be left blank or omitted). Set group numbers `1`, `2`, `3` on those cells.
+4. Each upper label is automatically centred over its lane pair, with an underline beneath it.
+
+**Rules at a glance:**
+
+| Situation | Result |
+|---|---|
+| Group 0 | Ungrouped — no underline, label stays at its own lane position |
+| Same group #, 2+ adjacent cells | Underline drawn; upper-row label centred over span |
+| Same group #, non-adjacent cells | Warning tint on spinbox; no underline drawn |
+| Single lane left ungrouped | No underline — supports asymmetric layouts (e.g. a lone marker lane) |
 
 ---
 

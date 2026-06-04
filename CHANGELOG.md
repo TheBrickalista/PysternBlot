@@ -9,6 +9,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [1.0.4] — 2026-06-03
 
 ### Added
+- **Asymmetric legend grouping** — legend cells can be grouped via per-cell group numbers;
+  contiguous same-group cells (≥ 2) draw an underline with the group label centred over
+  the span. Supports mixed group sizes and ungrouped singletons. Replaces the old
+  all-or-nothing per-row underline flag.
 - **Levels histogram** — live pixel-intensity histogram in the Original Image tab alongside
   the levels sliders, with log/linear scale toggle, adaptive x-axis zoom to the gate
   window, draggable gate lines linked to the sliders, and 1024 bins. Sliders relabeled
@@ -24,10 +28,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   is parsed and key acquisition fields (scale type, scan mode, PMT/laser settings,
   corrections) are stored per-asset and surfaced in the integrity report (scale type
   shown prominently).
-- **Asymmetric legend grouping** — legend cells can be grouped via per-cell group numbers;
-  contiguous same-group cells (≥ 2) draw an underline with the group label centred over
-  the span. Supports mixed group sizes and ungrouped singletons. Replaces the old
-  all-or-nothing per-row underline flag.
 - **Saved-dropdown-entries manager** — Preferences tab includes a manager to delete,
   rename, and reorder entries in the legend / protein-label / antibody-name autocomplete
   histories.

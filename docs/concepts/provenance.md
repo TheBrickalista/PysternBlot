@@ -84,7 +84,7 @@ still permitted; it is simply never silent.
 Everything above runs in the background of ordinary figure preparation. As a
 result, the unprocessed originals and adjustment disclosures that publishers
 require are already captured by the time a figure is finished — producing them is
-an export, not a separate documentation effort. See
-[Integrity reports](../guide/integrity-report.md) for what the exported records
-contain, and the [PBArchive format](pbarchive-format.md) for how a complete
-provenance bundle is packaged and shared.
+an export, not a separate documentation effort. See the
+[Figure tab](../guide/figure.md) for the integrity-report export buttons, and the
+[PBArchive format](pbarchive-format.md) for how a complete provenance bundle is
+packaged and shared.

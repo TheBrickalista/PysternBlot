@@ -17,11 +17,11 @@ quickstart
 
 guide/home
 guide/library
-guide/figure
 guide/original-image
 guide/legend
+guide/figure
 guide/preferences
-guide/integrity-report
+guide/about
 ```
 
 ```{toctree}

@@ -14,6 +14,7 @@
 [![Documentation Status](https://readthedocs.org/projects/pysternblot/badge/?version=latest)](https://pysternblot.readthedocs.io/en/latest/)
 
 → **[Quick Start](QUICKSTART.md)** — get up and running in 5 minutes
+→ **[Documentation](https://pysternblot.readthedocs.io)** — full documentation, installation and user guide
 
 ---
 

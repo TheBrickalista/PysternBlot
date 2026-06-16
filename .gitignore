@@ -11,3 +11,6 @@ build/
 
 # Local-only AI assistant guidance (architecture lives in docs/ARCHITECTURE.md)
 CLAUDE.md
+
+# Sphinx build output
+docs/_build/

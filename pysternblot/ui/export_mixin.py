@@ -7,15 +7,20 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QGraphicsScene
 from PySide6.QtGui import QPainter, QImage, QPdfWriter, QPageSize
-from PySide6.QtCore import Qt, QRectF, QSize
+from PySide6.QtCore import Qt, QRectF, QRect, QSize
 from PySide6.QtSvg import QSvgGenerator
 
 from pathlib import Path
 
 from ..image_utils import get_bit_depth
-from ..render import build_panel_scene, build_provenance_scene
+from ..render import (
+    build_panel_scene,
+    build_provenance_scene,
+    draw_legend_into_scene,
+    _load_rotated_display_pixmap,
+)
 from ..integrity import (
     build_integrity_report,
     build_detailed_integrity_report,
@@ -418,6 +423,117 @@ class _ExportMixin:
 
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
+
+    def export_legend_zone_png(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        blot = self._get_active_blot()
+        if blot is None:
+            QMessageBox.information(self, "No blot", "No active blot to export.")
+            return
+
+        lz = getattr(blot, "legend_zone", None)
+        if lz is None or not lz.enabled or not self.legend_zone_cb.isChecked():
+            QMessageBox.information(
+                self,
+                "Legend export zone not set",
+                "Enable and position the Legend export zone on the Original Image "
+                "tab first (checkbox above the canvas).",
+            )
+            return
+
+        try:
+            sha256, display = blot.get_display_channel(self._active_nir_channel)
+        except (IndexError, AttributeError):
+            sha256, display = blot.asset_sha256, blot.display
+
+        pm_full = _load_rotated_display_pixmap(
+            self.workspace.root,
+            sha256,
+            float(getattr(display, "rotation_deg", 0.0) or 0.0),
+            black=int(getattr(display, "levels_black", 0)),
+            white=int(getattr(display, "levels_white", 65535)),
+            gamma=float(getattr(display, "levels_gamma", 1.0)),
+            invert=bool(getattr(display, "invert", False)),
+            flip_horizontal=bool(getattr(display, "flip_horizontal", False)),
+            flip_vertical=bool(getattr(display, "flip_vertical", False)),
+        )
+        if pm_full.isNull():
+            QMessageBox.critical(self, "Export error", "Could not load blot image.")
+            return
+
+        cropped = pm_full.copy(QRect(int(lz.x), int(lz.y), int(lz.w), int(lz.h)))
+        if cropped.isNull() or cropped.width() == 0 or cropped.height() == 0:
+            QMessageBox.critical(self, "Export error", "Legend export zone is empty or out of bounds.")
+            return
+
+        scene = QGraphicsScene()
+        x0, y0 = 20.0, 20.0
+        img_col_x = x0
+        img_col_w = float(cropped.width())
+
+        y_img = draw_legend_into_scene(scene, self.current_project, x0, y0, img_col_x, img_col_w)
+
+        img_item = scene.addPixmap(cropped)
+        img_item.setPos(img_col_x, y_img)
+
+        rect = scene.itemsBoundingRect()
+        if not rect.isValid() or rect.isNull():
+            QMessageBox.critical(self, "Export error", "Legend export zone scene is empty.")
+            return
+
+        if not self._warn_8bit_export():
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Zone + Legend as PNG",
+            f"{blot.id}_legend_zone.png",
+            "PNG (*.png)",
+        )
+        if not path:
+            return
+
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        margin = 20
+        scale = 2.0
+
+        img = QImage(
+            int((rect.width() + 2 * margin) * scale),
+            int((rect.height() + 2 * margin) * scale),
+            QImage.Format_ARGB32,
+        )
+        img.fill(Qt.white)
+
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.scale(scale, scale)
+
+        target = QRectF(margin, margin, rect.width(), rect.height())
+        scene.render(painter, target, rect)
+        painter.end()
+
+        if not img.save(path):
+            QMessageBox.critical(self, "Export error", "Could not save PNG.")
+            return
+
+        self.log_operation(
+            "export_generated",
+            target_type="export",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone_png",
+            old_value=None,
+            new_value=str(path),
+        )
+        self.workspace.save_project(self.current_project)
+
+        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
 
     def _current_project_json_path(self) -> Path | None:
         if not self.current_project:

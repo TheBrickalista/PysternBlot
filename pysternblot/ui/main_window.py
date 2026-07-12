@@ -46,6 +46,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.current_project = None
         self.active_blot_id = None
         self.prov_grid_visible = False
+        self._legend_zone_visible = False
         self._active_nir_channel = 0
         self._nir_ch_btn_group = None
 
@@ -385,6 +386,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_row1.addWidget(self.prov_grid_cb)
 
+        self.legend_zone_cb = QCheckBox("Legend export zone")
+        self.legend_zone_cb.setToolTip(
+            "Show a second, draggable zone (blue) used to export a region of the "
+            "original image with the panel legend drawn above it."
+        )
+        self.legend_zone_cb.toggled.connect(self._on_legend_zone_toggled)
+        prov_row1.addWidget(self.legend_zone_cb)
+
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
         self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
@@ -397,6 +406,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.export_all_original_tiff_btn = QPushButton("Export All Originals")
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
         prov_row1.addWidget(self.export_all_original_tiff_btn)
+
+        self.export_legend_zone_btn = QPushButton("Export Zone + Legend")
+        self.export_legend_zone_btn.setToolTip(
+            "Export the Legend export zone region with the panel legend drawn above it."
+        )
+        self.export_legend_zone_btn.clicked.connect(self.export_legend_zone_png)
+        prov_row1.addWidget(self.export_legend_zone_btn)
 
         hint = QLabel("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
         hint.setStyleSheet("color: #888888; font-size: 11px;")
@@ -1000,6 +1016,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
         self.prov_grid_cb.blockSignals(False)
 
+        self.legend_zone_cb.blockSignals(True)
+        self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
+        self.legend_zone_cb.blockSignals(False)
+
         self.levels_black_slider.blockSignals(True)
         self.levels_white_slider.blockSignals(True)
         self.levels_gamma_slider.blockSignals(True)
@@ -1525,6 +1545,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 on_crop_resize_commit=self._on_crop_resize_commit,
                 show_grid=self.prov_grid_visible,
                 nir_channel_index=self._active_nir_channel,
+                show_legend_zone=self._legend_zone_visible,
+                on_legend_zone_commit=self._on_legend_zone_commit,
             )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
@@ -1561,6 +1583,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # refresh both views
         self.refresh_previews()
+
+    def _on_legend_zone_commit(self, blot):
+        """Mirrors _on_crop_changed but for the legend export zone — no crop
+        previews need regenerating since the legend zone doesn't affect them."""
+        if not self.current_project:
+            return
+
+        self.log_operation(
+            "legend_zone_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone",
+            old_value=None,
+            new_value=None,
+        )
+
+        self.workspace.save_project(self.current_project)
 
     def _populate_prov_blot_combo(self):
         self.prov_blot_combo.blockSignals(True)
@@ -1909,6 +1949,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
+        self.refresh_previews()
+
+    def _on_legend_zone_toggled(self, checked: bool):
+        self._legend_zone_visible = bool(checked)
         self.refresh_previews()
 
     def _on_levels_changed(self):

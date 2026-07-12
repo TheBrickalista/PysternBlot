@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -450,7 +450,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         prov_rows.addLayout(prov_row1)
         prov_rows.addLayout(prov_row2)
-        prov_l.addLayout(prov_rows)
 
         prov_info_row = QHBoxLayout()
         self.prov_label = QLabel("Current blot: —")
@@ -460,7 +459,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_info_row.addWidget(self.prov_label)
         prov_info_row.addWidget(self.prov_8bit_badge)
         prov_info_row.addStretch(1)
-        prov_l.addLayout(prov_info_row)
 
         # --- Display controls frame ---
         display_frame = QFrame()
@@ -603,8 +601,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)
         display_layout.addWidget(self.levels_histogram)
 
-        prov_l.addWidget(display_frame)
-
         # --- Overlay ladder annotation compact controls ---
         overlay_ladder_frame = QFrame()
         overlay_ladder_frame.setFrameShape(QFrame.StyledPanel)
@@ -660,11 +656,28 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         overlay_ladder_l.addStretch(1)
 
-        prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = ZoomableGraphicsView()
         self.prov_view.setMinimumHeight(200)
         self.prov_view.viewport().installEventFilter(self)
-        prov_l.addWidget(self.prov_view)
+
+        prov_splitter = QSplitter(Qt.Vertical)
+        prov_splitter.setChildrenCollapsible(False)
+
+        prov_top = QWidget()
+        prov_top_l = QVBoxLayout(prov_top)
+        prov_top_l.setContentsMargins(0, 0, 0, 0)
+        prov_top_l.addLayout(prov_rows)
+        prov_top_l.addLayout(prov_info_row)
+        prov_top_l.addWidget(display_frame)
+        prov_top_l.addWidget(overlay_ladder_frame)
+        prov_top.setMinimumHeight(120)
+
+        prov_splitter.addWidget(prov_top)
+        prov_splitter.addWidget(self.prov_view)
+        prov_splitter.setStretchFactor(0, 0)
+        prov_splitter.setStretchFactor(1, 1)
+
+        prov_l.addWidget(prov_splitter, 1)
 
         self.tabs.addTab(prov, "Original Image")
 

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QGraphicsLineItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
+    QGraphicsScene,
     QGraphicsTextItem,
 )
 
@@ -39,12 +40,16 @@ from pysternblot.models import (
     Group,
     HeaderBlock,
     LaneLayout,
+    LadderBandAssignment,
     Layout,
     LegendRow,
     LegendSettings,
     LegendZone,
     Ladder,
     CalibrationPoint,
+    MarkerBand,
+    MarkerSet,
+    OverlayLadder,
     Panel,
     Project,
     ProjectMeta,
@@ -52,6 +57,7 @@ from pysternblot.models import (
     Style,
 )
 from pysternblot.render import build_panel_scene, build_provenance_scene
+from pysternblot.ui.export_mixin import _ExportMixin
 from pysternblot.ui.crop_rect_item import CropRectItem
 
 
@@ -460,3 +466,200 @@ class TestComputeExportGeometry:
         # [img_col_x, img_col_x + img_col_w] measured from image_x.
         assert img_col_x == pytest.approx(image_x + (crop.x - ex))
         assert img_col_w == pytest.approx(300.0)
+
+
+# ===========================================================================
+# _draw_legend_zone_markers: the zone export shows the COMPLETE assigned
+# ladder, bypassing the Figure's show_in_final / show_only_highlighted filters.
+# ===========================================================================
+
+class _FakeExportHost(_ExportMixin):
+    """Minimal host exposing just what _draw_legend_zone_markers reads via self."""
+
+    def __init__(self, project, active_nir_channel: int = 0):
+        self.current_project = project
+        self._active_nir_channel = active_nir_channel
+
+
+def _project_with_marker_set(marker_set: MarkerSet) -> Project:
+    header = HeaderBlock(
+        left_title="kDa",
+        groups=[Group(label="All", n_lanes=1)],
+        condition_rows=[ConditionRow(values=[""])],
+    )
+    dummy_blot = Blot(
+        id="dummy", asset_sha256="a" * 64,
+        crop=Crop(x=0, y=0, w=300, h=200),
+        ladder=_minimal_ladder(),
+        protein_label=ProteinLabel(text=""),
+    )
+    panel = Panel(
+        style=Style(),
+        lane_layout=LaneLayout(header_block=header),
+        blots=[dummy_blot],
+        layout=Layout(order=["dummy"]),
+        legend=LegendSettings(),
+        crop_template=CropTemplate(w=300.0, h=200.0),
+    )
+    return Project(
+        project=ProjectMeta(
+            id="p1", name="Test", created_utc="2026-01-01T00:00:00Z",
+            app_version="0.0", license="GPL-3.0-only",
+        ),
+        marker_sets=[marker_set],
+        panel=panel,
+    )
+
+
+class TestLegendZoneMarkersFullLadder:
+
+    def _blot_with_ladder(self, show_only_highlighted: bool) -> Blot:
+        return Blot(
+            id="b1", asset_sha256="a" * 64,
+            crop=Crop(x=0, y=0, w=300, h=200),
+            ladder=_minimal_ladder(),
+            protein_label=ProteinLabel(text=""),
+            overlay_ladder=OverlayLadder(
+                marker_set_id="ms1",
+                side="left",
+                show_labels=True,
+                show_only_highlighted=show_only_highlighted,
+                bands=[
+                    LadderBandAssignment(y_px=10.0, kda=100.0, show_in_final=True),
+                    LadderBandAssignment(y_px=20.0, kda=70.0, show_in_final=False),
+                    LadderBandAssignment(y_px=30.0, kda=50.0, show_in_final=False),
+                    LadderBandAssignment(y_px=40.0, kda=25.0, show_in_final=True),
+                ],
+            ),
+        )
+
+    def _marker_set(self) -> MarkerSet:
+        return MarkerSet(id="ms1", name="Test", bands=[
+            MarkerBand(kda=100.0, label="100", highlight=False),
+            MarkerBand(kda=70.0, label="70", highlight=True),  # only highlighted band
+            MarkerBand(kda=50.0, label="50", highlight=False),
+            MarkerBand(kda=25.0, label="25", highlight=False),
+        ])
+
+    def test_all_bands_drawn_regardless_of_show_in_final_and_highlight_filter(self, qapp):
+        """2 of 4 bands would be hidden in the Figure by show_in_final=False, and
+        show_only_highlighted=True would additionally hide all but the 70 kDa band
+        (which is itself show_in_final=False) — the zone export must still draw
+        all 4."""
+        blot = self._blot_with_ladder(show_only_highlighted=True)
+        project = _project_with_marker_set(self._marker_set())
+        host = _FakeExportHost(project)
+
+        scene = QGraphicsScene()
+        drawn = host._draw_legend_zone_markers(
+            scene, blot, LegendZone(show_markers=True, marker_side="left"),
+            image_x=100.0, image_w=300.0, y_img=50.0, ey=0.0,
+        )
+
+        assert drawn == 4
+        lines = [i for i in scene.items() if isinstance(i, QGraphicsLineItem)]
+        assert len(lines) == 4
+
+    def test_unmatched_band_falls_back_to_numeric_kda_label(self, qapp):
+        """A band with no matching preset in marker_sets must still render, labeled
+        with its raw kda value rather than being silently dropped."""
+        blot = self._blot_with_ladder(show_only_highlighted=False)
+        blot.overlay_ladder.bands.append(
+            LadderBandAssignment(y_px=50.0, kda=12.5, show_in_final=True)
+        )
+        project = _project_with_marker_set(self._marker_set())
+        host = _FakeExportHost(project)
+
+        scene = QGraphicsScene()
+        drawn = host._draw_legend_zone_markers(
+            scene, blot, LegendZone(show_markers=True, marker_side="left"),
+            image_x=100.0, image_w=300.0, y_img=50.0, ey=0.0,
+        )
+
+        assert drawn == 5
+        texts = [i.toPlainText() for i in scene.items() if isinstance(i, QGraphicsTextItem)]
+        assert "12.5 kDa" in texts
+
+    def test_show_markers_false_draws_nothing(self, qapp):
+        blot = self._blot_with_ladder(show_only_highlighted=False)
+        project = _project_with_marker_set(self._marker_set())
+        host = _FakeExportHost(project)
+
+        scene = QGraphicsScene()
+        drawn = host._draw_legend_zone_markers(
+            scene, blot, LegendZone(show_markers=False, marker_side="left"),
+            image_x=100.0, image_w=300.0, y_img=50.0, ey=0.0,
+        )
+        assert drawn == 0
+        assert len(scene.items()) == 0
+
+
+# ===========================================================================
+# Regression guard: this change only touches export_mixin.py's zone-export
+# marker helper. build_panel_scene (the Figure tab) must keep honoring
+# show_in_final and show_only_highlighted exactly as before.
+# ===========================================================================
+
+class TestFigureMarkerFiltersUnchanged:
+
+    def _project_with_ladder_blot(self, show_only_highlighted: bool, sha: str) -> Project:
+        header = HeaderBlock(
+            left_title="kDa",
+            groups=[Group(label="All", n_lanes=1)],
+            condition_rows=[ConditionRow(values=[""])],
+        )
+        blot = Blot(
+            id="b1", asset_sha256=sha,
+            crop=Crop(x=0, y=0, w=float(IMG_W), h=float(IMG_H)),
+            ladder=_minimal_ladder(),
+            protein_label=ProteinLabel(text=""),
+            overlay_ladder=OverlayLadder(
+                marker_set_id="ms1",
+                side="left",
+                show_labels=True,
+                show_only_highlighted=show_only_highlighted,
+                bands=[
+                    LadderBandAssignment(y_px=10.0, kda=100.0, show_in_final=True),
+                    LadderBandAssignment(y_px=20.0, kda=70.0, show_in_final=True),
+                    LadderBandAssignment(y_px=30.0, kda=50.0, show_in_final=False),
+                ],
+            ),
+        )
+        panel = Panel(
+            style=Style(),
+            lane_layout=LaneLayout(header_block=header),
+            blots=[blot],
+            layout=Layout(order=["b1"]),
+            legend=LegendSettings(),
+            crop_template=CropTemplate(w=float(IMG_W), h=float(IMG_H)),
+        )
+        return Project(
+            project=ProjectMeta(
+                id="p1", name="Test", created_utc="2026-01-01T00:00:00Z",
+                app_version="0.0", license="GPL-3.0-only",
+            ),
+            marker_sets=[MarkerSet(id="ms1", name="Test", bands=[
+                MarkerBand(kda=100.0, label="100", highlight=False),
+                MarkerBand(kda=70.0, label="70", highlight=True),
+                MarkerBand(kda=50.0, label="50", highlight=False),
+            ])],
+            panel=panel,
+        )
+
+    def test_show_in_final_false_still_hidden_in_figure(self, qapp, tmp_path):
+        ws, sha = _make_workspace(tmp_path)
+        proj = self._project_with_ladder_blot(show_only_highlighted=False, sha=sha)
+
+        scene = build_panel_scene(proj, ws)
+        lines = [i for i in scene.items() if isinstance(i, QGraphicsLineItem)]
+        # Only the 2 show_in_final=True bands (100, 70) draw a tick; 50 stays hidden.
+        assert len(lines) == 2
+
+    def test_show_only_highlighted_still_hides_non_highlighted_in_figure(self, qapp, tmp_path):
+        ws, sha = _make_workspace(tmp_path)
+        proj = self._project_with_ladder_blot(show_only_highlighted=True, sha=sha)
+
+        scene = build_panel_scene(proj, ws)
+        lines = [i for i in scene.items() if isinstance(i, QGraphicsLineItem)]
+        # show_only_highlighted=True -> only kda=70 (highlighted, and show_in_final=True).
+        assert len(lines) == 1

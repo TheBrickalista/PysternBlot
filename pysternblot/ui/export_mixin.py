@@ -461,20 +461,27 @@ class _ExportMixin:
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
 
-    def _draw_legend_zone_markers(self, scene, blot, lz, image_x: float, image_w: float, y_img: float, ey: float):
+    def _draw_legend_zone_markers(self, scene, blot, lz, image_x: float, image_w: float, y_img: float, ey: float) -> int:
         """Draws MW marker ticks/labels for the legend-zone export, reusing the same
-        band-lookup/highlight/filter logic as build_panel_scene's marker block.
+        band-lookup/label/highlight-pen logic as build_panel_scene's marker block —
+        but WITHOUT the figure's per-band curation filters (show_in_final,
+        show_only_highlighted). The zone export always shows the complete assigned
+        ladder, since it's a provenance/reference export, not the curated figure.
+        The per-channel wavelength filter (_band_visible_on_channel) is kept: a band
+        tagged to a different NIR channel genuinely doesn't belong on this image.
 
         Markers always render (never clipped to the drawn zone) — their y is derived
         directly from assignment.y_px relative to the expanded crop's origin (ey), and
         the crop box is always fully contained in that expanded crop by construction.
+
+        Returns the number of bands actually drawn (for testability).
         """
         if not bool(getattr(lz, "show_markers", True)):
-            return
+            return 0
 
         ladder = getattr(blot, "overlay_ladder", None)
         if ladder is None or not getattr(ladder, "bands", None):
-            return
+            return 0
 
         style = self.current_project.panel.style
         marker_library = getattr(self.current_project, "marker_sets", []) or []
@@ -512,10 +519,11 @@ class _ExportMixin:
             tick_x1 = image_x - GAP
             tick_x0 = tick_x1 - TICK_LEN
 
-        for assignment in ladder.bands:
-            if not bool(getattr(assignment, "show_in_final", True)):
-                continue
+        drawn_count = 0
 
+        for assignment in ladder.bands:
+            # NOTE: no show_in_final / show_only_highlighted filtering here — the
+            # zone export always shows the complete assigned ladder (see docstring).
             kda = float(assignment.kda)
 
             preset_band = None
@@ -523,10 +531,6 @@ class _ExportMixin:
                 preset_band = next(
                     (b for b in marker_set.bands if abs(float(b.kda) - kda) < 0.001), None
                 )
-
-            if bool(getattr(ladder, "show_only_highlighted", False)) and marker_set is not None:
-                if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
-                    continue
 
             if blot.is_nir() and preset_band is not None:
                 if not _band_visible_on_channel(preset_band, active_wavelength):
@@ -538,6 +542,7 @@ class _ExportMixin:
             marker_y = y_img + (float(assignment.y_px) - ey)
 
             scene.addLine(tick_x0, marker_y, tick_x1, marker_y, pen)
+            drawn_count += 1
 
             if bool(getattr(ladder, "show_labels", True)):
                 label = getattr(preset_band, "label", None) if preset_band else None
@@ -553,6 +558,8 @@ class _ExportMixin:
                     text_item.setPos(tick_x1 + GAP, marker_y - br.height() / 2.0)
                 else:
                     text_item.setPos(tick_x0 - GAP - br.width(), marker_y - br.height() / 2.0)
+
+        return drawn_count
 
     def export_legend_zone_png(self):
         if not self.current_project:

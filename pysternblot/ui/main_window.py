@@ -23,6 +23,7 @@ from ..render import build_panel_scene, build_provenance_scene
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..models import (
     Blot,
+    LegendZone,
 )
 from .legend_tab import LegendTab
 from .zoomable_graphics_view import ZoomableGraphicsView
@@ -393,6 +394,23 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
         self.legend_zone_cb.toggled.connect(self._on_legend_zone_toggled)
         prov_row1.addWidget(self.legend_zone_cb)
+
+        self.legend_zone_markers_cb = QCheckBox("MW markers")
+        self.legend_zone_markers_cb.setChecked(True)
+        self.legend_zone_markers_cb.setEnabled(False)
+        self.legend_zone_markers_cb.setToolTip(
+            "Include MW marker ticks/labels in the Export Zone + Legend PNG."
+        )
+        self.legend_zone_markers_cb.toggled.connect(self._on_legend_zone_markers_toggled)
+        prov_row1.addWidget(self.legend_zone_markers_cb)
+
+        self.legend_zone_side_combo = QComboBox()
+        self.legend_zone_side_combo.addItem("Left", "left")
+        self.legend_zone_side_combo.addItem("Right", "right")
+        self.legend_zone_side_combo.setEnabled(False)
+        self.legend_zone_side_combo.setToolTip("Which side of the image the MW markers appear on in the export.")
+        self.legend_zone_side_combo.currentIndexChanged.connect(self._on_legend_zone_side_changed)
+        prov_row1.addWidget(self.legend_zone_side_combo)
 
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
@@ -1020,6 +1038,22 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
         self.legend_zone_cb.blockSignals(False)
 
+        # Create the zone lazily (mirrors the checkbox path in render.py) so there's
+        # always something to read show_markers/marker_side from without crashing.
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        self.legend_zone_markers_cb.setEnabled(bool(self._legend_zone_visible))
+        self.legend_zone_markers_cb.blockSignals(True)
+        self.legend_zone_markers_cb.setChecked(bool(getattr(blot.legend_zone, "show_markers", True)))
+        self.legend_zone_markers_cb.blockSignals(False)
+
+        self.legend_zone_side_combo.setEnabled(bool(self._legend_zone_visible))
+        self.legend_zone_side_combo.blockSignals(True)
+        side_idx = self.legend_zone_side_combo.findData(getattr(blot.legend_zone, "marker_side", "left"))
+        self.legend_zone_side_combo.setCurrentIndex(side_idx if side_idx >= 0 else 0)
+        self.legend_zone_side_combo.blockSignals(False)
+
         self.levels_black_slider.blockSignals(True)
         self.levels_white_slider.blockSignals(True)
         self.levels_gamma_slider.blockSignals(True)
@@ -1590,6 +1624,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
 
+        lz = blot.legend_zone
+        new_value = (
+            {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
+        )
+
         self.log_operation(
             "legend_zone_changed",
             target_type="blot",
@@ -1597,7 +1636,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             asset_sha256=blot.asset_sha256,
             field="legend_zone",
             old_value=None,
-            new_value=None,
+            new_value=new_value,
         )
 
         self.workspace.save_project(self.current_project)
@@ -1953,7 +1992,62 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
     def _on_legend_zone_toggled(self, checked: bool):
         self._legend_zone_visible = bool(checked)
+        self.legend_zone_markers_cb.setEnabled(bool(checked))
+        self.legend_zone_side_combo.setEnabled(bool(checked))
         self.refresh_previews()
+
+    def _on_legend_zone_markers_toggled(self, checked: bool):
+        if not self.current_project:
+            return
+        blot = self._get_active_blot()
+        if blot is None:
+            return
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        old = blot.legend_zone.show_markers
+        new = bool(checked)
+        blot.legend_zone.show_markers = new
+
+        self.log_operation(
+            "legend_zone_markers_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone.show_markers",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
+
+    def _on_legend_zone_side_changed(self, _index: int):
+        if not self.current_project:
+            return
+        blot = self._get_active_blot()
+        if blot is None:
+            return
+
+        new = self.legend_zone_side_combo.currentData()
+        if new is None:
+            return
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        old = blot.legend_zone.marker_side
+        if old == new:
+            return
+        blot.legend_zone.marker_side = new
+
+        self.log_operation(
+            "legend_zone_side_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone.marker_side",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
 
     def _on_levels_changed(self):
         blot = self._get_active_blot()

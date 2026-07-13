@@ -160,6 +160,8 @@ class TestLegendZoneModel:
         assert lz.w == 300.0
         assert lz.h == 200.0
         assert lz.enabled is False
+        assert lz.show_markers is True
+        assert lz.marker_side == "left"
 
     def test_blot_defaults_legend_zone_to_none(self):
         blot = Blot(
@@ -176,10 +178,13 @@ class TestLegendZoneModel:
             crop=Crop(x=0, y=0, w=300, h=200),
             ladder=_minimal_ladder(),
             protein_label=ProteinLabel(text=""),
-            legend_zone=LegendZone(x=10, y=20, w=150, h=80, enabled=True),
+            legend_zone=LegendZone(x=10, y=20, w=150, h=80, enabled=True, show_markers=False, marker_side="right"),
         )
         data = blot.model_dump()
-        assert data["legend_zone"] == {"x": 10.0, "y": 20.0, "w": 150.0, "h": 80.0, "enabled": True}
+        assert data["legend_zone"] == {
+            "x": 10.0, "y": 20.0, "w": 150.0, "h": 80.0, "enabled": True,
+            "show_markers": False, "marker_side": "right",
+        }
 
         blot2 = Blot.model_validate(data)
         assert blot2.legend_zone is not None
@@ -188,6 +193,8 @@ class TestLegendZoneModel:
         assert blot2.legend_zone.w == 150.0
         assert blot2.legend_zone.h == 80.0
         assert blot2.legend_zone.enabled is True
+        assert blot2.legend_zone.show_markers is False
+        assert blot2.legend_zone.marker_side == "right"
 
     def test_blot_round_trip_with_legend_zone_unset(self):
         blot = Blot(
@@ -222,6 +229,34 @@ class TestLegendZoneModel:
         assert "legend_zone" not in data
         blot = Blot.model_validate(data)
         assert blot.legend_zone is None
+
+    def test_legacy_legend_zone_without_marker_fields_loads_with_defaults(self):
+        """Simulates a project.json saved by the prior version of this feature,
+        where legend_zone existed but show_markers/marker_side did not yet."""
+        data = {
+            "id": "b1",
+            "asset_sha256": "a" * 64,
+            "crop": {"x": 0, "y": 0, "w": 300, "h": 200},
+            "ladder": {
+                "lane_index": 0,
+                "marker_set_id": "ms1",
+                "calibration_points": [
+                    {"y_px": 50, "kda": 55},
+                    {"y_px": 120, "kda": 36},
+                ],
+            },
+            "protein_label": {"text": ""},
+            "legend_zone": {"x": 5.0, "y": 6.0, "w": 100.0, "h": 80.0, "enabled": True},
+        }
+        assert "show_markers" not in data["legend_zone"]
+        assert "marker_side" not in data["legend_zone"]
+
+        blot = Blot.model_validate(data)
+        assert blot.legend_zone is not None
+        assert blot.legend_zone.x == 5.0
+        assert blot.legend_zone.enabled is True
+        assert blot.legend_zone.show_markers is True
+        assert blot.legend_zone.marker_side == "left"
 
 
 # ===========================================================================
@@ -348,3 +383,80 @@ class TestLegendRefactorRegression:
         scene_a = build_panel_scene(self.proj, self.ws)
         scene_b = build_panel_scene(self.proj, self.ws)
         assert len(scene_a.items()) == len(scene_b.items())
+
+
+# ===========================================================================
+# _compute_export_geometry: pure arithmetic, no Qt/QApplication required.
+# ===========================================================================
+
+from pysternblot.ui.export_mixin import _compute_export_geometry
+
+
+class TestComputeExportGeometry:
+
+    def test_zone_larger_than_crop_box_uses_zone_as_union(self):
+        """Zone already fully contains the crop box -> union == zone, and the crop
+        box's offset within the union matches its offset within the zone."""
+        lz = LegendZone(x=0.0, y=0.0, w=500.0, h=400.0)
+        crop = Crop(x=50.0, y=60.0, w=300.0, h=200.0)
+        ct = CropTemplate(w=300.0, h=200.0)
+
+        ex, ey, ew, eh, off_x, off_y = _compute_export_geometry(lz, crop, ct, pm_w=1000.0, pm_h=1000.0)
+
+        assert (ex, ey, ew, eh) == (0.0, 0.0, 500.0, 400.0)
+        assert off_x == pytest.approx(50.0)
+        assert off_y == pytest.approx(60.0)
+
+    def test_crop_box_extends_beyond_zone_expands_union(self):
+        """Zone is smaller than / offset from the crop box -> the expanded rect
+        must fully contain the crop box (CHANGE 1)."""
+        lz = LegendZone(x=100.0, y=100.0, w=50.0, h=50.0)  # small zone, disjoint-ish
+        crop = Crop(x=50.0, y=60.0, w=300.0, h=200.0)
+        ct = CropTemplate(w=300.0, h=200.0)
+
+        ex, ey, ew, eh, off_x, off_y = _compute_export_geometry(lz, crop, ct, pm_w=1000.0, pm_h=1000.0)
+
+        # Union must contain both rects.
+        assert ex <= min(lz.x, crop.x)
+        assert ey <= min(lz.y, crop.y)
+        assert ex + ew >= max(lz.x + lz.w, crop.x + ct.w)
+        assert ey + eh >= max(lz.y + lz.h, crop.y + ct.h)
+
+        # The crop box's sub-rect within the expanded region must land at the
+        # correct offset.
+        assert off_x == pytest.approx(crop.x - ex)
+        assert off_y == pytest.approx(crop.y - ey)
+        assert 0.0 <= off_x <= ew - ct.w + 1e-6
+        assert 0.0 <= off_y <= eh - ct.h + 1e-6
+
+    def test_union_clamped_to_pixmap_bounds(self):
+        """Crop box (or zone) extending past the pixmap edges must be clamped."""
+        lz = LegendZone(x=-50.0, y=-50.0, w=100.0, h=100.0)
+        crop = Crop(x=900.0, y=900.0, w=300.0, h=300.0)
+        ct = CropTemplate(w=300.0, h=300.0)
+
+        ex, ey, ew, eh, off_x, off_y = _compute_export_geometry(lz, crop, ct, pm_w=1000.0, pm_h=1000.0)
+
+        assert ex >= 0.0
+        assert ey >= 0.0
+        assert ex + ew <= 1000.0 + 1e-6
+        assert ey + eh <= 1000.0 + 1e-6
+
+    def test_offset_math_places_crop_box_correctly_within_export(self):
+        """End-to-end offset check matching CHANGE 2's img_col_x/img_col_w formula."""
+        lz = LegendZone(x=0.0, y=0.0, w=1754.0, h=1266.0)  # oversized user-drawn zone
+        crop = Crop(x=50.0, y=50.0, w=300.0, h=200.0)
+        ct = CropTemplate(w=300.0, h=200.0)
+
+        ex, ey, ew, eh, off_x, off_y = _compute_export_geometry(lz, crop, ct, pm_w=2000.0, pm_h=2000.0)
+
+        x0 = 20.0
+        ladder_w = 60.0
+        image_x = x0 + ladder_w
+        img_col_x = image_x + off_x
+        img_col_w = ct.w
+
+        # The crop-box sub-rect within the exported image spans exactly
+        # [img_col_x, img_col_x + img_col_w] measured from image_x.
+        assert img_col_x == pytest.approx(image_x + (crop.x - ex))
+        assert img_col_w == pytest.approx(300.0)

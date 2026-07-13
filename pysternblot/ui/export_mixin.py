@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QGraphicsScene
-from PySide6.QtGui import QPainter, QImage, QPdfWriter, QPageSize
+from PySide6.QtGui import QPainter, QImage, QPdfWriter, QPageSize, QFont, QPen
 from PySide6.QtCore import Qt, QRectF, QRect, QSize
 from PySide6.QtSvg import QSvgGenerator
 
@@ -20,6 +20,7 @@ from ..render import (
     build_provenance_scene,
     draw_legend_into_scene,
     _load_rotated_display_pixmap,
+    _band_visible_on_channel,
 )
 from ..integrity import (
     build_integrity_report,
@@ -38,6 +39,42 @@ def _nir_channel_path(base_path: str, channel_index: int, wavelength_nm: int | N
     else:
         suffix = f"_ch{channel_index}"
     return str(p.parent / f"{p.stem}{suffix}{ext}")
+
+
+def _compute_export_geometry(
+    lz, crop, crop_template, pm_w: float, pm_h: float,
+) -> tuple[float, float, float, float, float, float]:
+    """Pure geometry helper for the legend-zone export (no Qt required).
+
+    The legend zone (lz) and the figure crop box (crop.x/crop.y with
+    crop_template.w/h) are independent rectangles in the same original-image
+    pixel space. This computes their union — clamped to the pixmap bounds —
+    so the exported crop always fully contains the figure crop box, plus the
+    crop box's offset within that union (used to align the legend to the
+    crop box rather than to the raw zone width).
+
+    Returns (ex, ey, ew, eh, crop_off_x, crop_off_y).
+    """
+    cx, cy = float(crop.x), float(crop.y)
+    cw, ch_ = float(crop_template.w), float(crop_template.h)
+
+    ux = min(float(lz.x), cx)
+    uy = min(float(lz.y), cy)
+    ux2 = max(float(lz.x) + float(lz.w), cx + cw)
+    uy2 = max(float(lz.y) + float(lz.h), cy + ch_)
+
+    ux = max(0.0, min(ux, float(pm_w)))
+    uy = max(0.0, min(uy, float(pm_h)))
+    ux2 = max(0.0, min(ux2, float(pm_w)))
+    uy2 = max(0.0, min(uy2, float(pm_h)))
+
+    ex, ey = ux, uy
+    ew, eh = max(0.0, ux2 - ux), max(0.0, uy2 - uy)
+
+    crop_off_x = cx - ex
+    crop_off_y = cy - ey
+
+    return ex, ey, ew, eh, crop_off_x, crop_off_y
 
 
 class _ExportMixin:
@@ -424,6 +461,99 @@ class _ExportMixin:
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
 
+    def _draw_legend_zone_markers(self, scene, blot, lz, image_x: float, image_w: float, y_img: float, ey: float):
+        """Draws MW marker ticks/labels for the legend-zone export, reusing the same
+        band-lookup/highlight/filter logic as build_panel_scene's marker block.
+
+        Markers always render (never clipped to the drawn zone) — their y is derived
+        directly from assignment.y_px relative to the expanded crop's origin (ey), and
+        the crop box is always fully contained in that expanded crop by construction.
+        """
+        if not bool(getattr(lz, "show_markers", True)):
+            return
+
+        ladder = getattr(blot, "overlay_ladder", None)
+        if ladder is None or not getattr(ladder, "bands", None):
+            return
+
+        style = self.current_project.panel.style
+        marker_library = getattr(self.current_project, "marker_sets", []) or []
+        marker_set = next(
+            (ms for ms in marker_library if ms.id == ladder.marker_set_id), None
+        )
+
+        active_wavelength = None
+        if blot.is_nir() and blot.channels:
+            active_ch = next(
+                (c for c in blot.channels if c.channel_index == self._active_nir_channel), None
+            )
+            if active_ch is not None:
+                active_wavelength = active_ch.wavelength_nm
+
+        marker_font = QFont(style.font_family, int(style.kda_label_font_size_pt))
+        marker_font.setBold(False)
+
+        marker_pen = QPen(Qt.black)
+        marker_pen.setWidth(5)
+        marker_pen.setCosmetic(True)
+
+        marker_highlight_pen = QPen(Qt.black)
+        marker_highlight_pen.setWidth(8)
+        marker_highlight_pen.setCosmetic(True)
+
+        TICK_LEN = 50.0
+        GAP = 4.0
+        side = getattr(lz, "marker_side", "left")
+
+        if side == "right":
+            tick_x0 = image_x + image_w + GAP
+            tick_x1 = tick_x0 + TICK_LEN
+        else:
+            tick_x1 = image_x - GAP
+            tick_x0 = tick_x1 - TICK_LEN
+
+        for assignment in ladder.bands:
+            if not bool(getattr(assignment, "show_in_final", True)):
+                continue
+
+            kda = float(assignment.kda)
+
+            preset_band = None
+            if marker_set is not None:
+                preset_band = next(
+                    (b for b in marker_set.bands if abs(float(b.kda) - kda) < 0.001), None
+                )
+
+            if bool(getattr(ladder, "show_only_highlighted", False)) and marker_set is not None:
+                if preset_band is None or not bool(getattr(preset_band, "highlight", False)):
+                    continue
+
+            if blot.is_nir() and preset_band is not None:
+                if not _band_visible_on_channel(preset_band, active_wavelength):
+                    continue
+
+            is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
+            pen = marker_highlight_pen if is_highlighted else marker_pen
+
+            marker_y = y_img + (float(assignment.y_px) - ey)
+
+            scene.addLine(tick_x0, marker_y, tick_x1, marker_y, pen)
+
+            if bool(getattr(ladder, "show_labels", True)):
+                label = getattr(preset_band, "label", None) if preset_band else None
+                if not label:
+                    label = f"{kda:g}"
+                label = f"{label} kDa"
+
+                text_item = scene.addText(label, marker_font)
+                text_item.setDefaultTextColor(Qt.black)
+                br = text_item.boundingRect()
+
+                if side == "right":
+                    text_item.setPos(tick_x1 + GAP, marker_y - br.height() / 2.0)
+                else:
+                    text_item.setPos(tick_x0 - GAP - br.width(), marker_y - br.height() / 2.0)
+
     def export_legend_zone_png(self):
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -464,20 +594,31 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", "Could not load blot image.")
             return
 
-        cropped = pm_full.copy(QRect(int(lz.x), int(lz.y), int(lz.w), int(lz.h)))
+        crop = blot.get_channel_crop(self._active_nir_channel)
+        crop_template = self.current_project.panel.crop_template
+
+        ex, ey, ew, eh, crop_off_x, crop_off_y = _compute_export_geometry(
+            lz, crop, crop_template, float(pm_full.width()), float(pm_full.height())
+        )
+
+        cropped = pm_full.copy(QRect(int(round(ex)), int(round(ey)), int(round(ew)), int(round(eh))))
         if cropped.isNull() or cropped.width() == 0 or cropped.height() == 0:
             QMessageBox.critical(self, "Export error", "Legend export zone is empty or out of bounds.")
             return
 
         scene = QGraphicsScene()
         x0, y0 = 20.0, 20.0
-        img_col_x = x0
-        img_col_w = float(cropped.width())
+        ladder_w = float(self.current_project.panel.style.ladder_col_width_px)
+        image_x = x0 + ladder_w
+        img_col_x = image_x + crop_off_x
+        img_col_w = float(crop_template.w)
 
         y_img = draw_legend_into_scene(scene, self.current_project, x0, y0, img_col_x, img_col_w)
 
         img_item = scene.addPixmap(cropped)
-        img_item.setPos(img_col_x, y_img)
+        img_item.setPos(image_x, y_img)
+
+        self._draw_legend_zone_markers(scene, blot, lz, image_x, float(cropped.width()), y_img, ey)
 
         rect = scene.itemsBoundingRect()
         if not rect.isValid() or rect.isNull():

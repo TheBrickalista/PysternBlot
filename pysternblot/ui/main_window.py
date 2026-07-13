@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -23,6 +23,7 @@ from ..render import build_panel_scene, build_provenance_scene
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..models import (
     Blot,
+    LegendZone,
 )
 from .legend_tab import LegendTab
 from .zoomable_graphics_view import ZoomableGraphicsView
@@ -46,6 +47,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.current_project = None
         self.active_blot_id = None
         self.prov_grid_visible = False
+        self._legend_zone_visible = False
         self._active_nir_channel = 0
         self._nir_ch_btn_group = None
 
@@ -385,6 +387,31 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
         prov_row1.addWidget(self.prov_grid_cb)
 
+        self.legend_zone_cb = QCheckBox("Legend export zone")
+        self.legend_zone_cb.setToolTip(
+            "Show a second, draggable zone (blue) used to export a region of the "
+            "original image with the panel legend drawn above it."
+        )
+        self.legend_zone_cb.toggled.connect(self._on_legend_zone_toggled)
+        prov_row1.addWidget(self.legend_zone_cb)
+
+        self.legend_zone_markers_cb = QCheckBox("MW markers")
+        self.legend_zone_markers_cb.setChecked(True)
+        self.legend_zone_markers_cb.setEnabled(False)
+        self.legend_zone_markers_cb.setToolTip(
+            "Include MW marker ticks/labels in the Export Zone + Legend PNG."
+        )
+        self.legend_zone_markers_cb.toggled.connect(self._on_legend_zone_markers_toggled)
+        prov_row1.addWidget(self.legend_zone_markers_cb)
+
+        self.legend_zone_side_combo = QComboBox()
+        self.legend_zone_side_combo.addItem("Left", "left")
+        self.legend_zone_side_combo.addItem("Right", "right")
+        self.legend_zone_side_combo.setEnabled(False)
+        self.legend_zone_side_combo.setToolTip("Which side of the image the MW markers appear on in the export.")
+        self.legend_zone_side_combo.currentIndexChanged.connect(self._on_legend_zone_side_changed)
+        prov_row1.addWidget(self.legend_zone_side_combo)
+
         self.prov_fit_btn = QPushButton("Fit")
         self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
         self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
@@ -397,6 +424,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.export_all_original_tiff_btn = QPushButton("Export All Originals")
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
         prov_row1.addWidget(self.export_all_original_tiff_btn)
+
+        self.export_legend_zone_btn = QPushButton("Export Zone + Legend")
+        self.export_legend_zone_btn.setToolTip(
+            "Export the Legend export zone region with the panel legend drawn above it."
+        )
+        self.export_legend_zone_btn.clicked.connect(self.export_legend_zone_png)
+        prov_row1.addWidget(self.export_legend_zone_btn)
 
         hint = QLabel("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
         hint.setStyleSheet("color: #888888; font-size: 11px;")
@@ -450,7 +484,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         prov_rows.addLayout(prov_row1)
         prov_rows.addLayout(prov_row2)
-        prov_l.addLayout(prov_rows)
 
         prov_info_row = QHBoxLayout()
         self.prov_label = QLabel("Current blot: —")
@@ -460,7 +493,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov_info_row.addWidget(self.prov_label)
         prov_info_row.addWidget(self.prov_8bit_badge)
         prov_info_row.addStretch(1)
-        prov_l.addLayout(prov_info_row)
 
         # --- Display controls frame ---
         display_frame = QFrame()
@@ -603,8 +635,6 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)
         display_layout.addWidget(self.levels_histogram)
 
-        prov_l.addWidget(display_frame)
-
         # --- Overlay ladder annotation compact controls ---
         overlay_ladder_frame = QFrame()
         overlay_ladder_frame.setFrameShape(QFrame.StyledPanel)
@@ -660,11 +690,28 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         overlay_ladder_l.addStretch(1)
 
-        prov_l.addWidget(overlay_ladder_frame)
         self.prov_view = ZoomableGraphicsView()
         self.prov_view.setMinimumHeight(200)
         self.prov_view.viewport().installEventFilter(self)
-        prov_l.addWidget(self.prov_view)
+
+        prov_splitter = QSplitter(Qt.Vertical)
+        prov_splitter.setChildrenCollapsible(False)
+
+        prov_top = QWidget()
+        prov_top_l = QVBoxLayout(prov_top)
+        prov_top_l.setContentsMargins(0, 0, 0, 0)
+        prov_top_l.addLayout(prov_rows)
+        prov_top_l.addLayout(prov_info_row)
+        prov_top_l.addWidget(display_frame)
+        prov_top_l.addWidget(overlay_ladder_frame)
+        prov_top.setMinimumHeight(120)
+
+        prov_splitter.addWidget(prov_top)
+        prov_splitter.addWidget(self.prov_view)
+        prov_splitter.setStretchFactor(0, 0)
+        prov_splitter.setStretchFactor(1, 1)
+
+        prov_l.addWidget(prov_splitter, 1)
 
         self.tabs.addTab(prov, "Original Image")
 
@@ -986,6 +1033,26 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_grid_cb.blockSignals(True)
         self.prov_grid_cb.setChecked(bool(self.prov_grid_visible))
         self.prov_grid_cb.blockSignals(False)
+
+        self.legend_zone_cb.blockSignals(True)
+        self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
+        self.legend_zone_cb.blockSignals(False)
+
+        # Create the zone lazily (mirrors the checkbox path in render.py) so there's
+        # always something to read show_markers/marker_side from without crashing.
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        self.legend_zone_markers_cb.setEnabled(bool(self._legend_zone_visible))
+        self.legend_zone_markers_cb.blockSignals(True)
+        self.legend_zone_markers_cb.setChecked(bool(getattr(blot.legend_zone, "show_markers", True)))
+        self.legend_zone_markers_cb.blockSignals(False)
+
+        self.legend_zone_side_combo.setEnabled(bool(self._legend_zone_visible))
+        self.legend_zone_side_combo.blockSignals(True)
+        side_idx = self.legend_zone_side_combo.findData(getattr(blot.legend_zone, "marker_side", "left"))
+        self.legend_zone_side_combo.setCurrentIndex(side_idx if side_idx >= 0 else 0)
+        self.legend_zone_side_combo.blockSignals(False)
 
         self.levels_black_slider.blockSignals(True)
         self.levels_white_slider.blockSignals(True)
@@ -1512,6 +1579,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 on_crop_resize_commit=self._on_crop_resize_commit,
                 show_grid=self.prov_grid_visible,
                 nir_channel_index=self._active_nir_channel,
+                show_legend_zone=self._legend_zone_visible,
+                on_legend_zone_commit=self._on_legend_zone_commit,
             )
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
@@ -1548,6 +1617,29 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # refresh both views
         self.refresh_previews()
+
+    def _on_legend_zone_commit(self, blot):
+        """Mirrors _on_crop_changed but for the legend export zone — no crop
+        previews need regenerating since the legend zone doesn't affect them."""
+        if not self.current_project:
+            return
+
+        lz = blot.legend_zone
+        new_value = (
+            {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
+        )
+
+        self.log_operation(
+            "legend_zone_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone",
+            old_value=None,
+            new_value=new_value,
+        )
+
+        self.workspace.save_project(self.current_project)
 
     def _populate_prov_blot_combo(self):
         self.prov_blot_combo.blockSignals(True)
@@ -1897,6 +1989,65 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
         self.refresh_previews()
+
+    def _on_legend_zone_toggled(self, checked: bool):
+        self._legend_zone_visible = bool(checked)
+        self.legend_zone_markers_cb.setEnabled(bool(checked))
+        self.legend_zone_side_combo.setEnabled(bool(checked))
+        self.refresh_previews()
+
+    def _on_legend_zone_markers_toggled(self, checked: bool):
+        if not self.current_project:
+            return
+        blot = self._get_active_blot()
+        if blot is None:
+            return
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        old = blot.legend_zone.show_markers
+        new = bool(checked)
+        blot.legend_zone.show_markers = new
+
+        self.log_operation(
+            "legend_zone_markers_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone.show_markers",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
+
+    def _on_legend_zone_side_changed(self, _index: int):
+        if not self.current_project:
+            return
+        blot = self._get_active_blot()
+        if blot is None:
+            return
+
+        new = self.legend_zone_side_combo.currentData()
+        if new is None:
+            return
+        if blot.legend_zone is None:
+            blot.legend_zone = LegendZone()
+
+        old = blot.legend_zone.marker_side
+        if old == new:
+            return
+        blot.legend_zone.marker_side = new
+
+        self.log_operation(
+            "legend_zone_side_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone.marker_side",
+            old_value=old,
+            new_value=new,
+        )
+        self.workspace.save_project(self.current_project)
 
     def _on_levels_changed(self):
         blot = self._get_active_blot()

@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtWidgets import QGraphicsScene
-from PySide6.QtGui import QFont, QPixmap, QPen
+from PySide6.QtGui import QFont, QPixmap, QPen, QColor
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Blot, Crop, MarkerBand, Project, LegendRow
+from .models import Blot, Crop, MarkerBand, Project, LegendRow, LegendZone
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -174,6 +174,204 @@ def derive_lane_groups(
     return spans, errors
 
 
+def _draw_legend_row_core(
+    scene: QGraphicsScene,
+    style,
+    row: LegendRow,
+    y: float,
+    left_col_x: float,
+    ladder_w: float,
+    img_col_x: float,
+    img_col_w: float,
+    right_col_x: float,
+    lane_row: LegendRow | None = None,
+    underline_above: bool = False,
+) -> float:
+    """
+    Draws a single legend row into `scene`. Returns next y.
+
+    Extracted from build_panel_scene's Figure-tab legend rendering so it can be
+    reused by draw_legend_into_scene() (legend export zone) without duplicating
+    the alignment/underline math. Behaviour is unchanged from the original
+    nested implementation — only closure variables became explicit parameters.
+
+    lane_row: the row that provides lane geometry (cell count, cell_groups).
+      - Upper-only block: pass lane_row=upper[-1] for every upper row; the last
+        upper row is the per-lane reference, all rows above it group over it.
+      - Mixed (upper + lower): pass lane_row=lower_rows[0] for upper rows.
+      - Lower rows: pass lane_row=row (self-referential).
+
+    underline_above: when True the underline sits above this row's text (y - 6),
+      placing it between group-label rows above and per-lane labels below.
+      When False (default / lower-rows path) it sits below (y + text_h + 4).
+
+    Underlines fire only when lane_row is row (i.e. this IS the lane_ref row).
+    """
+    s = style
+    row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
+    row_font = QFont(s.font_family, int(row_font_size))
+
+    # helper: accurate text centering using boundingRect (not QFontMetrics)
+    def _add_text_centered(text: str, cx: float, y0: float) -> None:
+        t = scene.addText(text, row_font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(cx - br.width() / 2.0, y0)
+
+    def _add_text_left(text: str, x: float, y0: float) -> None:
+        t = scene.addText(text, row_font)
+        t.setDefaultTextColor(Qt.black)
+        t.setPos(x, y0)
+
+    def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
+        t = scene.addText(text, row_font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
+
+    # --- measure text height once ---
+    tmp = scene.addText("Ag", row_font)
+    text_h = tmp.boundingRect().height()
+    scene.removeItem(tmp)
+
+    # ----- lane geometry from the lane reference row -----
+    _lr = lane_row if lane_row is not None else row
+    n_lanes = max(1, len(_lr.cells)) if _lr.cells else 1
+    lane_w = img_col_w / float(n_lanes)
+
+    _raw_lg = list(getattr(_lr, "cell_groups", []) or [])
+    _lane_cell_groups = (_raw_lg + [0] * n_lanes)[:n_lanes]
+    spans, _errors = derive_lane_groups(_lane_cell_groups)
+
+    # ----- this row's cells and per-cell group ids -----
+    cells = list(row.cells or [])
+    n_cells = len(cells)
+    _raw_cg = list(getattr(row, "cell_groups", []) or [])
+    cell_group_ids = (_raw_cg + [0] * n_cells)[:n_cells]
+
+    # Left label (centered in ladder column)
+    if row.left:
+        _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
+
+    # ----- compute per-cell centers -----
+    # Lane-reference row: every cell sits at its own per-lane position so that
+    # per-lane labels (e.g. "Control"/"PNGase F") do not collapse to the group
+    # center and overprint.  Group ids on this row drive the underline only.
+    # Non-lane-ref rows (group-label rows above): span-center when grouped.
+    is_lane_ref_row = (row is _lr)
+    own_step = img_col_w / float(n_cells) if n_cells > 0 else img_col_w
+    centers: list[float] = []
+    for i in range(n_cells):
+        gid = cell_group_ids[i]
+        if (not is_lane_ref_row) and gid != 0 and gid in spans:
+            a, b = spans[gid]
+            cx = img_col_x + (a + b + 1) / 2.0 * lane_w
+        else:
+            # Lane-ref: per-lane center (lane_w = img_col_w/n_lanes = own_step here).
+            # Non-lane-ref ungrouped: per-cell even distribution.
+            cx = img_col_x + (i + 0.5) * (lane_w if is_lane_ref_row else own_step)
+        centers.append(cx)
+
+    for cx, txt in zip(centers, cells):
+        txt = (txt or "").strip()
+        if not txt:
+            continue
+        _add_text_centered(txt, cx, y)
+
+    # Right label (left aligned in protein column)
+    if row.right:
+        _add_text_left(row.right, right_col_x, y)
+
+    # ----- underlines: lane-reference row only -----
+    underline_drawn = False
+    if lane_row is row and spans:
+        # Option (a): when we are the last row of an upper block that has rows
+        # above it, draw the line ABOVE our text so it sits in the gap between
+        # group labels and per-lane labels.  For lower-rows (underline_above=False)
+        # keep the original below-text position.
+        underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
+        pen = QPen(Qt.black, 2)
+        pen.setCapStyle(Qt.FlatCap)
+        gap_px = 40.0
+        pad = gap_px / 2.0
+        for gid, (a, b) in spans.items():
+            x_start = img_col_x + a * lane_w
+            x_end = img_col_x + (b + 1) * lane_w
+            x1 = x_start + pad
+            x2 = x_end - pad
+            if x2 > x1 + 1.0:
+                scene.addLine(x1, underline_y, x2, underline_y, pen)
+                underline_drawn = True
+
+    # When the underline is above our text it is already in the preceding gap,
+    # so no extra trailing space is needed.  Only inflate spacing for the
+    # original below-text case.
+    extra = 14.0 if (underline_drawn and not underline_above) else 8.0
+    return y + text_h + extra
+
+
+def draw_legend_into_scene(
+    scene: QGraphicsScene,
+    project: Project,
+    x0: float,
+    y0: float,
+    img_col_x: float,
+    img_col_w: float,
+) -> float:
+    """
+    Draws project.panel.legend (upper_rows then lower_rows, stacked) into `scene`
+    starting at y0, spanning img_col_w. Returns the y position just below the
+    last row drawn (y0 unchanged if there is no legend).
+
+    Reuses the same per-row renderer as the Figure tab (build_panel_scene) so
+    an exported legend zone matches the figure legend styling exactly. Used by
+    the "Export Zone + Legend" action to draw the legend above a cropped region
+    of the original image.
+    """
+    s = project.panel.style
+    legend = getattr(project.panel, "legend", None)
+    if not legend:
+        return y0
+
+    ladder_w = float(s.ladder_col_width_px)
+    left_col_x = x0
+    col_gap = 10.0
+    right_col_x = img_col_x + img_col_w + col_gap
+
+    def _row(row, y, lane_row=None, underline_above=False):
+        return _draw_legend_row_core(
+            scene, s, row, y, left_col_x, ladder_w, img_col_x, img_col_w, right_col_x,
+            lane_row=lane_row, underline_above=underline_above,
+        )
+
+    y = y0
+    has_upper = bool(getattr(legend, "upper_rows", None))
+    has_lower = bool(getattr(legend, "lower_rows", None))
+
+    if has_upper:
+        upper = legend.upper_rows
+        if has_lower:
+            _lane_ref = legend.lower_rows[0]
+            for row in upper:
+                y = _row(row, y, lane_row=_lane_ref)
+        else:
+            _lane_ref = upper[-1]
+            _ul_above = len(upper) > 1
+            for row in upper:
+                y = _row(row, y, lane_row=_lane_ref, underline_above=_ul_above)
+
+    if has_lower:
+        if has_upper:
+            y += 10.0
+        for row in legend.lower_rows:
+            y = _row(row, y, lane_row=row)
+
+    if has_upper or has_lower:
+        y += 10.0  # gap before the image
+
+    return y
+
+
 def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     """
     Final Result view = (optional) legend + stacked cropped previews + protein labels.
@@ -265,130 +463,20 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         br = t.boundingRect()
         t.setPos(col_x + (col_w - br.width()) / 2.0, y)
 
-    # ---- legend row renderer ----
+    # ---- legend row renderer (extracted to module-level _draw_legend_row_core
+    # so draw_legend_into_scene() — used by the legend export zone — can reuse
+    # the exact same alignment/underline math) ----
     def _draw_legend_row(
         row: LegendRow,
         y: float,
         lane_row: LegendRow | None = None,
         underline_above: bool = False,
     ) -> float:
-        """
-        Returns next y.
+        return _draw_legend_row_core(
+            scene, s, row, y, left_col_x, ladder_w, img_col_x, img_col_w, right_col_x,
+            lane_row=lane_row, underline_above=underline_above,
+        )
 
-        lane_row: the row that provides lane geometry (cell count, cell_groups).
-          - Upper-only block: pass lane_row=upper[-1] for every upper row; the last
-            upper row is the per-lane reference, all rows above it group over it.
-          - Mixed (upper + lower): pass lane_row=lower_rows[0] for upper rows.
-          - Lower rows: pass lane_row=row (self-referential).
-
-        underline_above: when True the underline sits above this row's text (y - 6),
-          placing it between group-label rows above and per-lane labels below.
-          When False (default / lower-rows path) it sits below (y + text_h + 4).
-
-        Underlines fire only when lane_row is row (i.e. this IS the lane_ref row).
-        """
-        row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
-        row_font = QFont(s.font_family, int(row_font_size))
-
-        # helper: accurate text centering using boundingRect (not QFontMetrics)
-        def _add_text_centered(text: str, cx: float, y0: float) -> None:
-            t = scene.addText(text, row_font)
-            t.setDefaultTextColor(Qt.black)
-            br = t.boundingRect()
-            t.setPos(cx - br.width() / 2.0, y0)
-
-        def _add_text_left(text: str, x: float, y0: float) -> None:
-            t = scene.addText(text, row_font)
-            t.setDefaultTextColor(Qt.black)
-            t.setPos(x, y0)
-
-        def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
-            t = scene.addText(text, row_font)
-            t.setDefaultTextColor(Qt.black)
-            br = t.boundingRect()
-            t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
-
-        # --- measure text height once ---
-        tmp = scene.addText("Ag", row_font)
-        text_h = tmp.boundingRect().height()
-        scene.removeItem(tmp)
-
-        # ----- lane geometry from the lane reference row -----
-        _lr = lane_row if lane_row is not None else row
-        n_lanes = max(1, len(_lr.cells)) if _lr.cells else 1
-        lane_w = img_col_w / float(n_lanes)
-
-        _raw_lg = list(getattr(_lr, "cell_groups", []) or [])
-        _lane_cell_groups = (_raw_lg + [0] * n_lanes)[:n_lanes]
-        spans, _errors = derive_lane_groups(_lane_cell_groups)
-
-        # ----- this row's cells and per-cell group ids -----
-        cells = list(row.cells or [])
-        n_cells = len(cells)
-        _raw_cg = list(getattr(row, "cell_groups", []) or [])
-        cell_group_ids = (_raw_cg + [0] * n_cells)[:n_cells]
-
-        # Left label (centered in ladder column)
-        if row.left:
-            _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
-
-        # ----- compute per-cell centers -----
-        # Lane-reference row: every cell sits at its own per-lane position so that
-        # per-lane labels (e.g. "Control"/"PNGase F") do not collapse to the group
-        # center and overprint.  Group ids on this row drive the underline only.
-        # Non-lane-ref rows (group-label rows above): span-center when grouped.
-        is_lane_ref_row = (row is _lr)
-        own_step = img_col_w / float(n_cells) if n_cells > 0 else img_col_w
-        centers: list[float] = []
-        for i in range(n_cells):
-            gid = cell_group_ids[i]
-            if (not is_lane_ref_row) and gid != 0 and gid in spans:
-                a, b = spans[gid]
-                cx = img_col_x + (a + b + 1) / 2.0 * lane_w
-            else:
-                # Lane-ref: per-lane center (lane_w = img_col_w/n_lanes = own_step here).
-                # Non-lane-ref ungrouped: per-cell even distribution.
-                cx = img_col_x + (i + 0.5) * (lane_w if is_lane_ref_row else own_step)
-            centers.append(cx)
-
-        for cx, txt in zip(centers, cells):
-            txt = (txt or "").strip()
-            if not txt:
-                continue
-            _add_text_centered(txt, cx, y)
-
-        # Right label (left aligned in protein column)
-        if row.right:
-            _add_text_left(row.right, right_col_x, y)
-
-        # ----- underlines: lane-reference row only -----
-        underline_drawn = False
-        if lane_row is row and spans:
-            # Option (a): when we are the last row of an upper block that has rows
-            # above it, draw the line ABOVE our text so it sits in the gap between
-            # group labels and per-lane labels.  For lower-rows (underline_above=False)
-            # keep the original below-text position.
-            underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
-            pen = QPen(Qt.black, 2)
-            pen.setCapStyle(Qt.FlatCap)
-            gap_px = 40.0
-            pad = gap_px / 2.0
-            for gid, (a, b) in spans.items():
-                x_start = img_col_x + a * lane_w
-                x_end = img_col_x + (b + 1) * lane_w
-                x1 = x_start + pad
-                x2 = x_end - pad
-                if x2 > x1 + 1.0:
-                    scene.addLine(x1, underline_y, x2, underline_y, pen)
-                    underline_drawn = True
-
-        # When the underline is above our text it is already in the preceding gap,
-        # so no extra trailing space is needed.  Only inflate spacing for the
-        # original below-text case.
-        extra = 14.0 if (underline_drawn and not underline_above) else 8.0
-        return y + text_h + extra
-    
-    
     y = y0
 
     # ---- upper legend ----
@@ -543,6 +631,8 @@ def build_provenance_scene(
     on_crop_resize_commit=None,
     show_grid: bool = False,
     nir_channel_index: int = 0,
+    show_legend_zone: bool = False,
+    on_legend_zone_commit=None,
 ) -> QGraphicsScene:
     """
     Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
@@ -550,6 +640,12 @@ def build_provenance_scene(
 
     For NIR blots, nir_channel_index selects which channel's image and display settings to show.
     Default 0 means existing ECL callers are unaffected.
+
+    When show_legend_zone is True, a second CropRectItem (visually distinct — blue
+    dashed pen) is added for blot.legend_zone, an optional per-blot export zone used
+    by "Export Zone + Legend". A default LegendZone centered on the image is created
+    if blot.legend_zone is None. on_legend_zone_commit(blot) fires after a move or
+    resize commit, mirroring on_crop_commit but without touching crop state.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -695,6 +791,64 @@ def build_provenance_scene(
         on_resize_commit=_on_resize_commit,
     )
     scene.addItem(rect_item)
+
+    # --- Optional legend export zone (second, visually distinct rect) ---
+    if show_legend_zone:
+        if blot.legend_zone is None:
+            default_w, default_h = 300.0, 200.0
+            default_x = max(0.0, (float(pm.width()) - default_w) / 2.0)
+            default_y = max(0.0, (float(pm.height()) - default_h) / 2.0)
+            # enabled=True: the zone only comes into existence by opting in via the
+            # "Legend export zone" checkbox, so it's usable for export immediately.
+            blot.legend_zone = LegendZone(x=default_x, y=default_y, w=default_w, h=default_h, enabled=True)
+
+        def _apply_legend_zone_from_scene_rect(scene_rect: QRectF) -> None:
+            # Convert scene coords -> image pixel coords (same pattern as the crop rect)
+            x = float(scene_rect.x() - x0)
+            y = float(scene_rect.y() - y0)
+            w = float(scene_rect.width())
+            h = float(scene_rect.height())
+
+            if w < 1: w = 1
+            if h < 1: h = 1
+            if x < 0: x = 0
+            if y < 0: y = 0
+            if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
+            if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
+
+            if blot.legend_zone is None:
+                blot.legend_zone = LegendZone()
+            blot.legend_zone.x = x
+            blot.legend_zone.y = y
+            blot.legend_zone.w = w
+            blot.legend_zone.h = h
+
+        def _on_legend_zone_move_commit(scene_rect: QRectF) -> None:
+            _apply_legend_zone_from_scene_rect(scene_rect)
+            if callable(on_legend_zone_commit):
+                on_legend_zone_commit(blot)
+
+        def _on_legend_zone_resize_commit(scene_rect: QRectF) -> None:
+            _apply_legend_zone_from_scene_rect(scene_rect)
+            if callable(on_legend_zone_commit):
+                on_legend_zone_commit(blot)
+
+        lz = blot.legend_zone
+        legend_zone_rect = QRectF(
+            x0 + float(lz.x),
+            y0 + float(lz.y),
+            float(lz.w),
+            float(lz.h),
+        )
+
+        legend_item = CropRectItem(
+            legend_zone_rect,
+            on_change=_apply_legend_zone_from_scene_rect,
+            on_move_commit=_on_legend_zone_move_commit,
+            on_resize_commit=_on_legend_zone_resize_commit,
+        )
+        legend_item.setPen(QPen(QColor("#1e88e5"), 2, Qt.DashLine))  # blue vs black crop
+        scene.addItem(legend_item)
 
     # --- Overlay ladder annotations ---
     ladder = getattr(blot, "overlay_ladder", None)

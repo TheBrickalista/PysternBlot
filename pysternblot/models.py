@@ -53,6 +53,17 @@ class CropTemplate(BaseModel):
     w: float = 300.0
     h: float = 200.0
 
+class LegendZone(BaseModel):
+    """Optional per-blot export zone (absolute image pixel coords) used to export
+    a region of the original image with the panel legend drawn above it."""
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 300.0
+    h: float = 200.0
+    enabled: bool = False
+    show_markers: bool = True
+    marker_side: Literal["left", "right"] = "left"
+
 class CalibrationPoint(BaseModel):
     y_px: float
     kda: float
@@ -157,6 +168,7 @@ class Blot(BaseModel):
     protein_label: ProteinLabel
     display: DisplaySettings = DisplaySettings()
     overlay_ladder: Optional[OverlayLadder] = None
+    legend_zone: Optional[LegendZone] = None
     included_in_final: bool = True
     antibody_name: str = ""
     display_name: Optional[str] = None

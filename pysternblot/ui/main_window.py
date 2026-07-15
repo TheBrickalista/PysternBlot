@@ -107,6 +107,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         library_l.addWidget(self.library_table)
 
+        self._library_tab = library_widget
         self.tabs.addTab(library_widget, "Library")
 
         # Preferences tab
@@ -860,7 +861,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         btn_row.addStretch(1)
 
         new_btn = self._make_home_button("New Project", self.new_project)
-        open_btn = self._make_home_button("Open Project", self.open_project)
+        open_btn = self._make_home_button("Open Project", self._goto_library_tab)
+        open_btn.setToolTip(
+            "Browse projects in this workspace.\n"
+            "To open a project from elsewhere on disk, use Open Project… in the toolbar."
+        )
         import_btn = self._make_home_button("Import Blot", self.import_blot)
         export_lib_btn = self._make_home_button("Export Library…", self.export_library)
         import_lib_btn = self._make_home_button("Import Library…", self.import_library)
@@ -985,6 +990,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def _goto_about_tab(self):
         if hasattr(self, "_about_tab"):
             self.tabs.setCurrentWidget(self._about_tab)
+
+    def _goto_library_tab(self):
+        if hasattr(self, "_library_tab"):
+            self.refresh_library()
+            self.tabs.setCurrentWidget(self._library_tab)
 
     def _toolbar(self):
         tb = QToolBar("Main")

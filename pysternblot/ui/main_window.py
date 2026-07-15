@@ -311,10 +311,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         prov = QWidget()
         prov_l = QVBoxLayout(prov)
 
+        def _make_vsep() -> QFrame:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.VLine)
+            sep.setFrameShadow(QFrame.Sunken)
+            sep.setStyleSheet("color: #c8c8c8;")
+            sep.setFixedWidth(2)
+            return sep
+
         prov_rows = QVBoxLayout()
         prov_rows.setSpacing(4)
 
+        # --- Row 1: blot identity ---
         prov_row1 = QHBoxLayout()
+        prov_row1.setSpacing(6)
+
         prov_row1.addWidget(QLabel("Blot"))
         self.prov_blot_combo = QComboBox()
         self.prov_blot_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
@@ -335,57 +346,25 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rename_btn.clicked.connect(self._on_blot_rename)
         prov_row1.addWidget(self.prov_rename_btn)
 
-        prov_row1.addWidget(QLabel("Rotate"))
+        prov_row1.addSpacing(10)
+        self._nir_ch_sep = _make_vsep()
+        prov_row1.addWidget(self._nir_ch_sep)
+        prov_row1.addSpacing(10)
 
-        self.prov_rotate_dial = QDial()
-        self.prov_rotate_dial.setRange(-100, 100)   # maps to -10.0° to +10.0°
-        self.prov_rotate_dial.setSingleStep(1)
-        self.prov_rotate_dial.setNotchesVisible(True)
-        self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
-        prov_row1.addWidget(self.prov_rotate_dial)
+        # NIR channel selector — hidden for ECL blots, shown for multi-channel NIR
+        self._nir_ch_widget = QWidget()
+        self._nir_ch_layout = QHBoxLayout(self._nir_ch_widget)
+        self._nir_ch_layout.setContentsMargins(0, 0, 8, 0)
+        self._nir_ch_layout.setSpacing(6)
+        self._nir_ch_widget.setVisible(False)
+        self._nir_ch_sep.setVisible(False)
+        prov_row1.addWidget(self._nir_ch_widget)
 
-        self.prov_rotate_label = QLineEdit("0.0")
-        self.prov_rotate_label.setFixedWidth(52)
-        self.prov_rotate_label.setAlignment(Qt.AlignRight)
-        self.prov_rotate_label.setValidator(QDoubleValidator(-10.0, 10.0, 1))
-        self.prov_rotate_label.setToolTip("Rotation angle in degrees (−10.0 to +10.0). Edit directly or use the dial.")
-        self.prov_rotate_label.editingFinished.connect(self._on_rotate_label_edited)
-        prov_row1.addWidget(self.prov_rotate_label)
-        prov_row1.addWidget(QLabel("°"))
+        prov_row1.addStretch(1)
 
-        prov_row1.addSpacing(8)
-
-        self._rotate_ccw_btn = QPushButton("↺")
-        self._rotate_ccw_btn.setFixedWidth(32)
-        self._rotate_ccw_btn.setToolTip("Rotate 90° counter-clockwise")
-        self._rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
-        prov_row1.addWidget(self._rotate_ccw_btn)
-
-        self._rotate_cw_btn = QPushButton("↻")
-        self._rotate_cw_btn.setFixedWidth(32)
-        self._rotate_cw_btn.setToolTip("Rotate 90° clockwise")
-        self._rotate_cw_btn.clicked.connect(self._on_rotate_cw)
-        prov_row1.addWidget(self._rotate_cw_btn)
-
-        self._flip_h_btn = QPushButton("⇔")
-        self._flip_h_btn.setFixedWidth(32)
-        self._flip_h_btn.setCheckable(True)
-        self._flip_h_btn.setToolTip("Flip horizontal (mirror left-right)")
-        self._flip_h_btn.clicked.connect(self._on_flip_horizontal)
-        prov_row1.addWidget(self._flip_h_btn)
-
-        self._flip_v_btn = QPushButton("↕")
-        self._flip_v_btn.setFixedWidth(32)
-        self._flip_v_btn.setCheckable(True)
-        self._flip_v_btn.setToolTip("Flip vertical (mirror top-bottom)")
-        self._flip_v_btn.clicked.connect(self._on_flip_vertical)
-        prov_row1.addWidget(self._flip_v_btn)
-
-        prov_row1.addSpacing(8)
-
-        self.prov_grid_cb = QCheckBox("Grid")
-        self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
-        prov_row1.addWidget(self.prov_grid_cb)
+        # --- Row 2: export controls ---
+        prov_row2 = QHBoxLayout()
+        prov_row2.setSpacing(6)
 
         self.legend_zone_cb = QCheckBox("Legend export zone")
         self.legend_zone_cb.setToolTip(
@@ -393,7 +372,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "original image with the panel legend drawn above it."
         )
         self.legend_zone_cb.toggled.connect(self._on_legend_zone_toggled)
-        prov_row1.addWidget(self.legend_zone_cb)
+        prov_row2.addWidget(self.legend_zone_cb)
 
         self.legend_zone_markers_cb = QCheckBox("MW markers")
         self.legend_zone_markers_cb.setChecked(True)
@@ -402,7 +381,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "Include MW marker ticks/labels in the Export Zone + Legend PNG."
         )
         self.legend_zone_markers_cb.toggled.connect(self._on_legend_zone_markers_toggled)
-        prov_row1.addWidget(self.legend_zone_markers_cb)
+        prov_row2.addWidget(self.legend_zone_markers_cb)
 
         self.legend_zone_side_combo = QComboBox()
         self.legend_zone_side_combo.addItem("Left", "left")
@@ -410,80 +389,126 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_zone_side_combo.setEnabled(False)
         self.legend_zone_side_combo.setToolTip("Which side of the image the MW markers appear on in the export.")
         self.legend_zone_side_combo.currentIndexChanged.connect(self._on_legend_zone_side_changed)
-        prov_row1.addWidget(self.legend_zone_side_combo)
-
-        self.prov_fit_btn = QPushButton("Fit")
-        self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
-        self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
-        prov_row1.addWidget(self.prov_fit_btn)
-
-        self.export_original_tiff_btn = QPushButton("Export Original TIFF")
-        self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
-        prov_row1.addWidget(self.export_original_tiff_btn)
-
-        self.export_all_original_tiff_btn = QPushButton("Export All Originals")
-        self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
-        prov_row1.addWidget(self.export_all_original_tiff_btn)
+        prov_row2.addWidget(self.legend_zone_side_combo)
 
         self.export_legend_zone_btn = QPushButton("Export Zone + Legend")
         self.export_legend_zone_btn.setToolTip(
             "Export the Legend export zone region with the panel legend drawn above it."
         )
         self.export_legend_zone_btn.clicked.connect(self.export_legend_zone_png)
-        prov_row1.addWidget(self.export_legend_zone_btn)
+        prov_row2.addWidget(self.export_legend_zone_btn)
 
-        hint = QLabel("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
-        hint.setStyleSheet("color: #888888; font-size: 11px;")
-        prov_row1.addSpacing(12)
-        prov_row1.addWidget(hint)
+        self.export_original_tiff_btn = QPushButton("Export Original TIFF")
+        self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
+        prov_row2.addWidget(self.export_original_tiff_btn)
 
-        prov_row1.addStretch(1)
+        self.export_all_original_tiff_btn = QPushButton("Export All Originals")
+        self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
+        prov_row2.addWidget(self.export_all_original_tiff_btn)
 
-        prov_row2 = QHBoxLayout()
+        prov_row2.addStretch(1)
 
-        # NIR channel selector — hidden for ECL blots, shown for multi-channel NIR
-        self._nir_ch_widget = QWidget()
-        self._nir_ch_layout = QHBoxLayout(self._nir_ch_widget)
-        self._nir_ch_layout.setContentsMargins(0, 0, 8, 0)
-        self._nir_ch_layout.setSpacing(6)
-        self._nir_ch_widget.setVisible(False)
-        prov_row2.addWidget(self._nir_ch_widget)
+        # --- Row 3: image transforms + blot metadata ---
+        prov_row3 = QHBoxLayout()
+        prov_row3.setSpacing(6)
 
-        prov_row2.addWidget(QLabel("Protein"))
+        prov_row3.addWidget(QLabel("Rotate"))
+
+        self.prov_rotate_dial = QDial()
+        self.prov_rotate_dial.setRange(-100, 100)   # maps to -10.0° to +10.0°
+        self.prov_rotate_dial.setSingleStep(1)
+        self.prov_rotate_dial.setNotchesVisible(True)
+        self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
+        prov_row3.addWidget(self.prov_rotate_dial)
+
+        self.prov_rotate_label = QLineEdit("0.0")
+        self.prov_rotate_label.setFixedWidth(52)
+        self.prov_rotate_label.setAlignment(Qt.AlignRight)
+        self.prov_rotate_label.setValidator(QDoubleValidator(-10.0, 10.0, 1))
+        self.prov_rotate_label.setToolTip("Rotation angle in degrees (−10.0 to +10.0). Edit directly or use the dial.")
+        self.prov_rotate_label.editingFinished.connect(self._on_rotate_label_edited)
+        prov_row3.addWidget(self.prov_rotate_label)
+        prov_row3.addWidget(QLabel("°"))
+
+        prov_row3.addSpacing(8)
+
+        self._rotate_ccw_btn = QPushButton("↺")
+        self._rotate_ccw_btn.setFixedWidth(32)
+        self._rotate_ccw_btn.setToolTip("Rotate 90° counter-clockwise")
+        self._rotate_ccw_btn.clicked.connect(self._on_rotate_ccw)
+        prov_row3.addWidget(self._rotate_ccw_btn)
+
+        self._rotate_cw_btn = QPushButton("↻")
+        self._rotate_cw_btn.setFixedWidth(32)
+        self._rotate_cw_btn.setToolTip("Rotate 90° clockwise")
+        self._rotate_cw_btn.clicked.connect(self._on_rotate_cw)
+        prov_row3.addWidget(self._rotate_cw_btn)
+
+        self._flip_h_btn = QPushButton("⇔")
+        self._flip_h_btn.setFixedWidth(32)
+        self._flip_h_btn.setCheckable(True)
+        self._flip_h_btn.setToolTip("Flip horizontal (mirror left-right)")
+        self._flip_h_btn.clicked.connect(self._on_flip_horizontal)
+        prov_row3.addWidget(self._flip_h_btn)
+
+        self._flip_v_btn = QPushButton("↕")
+        self._flip_v_btn.setFixedWidth(32)
+        self._flip_v_btn.setCheckable(True)
+        self._flip_v_btn.setToolTip("Flip vertical (mirror top-bottom)")
+        self._flip_v_btn.clicked.connect(self._on_flip_vertical)
+        prov_row3.addWidget(self._flip_v_btn)
+
+        prov_row3.addSpacing(8)
+
+        self.prov_grid_cb = QCheckBox("Grid")
+        self.prov_grid_cb.toggled.connect(self._on_prov_grid_toggled)
+        prov_row3.addWidget(self.prov_grid_cb)
+
+        self.prov_fit_btn = QPushButton("Fit")
+        self.prov_fit_btn.clicked.connect(lambda: self.prov_view.fit_scene())
+        self.prov_fit_btn.setToolTip("Fit image in view (or double-click the canvas)")
+        prov_row3.addWidget(self.prov_fit_btn)
+
+        prov_row3.addSpacing(10)
+        prov_row3.addWidget(_make_vsep())
+        prov_row3.addSpacing(10)
+
+        prov_row3.addWidget(QLabel("Protein"))
         self.protein_label_combo = QComboBox()
         self.protein_label_combo.setEditable(True)
         self.protein_label_combo.setInsertPolicy(QComboBox.NoInsert)
         self.protein_label_combo.setMinimumWidth(180)
         self.protein_label_combo.lineEdit().editingFinished.connect(self._on_protein_label_changed)
         self.protein_label_combo.activated.connect(self._on_protein_label_changed)
-        prov_row2.addWidget(self.protein_label_combo)
+        prov_row3.addWidget(self.protein_label_combo)
 
-        prov_row2.addWidget(QLabel("Antibody"))
+        prov_row3.addWidget(QLabel("Antibody"))
         self.antibody_name_combo = QComboBox()
         self.antibody_name_combo.setEditable(True)
         self.antibody_name_combo.setInsertPolicy(QComboBox.NoInsert)
         self.antibody_name_combo.setMinimumWidth(180)
         self.antibody_name_combo.lineEdit().editingFinished.connect(self._on_antibody_name_changed)
         self.antibody_name_combo.activated.connect(self._on_antibody_name_changed)
-        prov_row2.addWidget(self.antibody_name_combo)
+        prov_row3.addWidget(self.antibody_name_combo)
 
-        prov_row2.addWidget(QLabel("Size"))
+        prov_row3.addWidget(QLabel("Size"))
 
         self.protein_font_size_spin = QSpinBox()
         self.protein_font_size_spin.setRange(4, 48)
         self.protein_font_size_spin.setValue(9)
         self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
-        prov_row2.addWidget(self.protein_font_size_spin)
+        prov_row3.addWidget(self.protein_font_size_spin)
 
         self.include_in_final_cb = QCheckBox("Include in final figure")
         self.include_in_final_cb.setChecked(True)
         self.include_in_final_cb.toggled.connect(self._on_include_in_final_toggled)
-        prov_row2.addWidget(self.include_in_final_cb)
+        prov_row3.addWidget(self.include_in_final_cb)
 
-        prov_row2.addStretch(1)
+        prov_row3.addStretch(1)
 
         prov_rows.addLayout(prov_row1)
         prov_rows.addLayout(prov_row2)
+        prov_rows.addLayout(prov_row3)
 
         prov_info_row = QHBoxLayout()
         self.prov_label = QLabel("Current blot: —")
@@ -721,6 +746,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         overlay_ladder_l.addStretch(1)
 
         self.prov_view = ZoomableGraphicsView()
+        self.prov_view.setToolTip("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
         self.prov_view.setMinimumHeight(200)
         self.prov_view.viewport().installEventFilter(self)
 
@@ -1493,9 +1519,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not blot or not blot.is_nir() or len(blot.channels) <= 1:
             self._active_nir_channel = 0
             self._nir_ch_widget.setVisible(False)
+            self._nir_ch_sep.setVisible(False)
             return
 
         self._nir_ch_widget.setVisible(True)
+        self._nir_ch_sep.setVisible(True)
         lbl = QLabel("Channel:")
         self._nir_ch_layout.addWidget(lbl)
 

@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
 from PySide6.QtCore import Qt
@@ -496,6 +496,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # --- Display controls frame ---
         display_frame = QFrame()
+        self._display_frame = display_frame
         display_frame.setFrameShape(QFrame.StyledPanel)
         display_frame.setStyleSheet("""
             QFrame {
@@ -508,9 +509,36 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         display_layout.setContentsMargins(10, 8, 10, 10)
         display_layout.setSpacing(8)
 
-        display_title = QLabel("Display")
-        display_title.setStyleSheet("font-weight: 600; color: #333333;")
-        display_layout.addWidget(display_title)
+        self.display_toggle_btn = QToolButton()
+        self.display_toggle_btn.setCheckable(True)
+        self.display_toggle_btn.setChecked(True)
+        self.display_toggle_btn.setText("⌄   Display")
+        self.display_toggle_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.display_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.display_toggle_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.display_toggle_btn.setStyleSheet('''
+            QToolButton {
+                border: none;
+                background: transparent;
+                font-weight: 600;
+                font-size: 12px;
+                color: #333333;
+                text-align: left;
+                padding: 3px 6px;
+                border-radius: 5px;
+            }
+            QToolButton:hover   { background: #e6e6e6; }
+            QToolButton:pressed { background: #dadada; }
+        ''')
+        self.display_toggle_btn.toggled.connect(self._on_display_section_toggled)
+        display_layout.addWidget(self.display_toggle_btn)
+
+        display_body = QWidget()
+        display_body.setStyleSheet("border: none; background: transparent;")
+        display_body_l = QVBoxLayout(display_body)
+        display_body_l.setContentsMargins(0, 0, 0, 0)
+        display_body_l.setSpacing(8)
+        self._display_body = display_body
 
         # Row 1: Overlay + Alpha
         row1 = QHBoxLayout()
@@ -537,7 +565,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row1.addWidget(self.alpha_value_lbl)
 
         row1.addStretch(1)
-        display_layout.addLayout(row1)
+        display_body_l.addLayout(row1)
 
         # Row 2: Invert + Gamma
         row2 = QHBoxLayout()
@@ -573,7 +601,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row2.addWidget(self.gamma_warning_badge)
 
         row2.addStretch(1)
-        display_layout.addLayout(row2)
+        display_body_l.addLayout(row2)
 
         # Row 3: Black + White
         row3 = QHBoxLayout()
@@ -618,7 +646,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         row3.addWidget(self.white_value_edit)
 
         row3.addStretch(1)
-        display_layout.addLayout(row3)
+        display_body_l.addLayout(row3)
 
         hist_header = QHBoxLayout()
         hist_header.addStretch(1)
@@ -628,12 +656,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             lambda checked: self.levels_histogram.set_log_scale(checked)
         )
         hist_header.addWidget(self.hist_log_cb)
-        display_layout.addLayout(hist_header)
+        display_body_l.addLayout(hist_header)
 
         self.levels_histogram = LevelsHistogramWidget()
         self.levels_histogram.gate_changed.connect(self._on_histogram_gate_changed)
         self.levels_histogram.gate_commit.connect(self._on_histogram_gate_commit)
-        display_layout.addWidget(self.levels_histogram)
+        display_body_l.addWidget(self.levels_histogram)
+
+        display_layout.addWidget(display_body)
 
         # --- Overlay ladder annotation compact controls ---
         overlay_ladder_frame = QFrame()
@@ -695,6 +725,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_view.viewport().installEventFilter(self)
 
         prov_splitter = QSplitter(Qt.Vertical)
+        self._prov_splitter = prov_splitter
         prov_splitter.setChildrenCollapsible(False)
 
         prov_top = QWidget()
@@ -2185,6 +2216,22 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
+
+    def _on_display_section_toggled(self, checked: bool):
+        old_height = self._display_frame.sizeHint().height()
+        self._display_body.setVisible(checked)
+        self.display_toggle_btn.setText("⌄   Display" if checked else "›   Display")
+
+        new_height = self._display_frame.sizeHint().height()
+        self._display_frame.setMaximumHeight(new_height if not checked else 16777215)
+
+        splitter = getattr(self, "_prov_splitter", None)
+        delta = new_height - old_height
+        if splitter is not None and delta != 0:
+            sizes = splitter.sizes()
+            if len(sizes) == 2:
+                top, bottom = sizes
+                splitter.setSizes([max(0, top + delta), max(0, bottom - delta)])
 
     def _on_include_in_final_toggled(self, checked: bool):
         blot = self._get_active_blot()

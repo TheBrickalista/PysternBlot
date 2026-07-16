@@ -6,17 +6,27 @@ buttons for the most common starting actions.
 
 ## Quick-action buttons
 
-The button row offers the same project actions also available in the toolbar:
+The button row offers quick access to the most common starting actions. Most
+mirror an equivalent toolbar action, but **Open Project** does not — see the
+note below.
 
 | Button | Action |
 |---|---|
 | **New Project** | Create a new project (one project corresponds to one final figure) |
-| **Open Project** | Open an existing project from the workspace |
+| **Open Project** | Switch to the [Library tab](library.md), refreshing its list of workspace projects first |
 | **Import Blot** | Import a chemiluminescence (ECL) blot image |
 | **Export Library…** | Bundle selected projects into a portable `.pbarchive` file |
 | **Import Library…** | Open a received `.pbarchive`, verifying checksums on load |
 
 A separate **About / License** button jumps directly to the [About tab](about.md).
+
+```{note}
+Home's **Open Project** browses projects already in the current workspace via
+the [Library tab](library.md), which only lists non-archived projects. The
+toolbar's **Open Project…** still opens a file dialog, and remains the way to
+open a project stored *outside* the workspace (a colleague's project, a copy on
+an external drive, a restored backup) or a project that has been archived.
+```
 
 ## What the Home screen shows
 

@@ -8,13 +8,21 @@ log.
 
 ## Blot selection and ordering
 
-The top row controls which blot is active and its position in the figure:
+The controls above the canvas are arranged in three rows: the top row holds
+blot identity (and, for multi-channel NIR blots, the channel selector); the
+second row holds export actions; and the third row holds image transforms and
+blot metadata. This section covers the first row.
 
 | Control | Function |
 |---|---|
 | **Blot** | Dropdown selecting the active blot |
 | **Up** / **Down** | Move the active blot earlier or later in the figure panel order |
 | **Rename…** | Set a cosmetic display name for the blot (does not affect the source file or integrity report) |
+
+For multi-channel NIR blots, a **channel selector** follows in this same row,
+separated from the identity controls by a vertical divider; both the divider
+and the selector are hidden for ECL blots and single-channel NIR blots. See
+[NIR fluorescence and the Typhoon](../concepts/nir-typhoon.md).
 
 ## Orientation
 
@@ -33,11 +41,16 @@ The top row controls which blot is active and its position in the figure:
 | **Grid** | Overlays a grid to help with alignment |
 | **Fit** | Fits the image in the view (or double-click the canvas) |
 
-Navigation: **scroll to pan**, **Shift+scroll to zoom**, **double-click to fit**.
+These gestures also work directly on the canvas — hover over it to see them
+summarised in a tooltip: **scroll to pan**, **Shift+scroll to zoom**,
+**double-click to fit**.
+
+A draggable splitter separates the control rows above from the image canvas
+below — drag it to trade control-row space for canvas space, or vice versa.
 
 ## Annotation
 
-The second control row sets the blot's identifying information:
+This part of the third control row sets the blot's identifying information:
 
 | Control | Function |
 |---|---|
@@ -46,10 +59,6 @@ The second control row sets the blot's identifying information:
 | **Size** | Font size for the protein label (4–48) |
 | **Include in final figure** | Whether this blot appears in the exported figure |
 
-For multi-channel NIR blots, a **channel selector** appears at the start of this
-row; it is hidden for single-channel ECL blots. See
-[NIR fluorescence and the Typhoon](../concepts/nir-typhoon.md).
-
 An **⚠ 8-bit** badge appears next to the current-blot label when the source image
 is 8-bit.
 
@@ -57,6 +66,12 @@ is 8-bit.
 
 The **Display** frame controls on-screen rendering only. All adjustments run on
 the full-depth source data — nothing is discarded.
+
+Click the **⌄ Display** header to collapse the frame to just its header (it
+becomes **› Display**) and return the freed vertical space to the canvas below;
+click again to re-expand. The panel is expanded by default each time Pystern
+Blot starts — the collapsed state is a session-only UI convenience and is not
+saved with the project.
 
 | Control | Function |
 |---|---|
@@ -97,10 +112,54 @@ The **Overlay ladder** frame places molecular-weight markers on the blot:
 | **Edit assignments…** | Open a dialog to assign ladder bands to positions |
 | **MW label size** | Font size of the molecular-weight labels (4–72 pt) |
 
+## Legend export zone
+
+An optional second selection rectangle can be drawn over the blot to export a
+region of the original image with the panel legend — the same content edited
+on the [Legend tab](legend.md) — drawn above it.
+
+- **Legend export zone** — off by default. Ticking it shows a second,
+  independent rectangle (blue, dashed) over the blot image, resized and moved
+  with the same corner/edge drag handles as the crop rectangle. Its position
+  and size are stored per blot, separately from the crop.
+- **Export Zone + Legend** — exports the zone as a 2x-scale PNG, with the
+  panel legend drawn above the cropped image. The legend is aligned to the
+  **figure crop box**, not to the drawn zone, so captions land over the
+  correct lanes regardless of how the zone itself is sized or positioned.
+
+  ```{note}
+  The exported region is automatically expanded to fully contain the figure
+  crop box, even if the zone you drew is smaller than or offset from it — so
+  the exported PNG can be wider than the rectangle shown on screen. This is
+  deliberate: it guarantees the legend always lines up with the lanes it
+  describes.
+  ```
+
+- **MW markers** — on by default once the zone is enabled; draws
+  molecular-weight ticks and labels on the export, reusing the blot's
+  overlay-ladder band assignments and calibration.
+
+  ```{warning}
+  Unlike the ladder in the final figure, this export always draws every
+  assigned band — the Overlay ladder's **Only highlighted** option and each
+  band's **include in final figure** curation are not applied, because the
+  export is meant as a complete reference ladder. The NIR per-channel
+  wavelength filter still applies: a band assigned to a different channel is
+  not calibrated for the image being exported.
+  ```
+
+- **Left / Right** — an independent side toggle for where the MW markers are
+  drawn on this export, unrelated to the Overlay ladder's own
+  **Markers on right** setting.
+
+The **MW markers** checkbox and the side dropdown are enabled only while
+**Legend export zone** is ticked.
+
 ## Exports
 
 | Button | Output |
 |---|---|
+| **Export Zone + Legend** | The selected legend export zone, exported as a 2x-scale PNG with the panel legend drawn above it and MW markers on the chosen side |
 | **Export Original TIFF** | The current blot's unmodified 16-bit source, with crop frame and band markers overlaid |
 | **Export All Originals** | Every blot in the project exported in one step |
 

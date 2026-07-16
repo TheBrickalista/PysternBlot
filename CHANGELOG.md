@@ -12,7 +12,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **Legend export zone** — an optional second selection rectangle in the Original Image tab
   (blue, dashed), using the same sizing and handle mechanism as the crop rectangle. It defines
   a region of the original image to export with the panel legend drawn above it, reusing the
-  same legend renderer as the Figure tab. Opt-in per blot and off by default. A new
+  same legend renderer as the Figure tab. Off by default each session; once drawn, the zone's
+  geometry, marker visibility, and marker side are saved per blot. A new
   "Export Zone + Legend" action writes a 2x-scale PNG. The legend aligns to the figure crop
   box rather than the drawn zone, so captions land on the correct lanes regardless of how the
   zone is sized; the exported region is automatically expanded to always contain the full crop

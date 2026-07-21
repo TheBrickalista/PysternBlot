@@ -10,8 +10,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
 )
-from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices
+from PySide6.QtCore import Qt, QThreadPool, QUrl
 
 import re
 from pathlib import Path
@@ -1111,12 +1111,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
         msg.setWordWrap(True)
         row.addWidget(msg, 1)
+        view_btn = QPushButton("View release notes")
+        view_btn.clicked.connect(lambda: self._open_release_page(result.get("url")))
+        row.addWidget(view_btn)
         dismiss = QPushButton("Dismiss")
         dismiss.clicked.connect(self._dismiss_update_banner)
         row.addWidget(dismiss)
         # Insert at the TOP of the Home tab's root layout.
         self._home_root_layout.insertWidget(0, banner)
         self._update_banner = banner
+
+    def _open_release_page(self, url):
+        # Only open a non-empty string URL. This is the compile-time constant
+        # passed through the result dict, never a value taken from fetched JSON.
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     def _dismiss_update_banner(self):
         if self._update_banner is not None:

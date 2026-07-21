@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from pysternblot.storage import Workspace
 from pysternblot.ui import update_prefs
@@ -120,6 +120,39 @@ class TestUpdateBanner:
         assert main_window._update_banner is not first_banner
 
 
+class TestReleaseNotesButton:
+    def test_banner_has_view_and_dismiss_buttons(self, main_window):
+        main_window._show_update_banner(SAMPLE_RESULT)
+
+        buttons = main_window._update_banner.findChildren(QPushButton)
+        texts = {b.text() for b in buttons}
+
+        assert "View release notes" in texts
+        assert "Dismiss" in texts
+
+    def test_clicking_view_release_notes_opens_result_url(self, main_window):
+        main_window._show_update_banner(SAMPLE_RESULT)
+        buttons = main_window._update_banner.findChildren(QPushButton)
+        view_btn = next(b for b in buttons if b.text() == "View release notes")
+
+        with patch("pysternblot.ui.main_window.QDesktopServices.openUrl") as mock_open:
+            view_btn.click()
+
+        mock_open.assert_called_once()
+        (called_url,), _kwargs = mock_open.call_args
+        assert called_url.toString() == SAMPLE_RESULT["url"]
+
+    def test_open_release_page_none_does_not_open(self, main_window):
+        with patch("pysternblot.ui.main_window.QDesktopServices.openUrl") as mock_open:
+            main_window._open_release_page(None)
+        mock_open.assert_not_called()
+
+    def test_open_release_page_empty_string_does_not_open(self, main_window):
+        with patch("pysternblot.ui.main_window.QDesktopServices.openUrl") as mock_open:
+            main_window._open_release_page("")
+        mock_open.assert_not_called()
+
+
 class TestAutoUpdateResult:
     def test_none_result_leaves_no_banner(self, main_window):
         main_window._on_auto_update_result(None)
@@ -190,3 +223,70 @@ class TestPreferencesCheckbox:
         main_window._start_update_check = Mock()
         main_window.update_check_now_btn.click()
         main_window._start_update_check.assert_called_once_with(manual=True)
+
+
+# ---------------------------------------------------------------------------
+# First-run consent branch of maybe_prompt_and_check_updates. The real
+# QMessageBox.exec() blocks under offscreen Qt, so it is patched at the class
+# level (pysternblot.ui.main_window.QMessageBox.exec) to return a canned
+# answer instantly — no window is ever shown.
+# ---------------------------------------------------------------------------
+
+class TestFirstRunConsentPrompt:
+    def test_first_run_yes_opts_in_and_records_prompted(self, main_window):
+        assert update_prefs.has_been_prompted() is False  # precondition
+
+        main_window._start_update_check = Mock()
+        with patch("pysternblot.ui.main_window.QMessageBox.exec", return_value=QMessageBox.Yes):
+            main_window.maybe_prompt_and_check_updates()
+
+        assert update_prefs.has_been_prompted() is True
+        assert update_prefs.update_check_enabled() is True
+        main_window._start_update_check.assert_called_once_with(manual=False)
+
+    def test_first_run_no_opts_out_and_records_prompted(self, main_window):
+        assert update_prefs.has_been_prompted() is False  # precondition
+
+        main_window._start_update_check = Mock()
+        with patch("pysternblot.ui.main_window.QMessageBox.exec", return_value=QMessageBox.No):
+            main_window.maybe_prompt_and_check_updates()
+
+        assert update_prefs.has_been_prompted() is True
+        assert update_prefs.update_check_enabled() is False
+        main_window._start_update_check.assert_not_called()
+
+    def test_first_run_dismissed_leaves_prompted_false(self, main_window):
+        assert update_prefs.has_been_prompted() is False  # precondition
+
+        main_window._start_update_check = Mock()
+        with patch("pysternblot.ui.main_window.QMessageBox.exec", return_value=0):
+            main_window.maybe_prompt_and_check_updates()
+
+        assert update_prefs.has_been_prompted() is False  # will be asked again next launch
+        assert update_prefs.update_check_enabled() is False  # unchanged default
+        main_window._start_update_check.assert_not_called()
+
+    def test_second_launch_after_answer_does_not_prompt_again(self, main_window):
+        # Simulate a prior launch where the user answered No.
+        update_prefs.set_prompted(True)
+        update_prefs.set_update_check_enabled(False)
+
+        main_window._start_update_check = Mock()
+        with patch("pysternblot.ui.main_window.QMessageBox.exec") as mock_exec:
+            main_window.maybe_prompt_and_check_updates()
+
+        mock_exec.assert_not_called()  # no re-prompt
+        assert update_prefs.update_check_enabled() is False  # unchanged
+        main_window._start_update_check.assert_not_called()
+
+    def test_second_launch_enabled_checks_without_prompting(self, main_window):
+        # Simulate a prior launch where the user answered Yes.
+        update_prefs.set_prompted(True)
+        update_prefs.set_update_check_enabled(True)
+
+        main_window._start_update_check = Mock()
+        with patch("pysternblot.ui.main_window.QMessageBox.exec") as mock_exec:
+            main_window.maybe_prompt_and_check_updates()
+
+        mock_exec.assert_not_called()
+        main_window._start_update_check.assert_called_once_with(manual=False)

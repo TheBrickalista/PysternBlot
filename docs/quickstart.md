@@ -241,8 +241,17 @@ In the **Original Image** tab:
 
 | Button | Output |
 |---|---|
+| **Export Zone + Legend** | The selected zone of the original, exported as a 2x PNG with the panel legend drawn above it and MW markers on the chosen side |
 | **Export Original TIFF** | Current blot's unmodified 16-bit source with crop frame and band markers overlaid |
 | **Export All Originals** | All blots in the project exported in one step |
+
+```{note}
+The legend export zone is an optional selection rectangle you enable from the
+Original Image tab. The legend aligns to the figure crop box rather than the
+drawn zone, so captions always land on the correct lanes, and the exported
+region is automatically widened to contain the whole crop box. See the
+[Original Image tab](guide/original-image.md) guide for details.
+```
 
 Exporting the original image satisfies the raw image submission requirements of
 Springer Nature, EMBO Press, eLife, and PLOS.

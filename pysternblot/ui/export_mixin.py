@@ -572,7 +572,7 @@ class _ExportMixin:
             return
 
         lz = getattr(blot, "legend_zone", None)
-        if lz is None or not lz.enabled or not self.legend_zone_cb.isChecked():
+        if lz is None or not self.legend_zone_cb.isChecked():
             QMessageBox.information(
                 self,
                 "Legend export zone not set",

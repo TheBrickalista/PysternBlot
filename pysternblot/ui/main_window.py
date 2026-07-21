@@ -1105,19 +1105,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
         self.legend_zone_cb.blockSignals(False)
 
-        # Create the zone lazily (mirrors the checkbox path in render.py) so there's
-        # always something to read show_markers/marker_side from without crashing.
-        if blot.legend_zone is None:
-            blot.legend_zone = LegendZone()
+        # Read-only: do not create blot.legend_zone here. It is created either by
+        # render.py (centred, when the zone is first shown) or by the write-path
+        # handlers below (_on_legend_zone_markers_toggled / _on_legend_zone_side_changed).
+        lz = blot.legend_zone
 
         self.legend_zone_markers_cb.setEnabled(bool(self._legend_zone_visible))
         self.legend_zone_markers_cb.blockSignals(True)
-        self.legend_zone_markers_cb.setChecked(bool(getattr(blot.legend_zone, "show_markers", True)))
+        self.legend_zone_markers_cb.setChecked(bool(getattr(lz, "show_markers", True)) if lz else True)
         self.legend_zone_markers_cb.blockSignals(False)
 
         self.legend_zone_side_combo.setEnabled(bool(self._legend_zone_visible))
         self.legend_zone_side_combo.blockSignals(True)
-        side_idx = self.legend_zone_side_combo.findData(getattr(blot.legend_zone, "marker_side", "left"))
+        side = getattr(lz, "marker_side", "left") if lz else "left"
+        side_idx = self.legend_zone_side_combo.findData(side)
         self.legend_zone_side_combo.setCurrentIndex(side_idx if side_idx >= 0 else 0)
         self.legend_zone_side_combo.blockSignals(False)
 

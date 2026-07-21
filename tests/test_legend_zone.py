@@ -57,8 +57,10 @@ from pysternblot.models import (
     Style,
 )
 from pysternblot.render import build_panel_scene, build_provenance_scene
+from pysternblot.storage import Workspace
 from pysternblot.ui.export_mixin import _ExportMixin
 from pysternblot.ui.crop_rect_item import CropRectItem
+from pysternblot.ui.main_window import MainWindow
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +105,18 @@ def _encode_png_uint16(arr: np.ndarray) -> bytes:
 
 def _make_workspace(tmp_path: Path) -> tuple[Path, str]:
     """Write a 300x200 white uint16 PNG asset; return (workspace_root, sha256)."""
-    arr = np.full((IMG_H, IMG_W), 32768, dtype=np.uint16)
+    return _make_workspace_sized(tmp_path, IMG_W, IMG_H)
+
+
+def _make_workspace_sized(tmp_path: Path, w: int, h: int) -> tuple[Path, str]:
+    """Write a uint16 PNG asset of a custom size; return (workspace_root, sha256).
+
+    Used where the default 300x200 image would make a centred 300x200 legend
+    zone land at (0, 0) — indistinguishable from the pre-fix bug's uncentred
+    (0, 0) zone. A non-matching size makes "centred" and "at the origin"
+    mutually exclusive outcomes.
+    """
+    arr = np.full((h, w), 32768, dtype=np.uint16)
     png_bytes = _encode_png_uint16(arr)
     sha = hashlib.sha256(png_bytes).hexdigest()
     asset_dir = tmp_path / "assets" / sha
@@ -165,7 +178,6 @@ class TestLegendZoneModel:
         assert lz.y == 0.0
         assert lz.w == 300.0
         assert lz.h == 200.0
-        assert lz.enabled is False
         assert lz.show_markers is True
         assert lz.marker_side == "left"
 
@@ -184,11 +196,11 @@ class TestLegendZoneModel:
             crop=Crop(x=0, y=0, w=300, h=200),
             ladder=_minimal_ladder(),
             protein_label=ProteinLabel(text=""),
-            legend_zone=LegendZone(x=10, y=20, w=150, h=80, enabled=True, show_markers=False, marker_side="right"),
+            legend_zone=LegendZone(x=10, y=20, w=150, h=80, show_markers=False, marker_side="right"),
         )
         data = blot.model_dump()
         assert data["legend_zone"] == {
-            "x": 10.0, "y": 20.0, "w": 150.0, "h": 80.0, "enabled": True,
+            "x": 10.0, "y": 20.0, "w": 150.0, "h": 80.0,
             "show_markers": False, "marker_side": "right",
         }
 
@@ -198,7 +210,6 @@ class TestLegendZoneModel:
         assert blot2.legend_zone.y == 20.0
         assert blot2.legend_zone.w == 150.0
         assert blot2.legend_zone.h == 80.0
-        assert blot2.legend_zone.enabled is True
         assert blot2.legend_zone.show_markers is False
         assert blot2.legend_zone.marker_side == "right"
 
@@ -238,7 +249,9 @@ class TestLegendZoneModel:
 
     def test_legacy_legend_zone_without_marker_fields_loads_with_defaults(self):
         """Simulates a project.json saved by the prior version of this feature,
-        where legend_zone existed but show_markers/marker_side did not yet."""
+        where legend_zone existed but show_markers/marker_side did not yet. Also
+        carries the since-removed "enabled" key, which must be silently ignored
+        (pydantic's default extra='ignore')."""
         data = {
             "id": "b1",
             "asset_sha256": "a" * 64,
@@ -260,9 +273,47 @@ class TestLegendZoneModel:
         blot = Blot.model_validate(data)
         assert blot.legend_zone is not None
         assert blot.legend_zone.x == 5.0
-        assert blot.legend_zone.enabled is True
         assert blot.legend_zone.show_markers is True
         assert blot.legend_zone.marker_side == "left"
+        assert not hasattr(blot.legend_zone, "enabled")
+
+    def test_legacy_enabled_key_is_silently_ignored(self):
+        """A project.json written by a pre-fix build stored `enabled` on every
+        LegendZone. The field is now removed from the model entirely; loading
+        such a file must not raise, and the removed key must simply vanish."""
+        data = {
+            "id": "b1",
+            "asset_sha256": "a" * 64,
+            "crop": {"x": 0, "y": 0, "w": 300, "h": 200},
+            "ladder": {
+                "lane_index": 0,
+                "marker_set_id": "ms1",
+                "calibration_points": [
+                    {"y_px": 50, "kda": 55},
+                    {"y_px": 120, "kda": 36},
+                ],
+            },
+            "protein_label": {"text": ""},
+            "legend_zone": {
+                "x": 12.0, "y": 34.0, "w": 150.0, "h": 90.0,
+                "enabled": True, "show_markers": False, "marker_side": "right",
+            },
+        }
+
+        blot = Blot.model_validate(data)
+
+        assert blot.legend_zone is not None
+        assert blot.legend_zone.x == 12.0
+        assert blot.legend_zone.y == 34.0
+        assert blot.legend_zone.w == 150.0
+        assert blot.legend_zone.h == 90.0
+        assert blot.legend_zone.show_markers is False
+        assert blot.legend_zone.marker_side == "right"
+        assert not hasattr(blot.legend_zone, "enabled")
+
+        # Round-tripping through dump/validate must not resurrect the field.
+        dumped = blot.legend_zone.model_dump()
+        assert "enabled" not in dumped
 
 
 # ===========================================================================
@@ -306,7 +357,6 @@ class TestProvenanceSceneLegendZone:
         build_provenance_scene(proj, ws, blot_id="b1", show_legend_zone=True)
 
         assert blot.legend_zone is not None
-        assert blot.legend_zone.enabled is True
         # Default 300x200 zone centered on the 300x200 synthetic image -> (0, 0).
         assert blot.legend_zone.x == pytest.approx(0.0)
         assert blot.legend_zone.y == pytest.approx(0.0)
@@ -341,6 +391,86 @@ class TestProvenanceSceneLegendZone:
         assert callable(legend_item._on_move_commit)
         legend_item._on_move_commit(QRectF(15.0, 15.0, 100.0, 80.0))
         assert committed == ["b1"]
+
+
+# ===========================================================================
+# Regression: _sync_controls_from_project must never create or mutate
+# blot.legend_zone. A prior version of this code eagerly created an
+# uncentred LegendZone(enabled=False) the first time a project loaded, which
+# pre-empted render.py's own (centred) creation and left the export guard's
+# `enabled` check permanently False. Tests that call build_provenance_scene
+# directly (above) never exercised this because they never called
+# _sync_controls_from_project first — this test follows the REAL order used
+# by refresh_previews(): sync, then render, then sync again.
+# ===========================================================================
+
+class TestSyncThenRenderRealOrder:
+
+    def _make_main_window(self, tmp_path, img_w: int, img_h: int):
+        ws_root, sha = _make_workspace_sized(tmp_path, img_w, img_h)
+        ws = Workspace(ws_root)
+        ws.ensure()
+
+        proj = _minimal_project(sha, LegendSettings())
+        proj.panel.crop_template = CropTemplate(w=float(img_w), h=float(img_h))
+        proj.panel.blots[0].crop = Crop(x=0, y=0, w=float(img_w), h=float(img_h))
+
+        win = MainWindow(ws)
+        win.current_project = proj
+        return win, proj
+
+    def test_sync_is_read_only_then_render_creates_centred_zone(self, qapp, tmp_path):
+        # A size that does not match the default 300x200 zone, so a correctly
+        # centred zone cannot coincide with the origin.
+        img_w, img_h = 1000, 800
+        win, proj = self._make_main_window(tmp_path, img_w, img_h)
+        blot = proj.panel.blots[0]
+        assert blot.legend_zone is None
+
+        # Step 1: project just loaded. Sync must not create the zone.
+        win._sync_controls_from_project()
+        assert blot.legend_zone is None, (
+            "_sync_controls_from_project must not create blot.legend_zone "
+            "(it is a read-only UI sync, not a write path)"
+        )
+
+        # Step 2: user ticks "Legend export zone" -> refresh_previews() ->
+        # build_provenance_scene(show_legend_zone=True). This is where the
+        # zone must be created, centred on the image.
+        win._legend_zone_visible = True
+        scene = build_provenance_scene(
+            proj, win.workspace.root, blot_id=blot.id, show_legend_zone=True,
+        )
+        assert scene is not None
+
+        assert blot.legend_zone is not None
+        default_w, default_h = 300.0, 200.0
+        expected_x = (img_w - default_w) / 2.0
+        expected_y = (img_h - default_h) / 2.0
+        assert blot.legend_zone.x == pytest.approx(expected_x)
+        assert blot.legend_zone.y == pytest.approx(expected_y)
+        assert (blot.legend_zone.x, blot.legend_zone.y) != (0.0, 0.0)
+
+        # Step 3: refresh_previews() calls _sync_controls_from_project() again
+        # after rendering. It must not clobber the zone render.py just made.
+        win._sync_controls_from_project()
+        assert blot.legend_zone.x == pytest.approx(expected_x)
+        assert blot.legend_zone.y == pytest.approx(expected_y)
+
+        # Step 4: the export guard in export_mixin.py would now let the
+        # export proceed with the checkbox checked.
+        win.legend_zone_cb.blockSignals(True)
+        win.legend_zone_cb.setChecked(True)
+        win.legend_zone_cb.blockSignals(False)
+
+        lz = blot.legend_zone
+        guard_blocks_export = lz is None or not win.legend_zone_cb.isChecked()
+        assert not guard_blocks_export, (
+            "export_legend_zone_png's guard must not refuse export once the "
+            "zone has been shown and the checkbox is checked"
+        )
+
+        win.close()
 
 
 # ===========================================================================

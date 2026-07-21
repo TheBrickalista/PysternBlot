@@ -46,6 +46,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - **Antibody name field per blot** — persisted in project file and audit log
 - **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log, and crop/rotation metadata for every blot
 - **Export to SVG, PDF, PNG, and 16-bit TIFF** — SVG and PDF preserve text as editable objects for final tweaks in Illustrator or Affinity Designer
+- **Legend export zone** — draw an independent second region on the original image and export it as a PNG with the panel legend and molecular-weight markers drawn above it, for journals that require raw images annotated in context
 - **DNA gel support** *(coming soon)* — the same integrity pipeline extended to agarose gel electrophoresis, with DNA ladder annotation and band tracking
 
 ---

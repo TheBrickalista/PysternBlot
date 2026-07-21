@@ -795,12 +795,12 @@ def build_provenance_scene(
     # --- Optional legend export zone (second, visually distinct rect) ---
     if show_legend_zone:
         if blot.legend_zone is None:
+            # The zone only comes into existence here, the first time it's shown, so
+            # it starts centred on the image rather than pinned at the origin.
             default_w, default_h = 300.0, 200.0
             default_x = max(0.0, (float(pm.width()) - default_w) / 2.0)
             default_y = max(0.0, (float(pm.height()) - default_h) / 2.0)
-            # enabled=True: the zone only comes into existence by opting in via the
-            # "Legend export zone" checkbox, so it's usable for export immediately.
-            blot.legend_zone = LegendZone(x=default_x, y=default_y, w=default_w, h=default_h, enabled=True)
+            blot.legend_zone = LegendZone(x=default_x, y=default_y, w=default_w, h=default_h)
 
         def _apply_legend_zone_from_scene_rect(scene_rect: QRectF) -> None:
             # Convert scene coords -> image pixel coords (same pattern as the crop rect)
@@ -816,8 +816,9 @@ def build_provenance_scene(
             if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
             if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
 
-            if blot.legend_zone is None:
-                blot.legend_zone = LegendZone()
+            # blot.legend_zone is guaranteed to exist here: this callback is only wired
+            # up to legend_item below, which is constructed after the block above has
+            # already ensured blot.legend_zone is set.
             blot.legend_zone.x = x
             blot.legend_zone.y = y
             blot.legend_zone.w = w

@@ -60,7 +60,6 @@ class LegendZone(BaseModel):
     y: float = 0.0
     w: float = 300.0
     h: float = 200.0
-    enabled: bool = False
     show_markers: bool = True
     marker_side: Literal["left", "right"] = "left"
 

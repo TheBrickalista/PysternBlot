@@ -6,6 +6,49 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.1.0] — 2026-07-16
+
+### Added
+- **Legend export zone** — an optional second selection rectangle in the Original Image tab
+  (blue, dashed), using the same sizing and handle mechanism as the crop rectangle. It defines
+  a region of the original image to export with the panel legend drawn above it, reusing the
+  same legend renderer as the Figure tab. Off by default each session; once drawn, the zone's
+  geometry, marker visibility, and marker side are saved per blot. A new
+  "Export Zone + Legend" action writes a 2x-scale PNG. The legend aligns to the figure crop
+  box rather than the drawn zone, so captions land on the correct lanes regardless of how the
+  zone is sized; the exported region is automatically expanded to always contain the full crop
+  box.
+- **MW markers on the legend-zone export** — molecular-weight ticks and labels are drawn on the
+  exported zone, reusing the blot's existing overlay-ladder assignments and calibration. Every
+  assigned band is drawn regardless of the figure's own curation (`show_in_final` and
+  "only highlighted" are not applied to this export), with a per-zone left/right side toggle.
+  NIR per-channel band filtering still applies, since a band tagged to another channel is not
+  calibrated for the displayed image.
+- **Resizable Original Image tab** — a draggable splitter between the control area and the
+  image canvas.
+- **Collapsible Display section** — the Display frame in the Original Image tab folds to a
+  header, freeing vertical space for the canvas.
+
+### Changed
+- **Original Image tab layout** — controls reorganised into three themed rows (blot identity and
+  channel selector; export controls; image transforms and blot metadata) separated by vertical
+  dividers, resolving button clipping at default window widths. The pan/zoom hint moved from the
+  toolbar to a canvas tooltip.
+- **Home tab "Open Project"** now switches to the Library tab instead of opening a file dialog.
+  The toolbar's "Open Project…" action still opens the dialog, which remains the way to open
+  projects stored outside the workspace or projects that have been archived.
+
+### Provenance
+- Operation vocabulary extended from 28 to 31 verbs. New: `legend_zone_changed`,
+  `legend_zone_markers_changed`, `legend_zone_side_changed`. Consumers of `.pbarchive`
+  operation logs should be aware of the additions.
+- `legend_zone_changed` records the zone geometry (`x`, `y`, `w`, `h`) in `new_value`.
+
+### Compatibility
+- `Blot.legend_zone` is a new optional field. Existing `project.json` files load unchanged.
+  Projects saved by 1.1.0 remain loadable by 1.0.x, which ignores the unknown field — but note
+  that re-saving such a project under 1.0.x will discard the legend zone.
+
 ## [1.0.4] — 2026-06-03
 
 ### Added

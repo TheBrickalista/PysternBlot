@@ -6,7 +6,7 @@
 project = "PysternBlot"
 copyright = "2026, Etienne Boulter and Chloé C. Féral"
 author = "Etienne Boulter, Chloé C. Féral"
-release = "1.0.4"
+release = "1.1.0"
 
 # -- General configuration ---------------------------------------------------
 

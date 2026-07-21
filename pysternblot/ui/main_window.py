@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
 )
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThreadPool
 
 import re
 from pathlib import Path
@@ -33,6 +33,8 @@ from .project_io_mixin import _ProjectIOMixin
 from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
 from .export_mixin import _ExportMixin
+from .update_worker import UpdateCheckWorker
+from . import update_prefs
 
 try:
     _APP_VERSION = _pkg_version("pysternblot")
@@ -57,6 +59,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._histogram_cache: dict = {}    # sha256 → (counts, edges, max_val)
         self._dragging_histogram: bool = False
         self._drag_start_levels: dict | None = None
+
+        self._update_banner = None
+        self._update_pool = QThreadPool.globalInstance()
 
         self.setWindowTitle("Pystern Blot")
         self.setMinimumSize(900, 600)
@@ -256,6 +261,44 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         history_fl.addWidget(history_hint)
 
         lib_l.addWidget(history_frame)
+
+        # --- Software updates ---
+        update_frame = QFrame()
+        update_frame.setFrameShape(QFrame.StyledPanel)
+        update_frame.setStyleSheet("""
+            QFrame {
+                background: #f7f7f7;
+                border: 1px solid #d2d2d2;
+                border-radius: 8px;
+            }
+        """)
+
+        update_fl = QVBoxLayout(update_frame)
+        update_fl.setContentsMargins(10, 10, 10, 10)
+        update_fl.setSpacing(8)
+
+        update_title = QLabel("Software updates")
+        update_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        update_fl.addWidget(update_title)
+
+        self.update_check_cb = QCheckBox("Check GitHub for updates on startup")
+        self.update_check_cb.setChecked(update_prefs.update_check_enabled())
+        self.update_check_cb.toggled.connect(self._on_update_check_toggled)
+        update_fl.addWidget(self.update_check_cb)
+
+        self.update_check_now_btn = QPushButton("Check for updates now")
+        self.update_check_now_btn.clicked.connect(lambda: self._start_update_check(manual=True))
+        update_fl.addWidget(self.update_check_now_btn)
+
+        update_hint = QLabel(
+            "Checks the latest release at github.com/TheBrickalista/PysternBlot. "
+            "One network request; nothing about you is sent."
+        )
+        update_hint.setStyleSheet("color: #6b7280; font-size: 10px;")
+        update_hint.setWordWrap(True)
+        update_fl.addWidget(update_hint)
+
+        lib_l.addWidget(update_frame)
 
         # Final Result tab
         final = QWidget()
@@ -797,6 +840,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         root = QVBoxLayout(container)
         root.setContentsMargins(30, 30, 30, 30)
         root.setSpacing(14)
+        self._home_root_layout = root
 
         root.addStretch(1)
 
@@ -995,6 +1039,94 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if hasattr(self, "_library_tab"):
             self.refresh_library()
             self.tabs.setCurrentWidget(self._library_tab)
+
+    def maybe_prompt_and_check_updates(self):
+        # First-run opt-in: ask exactly once, default OFF.
+        if not update_prefs.has_been_prompted():
+            box = QMessageBox(self)
+            box.setWindowTitle("Check for updates?")
+            box.setText(
+                "Would you like Pystern Blot to check GitHub for new "
+                "releases when it starts?\n\n"
+                "This makes one network request to GitHub on startup. "
+                "No data about you is sent. You can change this later in "
+                "Preferences."
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            box.setDefaultButton(QMessageBox.No)
+            choice = box.exec()
+            if choice == QMessageBox.Yes:
+                update_prefs.set_update_check_enabled(True)
+                update_prefs.set_prompted(True)
+            elif choice == QMessageBox.No:
+                update_prefs.set_update_check_enabled(False)
+                update_prefs.set_prompted(True)
+            else:
+                # dismissed without choosing -> ask again next launch
+                return
+        # Sync the Preferences checkbox to stored state, then check if enabled.
+        if hasattr(self, "update_check_cb"):
+            self.update_check_cb.blockSignals(True)
+            self.update_check_cb.setChecked(update_prefs.update_check_enabled())
+            self.update_check_cb.blockSignals(False)
+        if update_prefs.update_check_enabled():
+            self._start_update_check(manual=False)
+
+    def _start_update_check(self, manual: bool):
+        worker = UpdateCheckWorker(enabled=True)  # manual check forces enabled
+        if manual:
+            worker.signals.finished.connect(self._on_manual_update_result)
+        else:
+            worker.signals.finished.connect(self._on_auto_update_result)
+        self._update_pool.start(worker)
+
+    def _on_auto_update_result(self, result):
+        # Silent unless there's an update.
+        if result:
+            self._show_update_banner(result)
+
+    def _on_manual_update_result(self, result):
+        if result:
+            self._show_update_banner(result)
+        else:
+            QMessageBox.information(
+                self, "Up to date",
+                "You are running the latest published release, or no update "
+                "information is available right now."
+            )
+
+    def _show_update_banner(self, result: dict):
+        # Remove any existing banner first (idempotent).
+        self._dismiss_update_banner()
+        banner = QFrame()
+        banner.setStyleSheet(
+            "QFrame { background: #fff8e1; border: 1px solid #f0c36d; "
+            "border-radius: 6px; } QLabel { border: none; }"
+        )
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(12, 8, 12, 8)
+        msg = QLabel(
+            f"Update available: {result['latest']} "
+            f"(you have {result['current']}). {result['instruction']}"
+        )
+        msg.setWordWrap(True)
+        row.addWidget(msg, 1)
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self._dismiss_update_banner)
+        row.addWidget(dismiss)
+        # Insert at the TOP of the Home tab's root layout.
+        self._home_root_layout.insertWidget(0, banner)
+        self._update_banner = banner
+
+    def _dismiss_update_banner(self):
+        if self._update_banner is not None:
+            self._update_banner.setParent(None)
+            self._update_banner.deleteLater()
+            self._update_banner = None
+
+    def _on_update_check_toggled(self, checked: bool):
+        update_prefs.set_update_check_enabled(checked)
+        update_prefs.set_prompted(True)
 
     def _toolbar(self):
         tb = QToolBar("Main")

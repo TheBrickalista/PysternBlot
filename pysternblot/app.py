@@ -16,8 +16,11 @@ def default_workspace() -> Path:
 
 def run():
     app = QApplication([])
+    app.setOrganizationName("IRCAN")
+    app.setApplicationName("PysternBlot")
     ws = Workspace(default_workspace())
     ws.ensure()
     win = MainWindow(ws)
     win.show()
+    win.maybe_prompt_and_check_updates()
     app.exec()

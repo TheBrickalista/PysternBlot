@@ -47,6 +47,9 @@ dev = [
   "pytest>=8.0",
   "build>=1.0"
 ]
+build = [
+  "pyinstaller>=6.21"
+]
 
 [project.urls]
 Homepage = "https://github.com/TheBrickalista/PysternBlot"

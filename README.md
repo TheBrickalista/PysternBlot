@@ -18,7 +18,7 @@
 
 ---
 
-## What it is
+## What it is 
 
 Western blot figures typically go through Photoshop for levels adjustments, then Illustrator for layout and annotation — a multi-step process with no record of what was changed or when. Pystern Blot replaces that pipeline with a single desktop application that handles everything from raw image import to final figure export. Both ECL and NIR fluorescence modalities are supported.
 

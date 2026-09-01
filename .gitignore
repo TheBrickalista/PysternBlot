@@ -14,3 +14,11 @@ CLAUDE.md
 
 # Sphinx build output
 docs/_build/
+
+# Signing — never commit certs, keys, or scratch entitlements
+entitlements.plist
+*.p12
+*.cer
+*.certSigningRequest
+*.pem
+*.key

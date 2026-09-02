@@ -126,8 +126,48 @@ jobs:
 
       - name: Zip the .app
         run: |
-          cd dist
-          zip -r "../PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip" PysternBlot.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/PysternBlot.app \
+            "PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+
+      - name: Verify archived bundle
+        run: |
+          set -euo pipefail
+          ARCHIVE="PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+          VERIFY_DIR="$RUNNER_TEMP/verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          ditto -x -k "$ARCHIVE" "$VERIFY_DIR"
+          APP="$VERIFY_DIR/PysternBlot.app"
+
+          SYMLINKS=$(find "$APP" -type l | wc -l | tr -d ' ')
+          echo "Symbolic links preserved in archive: $SYMLINKS"
+          if [ "$SYMLINKS" -lt 100 ]; then
+            echo "::error::Archive flattened symbolic links ($SYMLINKS found, expected >= 100). The Qt .framework bundles are malformed and Gatekeeper will reject the app at launch."
+            exit 1
+          fi
+
+          for NAME in QtGui QtCore QtWidgets; do
+            LINK="$APP/Contents/Frameworks/PySide6/Qt/lib/${NAME}.framework/${NAME}"
+            if [ ! -L "$LINK" ]; then
+              echo "::error::${NAME}.framework/${NAME} is not a symbolic link in the archived bundle."
+              exit 1
+            fi
+          done
+
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 \
+            | tee "$RUNNER_TEMP/codesign-verify.log"
+          if grep -q "ambiguous" "$RUNNER_TEMP/codesign-verify.log"; then
+            echo "::error::codesign reports an ambiguous bundle format in the archived app."
+            exit 1
+          fi
+
+          xcrun stapler validate "$APP"
+
+          echo "--- spctl assessment (informational) ---"
+          spctl -a -t exec -vvv "$APP" || echo "spctl returned non-zero; review output above"
+
+          rm -rf "$VERIFY_DIR"
 
       - name: Upload as artifact (manual runs)
         if: github.event_name == 'workflow_dispatch'

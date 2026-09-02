@@ -28,6 +28,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   image canvas.
 - **Collapsible Display section** — the Display frame in the Original Image tab folds to a
   header, freeing vertical space for the canvas.
+- **CI archive verification step** — unpacks the finished macOS archive and fails the build if
+  symbolic links were lost or if `codesign` reports an ambiguous bundle format.
+
+### Fixed
+- **macOS application bundle corruption during CI packaging** — the archiving step used `zip`,
+  which dereferences symbolic links and flattened the bundled Qt framework structures, causing
+  macOS Gatekeeper to reject the application at launch despite it being correctly signed,
+  notarized and stapled. The archive is now created with `ditto`, which preserves symbolic links.
 
 ### Changed
 - **Original Image tab layout** — controls reorganised into three themed rows (blot identity and
@@ -37,6 +45,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **Home tab "Open Project"** now switches to the Library tab instead of opening a file dialog.
   The toolbar's "Open Project…" action still opens the dialog, which remains the way to open
   projects stored outside the workspace or projects that have been archived.
+- **macOS download size** — reduced from approximately 200 MB to approximately 50 MB, as a
+  consequence of the archiving fix (the previous method stored every framework binary twice).
 
 ### Provenance
 - Operation vocabulary extended from 28 to 31 verbs. New: `legend_zone_changed`,

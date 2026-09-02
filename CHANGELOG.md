@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [1.1.0] — 2026-07-16
+## [1.1.0] — 2026-09-02
 
 ### Added
 - **Legend export zone** — an optional second selection rectangle in the Original Image tab

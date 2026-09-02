@@ -16,8 +16,9 @@ CLAUDE.md
 docs/_build/
 
 # Signing — never commit certs, keys, or scratch entitlements
-entitlements.plist
+/entitlements.plist
 *.p12
+*.p8
 *.cer
 *.certSigningRequest
 *.pem

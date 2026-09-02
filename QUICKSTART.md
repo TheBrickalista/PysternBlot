@@ -24,10 +24,10 @@ This guide walks you through installing Pystern Blot and preparing your first pu
 
 Download the latest release for your platform from the [Releases page](https://github.com/TheBrickalista/PysternBlot/releases):
 
-- **macOS** — download `PysternBlot-macOS.zip`, unzip, and move `PysternBlot.app` to your Applications folder.
-- **Windows** — download `PysternBlot-Windows.zip`, unzip, and run `PysternBlot.exe`.
+- **macOS** — download `PysternBlot-vX.X.X-macOS.zip`, unzip, and move `PysternBlot.app` to your Applications folder.
+- **Windows** — download `PysternBlot-vX.X.X-Windows.exe` and run it.
 
-> **macOS — first launch warning:** Because the app is not yet notarized, macOS Gatekeeper will block it on first open. To bypass: right-click (or Control-click) `PysternBlot.app` → **Open** → **Open** in the confirmation dialog. You only need to do this once.
+> **macOS — first launch:** The app is code-signed with an Apple Developer ID and notarized by Apple. On first open macOS may show a dialog confirming it was checked for malicious software; click **Open**. No right-click workaround is needed.
 
 > **Windows — first launch warning:** Windows SmartScreen may show an "Unknown publisher" warning. Click **More info** → **Run anyway** to proceed. You only need to do this once.
 

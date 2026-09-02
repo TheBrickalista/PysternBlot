@@ -35,7 +35,7 @@ Full ladder annotation workflow is integrated:
 
 ---
 
-## ✅ UI Fixes *(Completed this session)*
+## ✅ UI Fixes *(Completed)*
 
 Two correctness fixes to the Original Image tab UI:
 
@@ -61,6 +61,8 @@ Two correctness fixes to the Original Image tab UI:
 - [x] ✅ JPEG hard-rejected at all import entry points with scientific explanation message
 - [x] ✅ 8-bit import warning dialog (mandatory acknowledgement); ⚠ 8-bit badge in blot panel; `levels_white` set to 255 for 8-bit sources
 - [x] ✅ 8-bit flagging in integrity report JSON and HTML (amber highlight); pre-export warning via `_has_8bit_blots()`
+
+---
 
 ## Phase 2 — Project Model Extension
 
@@ -255,6 +257,31 @@ The core image pipeline (16-bit, non-destructive, SHA256 provenance) applies dir
 
 ---
 
+## Phase 10 — Distribution and Packaging *(planned)*
+
+Packaging and delivery of the standalone binaries, distinct from the application feature work above. Targeted for 1.2.0; 1.1.0 ships the signed, notarized, stapled macOS `.zip`.
+
+### 10.1 macOS DMG Distribution
+
+- [ ] Build a `.dmg` containing `PysternBlot.app` plus an `/Applications` symlink, so users install by dragging rather than launching from `Downloads`
+- [ ] Sign and notarize the DMG as a container, after the enclosed `.app` is already signed, notarized and stapled — a second full notarization round trip
+- [ ] Staple the notarization ticket to the DMG so the download validates offline as a single artifact
+- [ ] Add a retry wrapper around `hdiutil` (attach/detach is known to fail intermittently on CI runners with "resource busy")
+- [ ] Mount and verify the DMG contents in CI, mirroring the existing archived-bundle verification step
+- [ ] Decide between `create-dmg` (less code, third-party dependency — vendor and pin by commit SHA if used) and raw `hdiutil` (more code, no new dependency)
+- [ ] Decide whether to keep publishing the `.zip` alongside the `.dmg` or retire it once the DMG is proven
+
+### 10.2 Deferred Packaging Work
+
+- [ ] Windows code signing — poor ROI since the 2024 EV certificate changes; SignPath Foundation offers free certificates to OSS projects
+- [ ] Convert `publish.yml` to `uv` for consistency with the other workflows (currently uses plain `pip`; functional, but the only workflow not running against the locked tree)
+- [ ] Add `workflow_dispatch` to `pytest.yml` for manual triggering
+- [ ] Promote the `spctl` check in `build-macos.yml`'s "Verify archived bundle" step from informational to a hard failure (confirmed printing `accepted` on the runner in the 1.1.0 pre-release build)
+
+**Scope note:** Phase 10 changes how the application is delivered, not what it does. No application code is affected. The DMG work is a UX improvement for non-technical users; `pip install pysternblot` remains the primary installation path for anyone comfortable with a terminal.
+
+---
+
 ## Implementation Batches
 
 | Batch | Content | Phase(s) |
@@ -268,6 +295,7 @@ The core image pipeline (16-bit, non-destructive, SHA256 provenance) applies dir
 | **Batch 7 — Archival** | Batch import, repository/ELN integration | 7 |
 | **Batch 8 — Manuscript** | Methods and legend auto-generation | 8 |
 | **Batch 9 — DNA Gel** | Gel type selector, DNA ladder presets, bp annotation, gel metadata fields | 9 |
+| **Batch 10 — Distribution** | macOS DMG packaging, deferred Windows signing, workflow consistency | 10 |
 
 ---
 

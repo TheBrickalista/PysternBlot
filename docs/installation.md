@@ -23,22 +23,19 @@ from the [Releases page](https://github.com/TheBrickalista/PysternBlot/releases/
 
 **Windows** — download `PysternBlot-vX.X.X-Windows.exe` and run it.
 
-### First-launch security warning
+### First launch
 
-The standalone builds are not yet code-signed or notarized, so your operating
-system will warn you the first time you open the app. This is expected, and you
-only need to clear the warning once.
+**macOS** — the application is code-signed with an Apple Developer ID
+certificate, notarized by Apple, and the notarization ticket is stapled to the
+bundle. macOS may show a dialog on first open confirming that the app was
+checked for malicious software; click **Open**. No right-click workaround is
+needed, and the app works offline because the ticket travels with it.
 
-**macOS (Gatekeeper):** right-click (or Control-click) `PysternBlot.app` →
-**Open** → **Open** in the confirmation dialog. After the first launch the app
-opens normally like any other application.
-
-**Windows (SmartScreen):** if a blue "Windows protected your PC" window appears,
-click **More info** → **Run anyway**.
-
-These warnings appear because the executable does not carry a developer
-signature — not because anything is wrong with the download. Code signing and
-notarization are planned for a future release.
+**Windows (SmartScreen)** — the Windows executable is not yet code-signed, so
+Windows may show a blue "Windows protected your PC" window on first run. Click
+**More info** → **Run anyway**. This appears because the executable does not
+carry a publisher signature, not because anything is wrong with the download.
+Windows code signing is planned for a future release.
 
 ## Option 2 — PyPI
 
@@ -131,9 +128,10 @@ or ensure your Python scripts directory is on your `PATH`.
 later with `python --version`. On systems with both Python 2 and 3, you may need
 `python3` and `pip3`.
 
-**macOS reports the app is damaged or cannot be opened.** This is the Gatekeeper
-warning described above for unsigned apps — use right-click → **Open** rather
-than double-clicking on first launch.
+**macOS reports the app is damaged or cannot be opened.** Make sure you unzipped
+the download with Finder or `ditto` rather than a third-party archive tool; some
+tools do not preserve the symbolic links inside the application bundle, which
+corrupts it. Re-download and unzip by double-clicking the `.zip` in Finder.
 
 **Still stuck?** Open an issue on the
 [GitHub repository](https://github.com/TheBrickalista/PysternBlot/issues).

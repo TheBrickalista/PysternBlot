@@ -66,6 +66,55 @@ jobs:
             --add-data "pysternblot/resources:pysternblot/resources" \
             launcher.py
 
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.KEYCHAIN_PWD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KEYCHAIN_PWD" $RUNNER_TEMP/build.keychain
+          security default-keychain -s $RUNNER_TEMP/build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PWD" $RUNNER_TEMP/build.keychain
+          security import $RUNNER_TEMP/cert.p12 -k $RUNNER_TEMP/build.keychain \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PWD" \
+            $RUNNER_TEMP/build.keychain
+          rm $RUNNER_TEMP/cert.p12
+
+      - name: Sign the app
+        run: |
+          codesign_with_retries() {
+            for attempt in 1 2 3 4 5; do
+              if codesign "$@"; then return 0; fi
+              echo "codesign failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            codesign "$@"
+          }
+          codesign_with_retries --force --deep --options runtime --timestamp \
+            --entitlements .github/macos/entitlements.plist \
+            --sign "Developer ID Application: Etienne Boulter (742L43ZVL2)" \
+            dist/PysternBlot.app
+          codesign --verify --deep --strict --verbose=2 dist/PysternBlot.app
+
+      - name: Notarize and staple
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          echo "$APPLE_API_KEY" | base64 --decode > $RUNNER_TEMP/api_key.p8
+          ditto -c -k --keepParent dist/PysternBlot.app $RUNNER_TEMP/notarize.zip
+          xcrun notarytool submit $RUNNER_TEMP/notarize.zip \
+            --key $RUNNER_TEMP/api_key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --wait
+          xcrun stapler staple dist/PysternBlot.app
+          xcrun stapler validate dist/PysternBlot.app
+          rm $RUNNER_TEMP/api_key.p8 $RUNNER_TEMP/notarize.zip
+
       - name: Set version tag
         id: version
         run: |
@@ -77,8 +126,48 @@ jobs:
 
       - name: Zip the .app
         run: |
-          cd dist
-          zip -r "../PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip" PysternBlot.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/PysternBlot.app \
+            "PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+
+      - name: Verify archived bundle
+        run: |
+          set -euo pipefail
+          ARCHIVE="PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+          VERIFY_DIR="$RUNNER_TEMP/verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          ditto -x -k "$ARCHIVE" "$VERIFY_DIR"
+          APP="$VERIFY_DIR/PysternBlot.app"
+
+          SYMLINKS=$(find "$APP" -type l | wc -l | tr -d ' ')
+          echo "Symbolic links preserved in archive: $SYMLINKS"
+          if [ "$SYMLINKS" -lt 100 ]; then
+            echo "::error::Archive flattened symbolic links ($SYMLINKS found, expected >= 100). The Qt .framework bundles are malformed and Gatekeeper will reject the app at launch."
+            exit 1
+          fi
+
+          for NAME in QtGui QtCore QtWidgets; do
+            LINK="$APP/Contents/Frameworks/PySide6/Qt/lib/${NAME}.framework/${NAME}"
+            if [ ! -L "$LINK" ]; then
+              echo "::error::${NAME}.framework/${NAME} is not a symbolic link in the archived bundle."
+              exit 1
+            fi
+          done
+
+          codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 \
+            | tee "$RUNNER_TEMP/codesign-verify.log"
+          if grep -q "ambiguous" "$RUNNER_TEMP/codesign-verify.log"; then
+            echo "::error::codesign reports an ambiguous bundle format in the archived app."
+            exit 1
+          fi
+
+          xcrun stapler validate "$APP"
+
+          echo "--- spctl assessment (informational) ---"
+          spctl -a -t exec -vvv "$APP" || echo "spctl returned non-zero; review output above"
+
+          rm -rf "$VERIFY_DIR"
 
       - name: Upload as artifact (manual runs)
         if: github.event_name == 'workflow_dispatch'

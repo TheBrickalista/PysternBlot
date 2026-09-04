@@ -12,6 +12,8 @@ from PIL import Image
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt
 
+from .models import SaturationStats
+
 
 def load_image_uint16(path: str | Path) -> np.ndarray:
     """
@@ -306,3 +308,62 @@ def get_bit_depth(path: str | Path) -> int:
     if mode in ("L", "RGB", "RGBA", "P", "1"):
         return 8
     return 0
+
+
+def _shift_mask(mask: np.ndarray, dy: int, dx: int) -> np.ndarray:
+    """Shift a boolean mask by (dy, dx); pixels shifted in from outside the
+    array are False. out[y, x] == mask[y + dy, x + dx] wherever that index is
+    in bounds, else False — so a pixel at the image edge always "sees" a
+    False neighbor off-canvas, exactly like a real out-of-bounds read would."""
+    h, w = mask.shape
+    out = np.zeros_like(mask)
+
+    y_dst_start, y_dst_end = max(0, -dy), min(h, h - dy)
+    x_dst_start, x_dst_end = max(0, -dx), min(w, w - dx)
+    if y_dst_start >= y_dst_end or x_dst_start >= x_dst_end:
+        return out
+
+    out[y_dst_start:y_dst_end, x_dst_start:x_dst_end] = mask[
+        y_dst_start + dy:y_dst_end + dy,
+        x_dst_start + dx:x_dst_end + dx,
+    ]
+    return out
+
+
+def compute_saturation_stats(img: np.ndarray, bit_depth: int) -> SaturationStats:
+    """
+    Detect clipped (saturated) signal in a source image, distinguishing a
+    saturated band (a solid contiguous region) from a dust speck (isolated
+    hot pixels) via 3x3 binary erosion of the saturation mask.
+
+    Must be called on the source array exactly as imported — before any
+    levels, gamma, rotation, or flip. Saturation is a property of the
+    acquisition, not of the display.
+    """
+    full_scale = 255 if bit_depth == 8 else 65535
+    mask = img == full_scale
+
+    total_pixels = int(img.size)
+    saturated_count = int(np.count_nonzero(mask))
+    max_value = int(img.max()) if img.size else 0
+
+    solid_saturated_count = 0
+    if saturated_count > 0:
+        # Short-circuit above: with no saturated pixels the mask is all-False
+        # and erosion is pointless work for the common case.
+        eroded = mask.copy()
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                eroded &= _shift_mask(mask, dy, dx)
+        solid_saturated_count = int(np.count_nonzero(eroded))
+
+    return SaturationStats(
+        max_value=max_value,
+        full_scale=full_scale,
+        saturated_count=saturated_count,
+        total_pixels=total_pixels,
+        saturated_fraction=(saturated_count / total_pixels) if total_pixels else 0.0,
+        solid_saturated_count=solid_saturated_count,
+    )

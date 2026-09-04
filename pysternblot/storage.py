@@ -24,6 +24,7 @@ from .models import (
     OperationLogEntry,
     Project,
 )
+from .logchain import append_log_entry
 import datetime, uuid
 from PIL import Image
 
@@ -35,6 +36,8 @@ class ImportArchiveResult:
     imported_asset_count: int = 0
     skipped_asset_count: int = 0
     integrity_errors: list[str] = field(default_factory=list)
+    project_integrity_verified: bool = False
+    archive_format_version: int = 0
 
 from .image_utils import (
     load_image_as_uint16,
@@ -215,6 +218,48 @@ def sha256_file(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+
+_SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _safe_component(value: str) -> bool:
+    """
+    True only if *value* is safe to use as a single filesystem path
+    component: non-empty, at most 64 characters, drawn only from
+    [A-Za-z0-9._-], and not exactly "." or "..".
+
+    Deliberately not tied to any particular id format (e.g. the
+    proj_<10 hex> generator) — a future id scheme must not break import.
+    """
+    if not value or len(value) > 64:
+        return False
+    if value in (".", ".."):
+        return False
+    return bool(_SAFE_COMPONENT_RE.match(value))
+
+
+def _safe_member_name(name: str) -> bool:
+    """
+    True only if *name* is a well-formed, relative zip member path: no
+    leading "/", no backslash, and no "", "." or ".." path component.
+    """
+    if not name or name.startswith("/") or "\\" in name:
+        return False
+    return all(part not in ("", ".", "..") for part in name.split("/"))
+
+
+def _resolve_contained(base_dir: Path, *components: str) -> Path | None:
+    """
+    Join base_dir with components and return the resolved path only if it
+    is still inside base_dir. Returns None if it would escape — defence in
+    depth on top of _safe_component, not a substitute for it.
+    """
+    dest = base_dir.joinpath(*components).resolve()
+    if not dest.is_relative_to(base_dir.resolve()):
+        return None
+    return dest
+
+
 @dataclass
 class Workspace:
     root: Path
@@ -289,7 +334,8 @@ class Workspace:
         old_value = project.project.is_archived
         project.project.is_archived = archived
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
-        project.operation_log.append(
+        append_log_entry(
+            project,
             OperationLogEntry(
                 timestamp_utc=now,
                 operation="archived" if archived else "unarchived",
@@ -298,7 +344,7 @@ class Workspace:
                 field="project.is_archived",
                 old_value=old_value,
                 new_value=archived,
-            )
+            ),
         )
         self.save_project(project)
 
@@ -307,7 +353,8 @@ class Workspace:
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         project.project.name = new_name
         project.project.modified_utc = now
-        project.operation_log.append(
+        append_log_entry(
+            project,
             OperationLogEntry(
                 timestamp_utc=now,
                 operation="project_renamed",
@@ -316,7 +363,7 @@ class Workspace:
                 field="project.name",
                 old_value=old_name,
                 new_value=new_name,
-            )
+            ),
         )
         return self.save_project(project)
 
@@ -668,14 +715,15 @@ class Workspace:
             if inf_meta.get("scale_type"):
                 note += f", scale={inf_meta['scale_type']}"
 
-            project.operation_log.append(
+            append_log_entry(
+                project,
                 OperationLogEntry(
                     timestamp_utc=now,
                     operation="nir_channel_imported",
                     target_type="blot",
                     asset_sha256=sha,
                     note=note,
-                )
+                ),
             )
             channels.append(
                 BlotChannel(
@@ -738,6 +786,19 @@ class Workspace:
                     f"Asset {sha} is referenced by a project but is missing from the workspace."
                 )
 
+        # Serialise each project exactly once — the bytes written to the zip
+        # and the bytes hashed into the manifest must be identical, or the
+        # manifest hash could describe content that was never actually
+        # written.
+        project_json_bytes: dict[str, bytes] = {
+            pid: project.model_dump_json(indent=2).encode("utf-8")
+            for pid, project in projects.items()
+        }
+        project_sha256s = {
+            pid: hashlib.sha256(data).hexdigest()
+            for pid, data in project_json_bytes.items()
+        }
+
         now = (
             datetime.datetime.now(datetime.timezone.utc)
             .replace(microsecond=0)
@@ -745,21 +806,19 @@ class Workspace:
         )
         manifest = {
             "format": "pbarchive",
-            "format_version": 1,
+            "format_version": 2,
             "created_utc": now,
             "app_version": app_version,
             "project_ids": list(project_ids),
             "asset_sha256s": list(all_sha256s),
+            "project_sha256s": project_sha256s,
         }
 
         with zipfile.ZipFile(dest_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("pbarchive/manifest.json", json.dumps(manifest, indent=2))
 
-            for pid, project in projects.items():
-                zf.writestr(
-                    f"pbarchive/projects/{pid}/project.json",
-                    project.model_dump_json(indent=2),
-                )
+            for pid, data in project_json_bytes.items():
+                zf.writestr(f"pbarchive/projects/{pid}/project.json", data)
 
             for sha, asset_path in asset_files.items():
                 zf.write(str(asset_path), f"pbarchive/assets/{sha}/{asset_path.name}")
@@ -786,28 +845,67 @@ class Workspace:
                 raise ValueError(
                     f"Unknown archive format: {manifest.get('format')!r}"
                 )
-            if manifest.get("format_version") != 1:
+
+            format_version = manifest.get("format_version")
+            if format_version not in (1, 2):
                 raise ValueError(
-                    f"Unsupported archive version: {manifest.get('format_version')}"
+                    f"Unsupported archive version: {format_version}"
                 )
+            result.archive_format_version = format_version
 
-            # --- Asset integrity check (read-only pass, nothing written yet) ---
+            manifest_asset_shas = set(manifest.get("asset_sha256s", []))
+            manifest_project_ids = set(manifest.get("project_ids", []))
+            manifest_project_hashes: dict[str, str] = manifest.get("project_sha256s") or {}
+
+            # _safe_member_name is applied to every member up front, before any
+            # member is dispatched by prefix — an absolute or backslash-laced
+            # name must never reach the loops below, whether or not it happens
+            # to also match a "pbarchive/..." prefix.
+            names: list[str] = []
+            for raw_name in zf.namelist():
+                if _safe_member_name(raw_name):
+                    names.append(raw_name)
+                else:
+                    result.integrity_errors.append(
+                        f"Rejected archive member with an unsafe path: {raw_name!r}"
+                    )
+
+            # ================================================================
+            # PASS 1 — validate everything; nothing is written below this
+            # point until every member has been checked.
+            # ================================================================
+
+            # --- Assets ---
             valid_assets: dict[str, tuple[str, bytes]] = {}  # sha256 -> (filename, data)
+            archive_asset_shas: set[str] = set()
 
-            for name in zf.namelist():
+            for name in names:
                 if not name.startswith("pbarchive/assets/"):
                     continue
+
                 parts = name.split("/")
                 # Expected: pbarchive / assets / <sha256> / original.<ext>
                 if len(parts) != 4 or not parts[3].startswith("original."):
                     continue
 
-                sha256_in_path = parts[2]
-                data = zf.read(name)
+                sha256_in_path, filename = parts[2], parts[3]
 
-                h = hashlib.sha256()
-                h.update(data)
-                computed = h.hexdigest()
+                if not _safe_component(sha256_in_path) or not _safe_component(filename):
+                    result.integrity_errors.append(
+                        f"Rejected asset member with an unsafe component: {name!r}"
+                    )
+                    continue
+
+                if _resolve_contained(self.assets_dir, sha256_in_path, filename) is None:
+                    result.integrity_errors.append(
+                        f"Rejected asset member escaping the workspace: {name!r}"
+                    )
+                    continue
+
+                archive_asset_shas.add(sha256_in_path)
+
+                data = zf.read(name)
+                computed = hashlib.sha256(data).hexdigest()
 
                 if computed != sha256_in_path:
                     result.integrity_errors.append(
@@ -817,9 +915,114 @@ class Workspace:
                     )
                     continue
 
-                valid_assets[sha256_in_path] = (parts[3], data)
+                valid_assets[sha256_in_path] = (filename, data)
 
-            # --- Write valid assets ---
+            # --- Projects ---
+            valid_projects: dict[str, Project] = {}
+            already_present_project_ids: list[str] = []
+            archive_project_ids: set[str] = set()
+            all_project_hashes_ok = True
+
+            for name in names:
+                if not name.startswith("pbarchive/projects/"):
+                    continue
+
+                parts = name.split("/")
+                # Expected: pbarchive / projects / <project_id> / project.json
+                if len(parts) != 4 or parts[3] != "project.json":
+                    continue
+
+                project_id, json_name = parts[2], parts[3]
+
+                if not _safe_component(project_id) or not _safe_component(json_name):
+                    result.integrity_errors.append(
+                        f"Rejected project member with an unsafe component: {name!r}"
+                    )
+                    continue
+
+                if _resolve_contained(self.projects_dir, project_id) is None:
+                    result.integrity_errors.append(
+                        f"Rejected project member escaping the workspace: {name!r}"
+                    )
+                    continue
+
+                archive_project_ids.add(project_id)
+
+                if (self.projects_dir / project_id).exists():
+                    already_present_project_ids.append(project_id)
+                    continue
+
+                # Hash the bytes exactly as read from the zip — before
+                # json.loads, before model validation, and before the
+                # imported_from_archive entry is appended. The manifest hash
+                # describes the archive's contents, never the imported result.
+                raw_bytes = zf.read(name)
+
+                if format_version >= 2:
+                    expected_hash = manifest_project_hashes.get(project_id)
+                    if expected_hash is None:
+                        result.integrity_errors.append(
+                            f"No manifest hash recorded for project {project_id}; skipped."
+                        )
+                        all_project_hashes_ok = False
+                        continue
+                    computed = hashlib.sha256(raw_bytes).hexdigest()
+                    if computed != expected_hash:
+                        result.integrity_errors.append(
+                            f"SHA256 mismatch for project.json at {name}: "
+                            f"manifest says {expected_hash[:12]}…, "
+                            f"content hashes to {computed[:12]}…"
+                        )
+                        all_project_hashes_ok = False
+                        continue
+
+                try:
+                    proj_data = json.loads(raw_bytes.decode("utf-8"))
+                    project = Project.model_validate(proj_data)
+                except Exception as exc:
+                    result.integrity_errors.append(
+                        f"Failed to parse project.json for {project_id}: {exc}"
+                    )
+                    continue
+
+                # save_project() writes to a directory derived from
+                # project.project.id, not from the (already-validated) zip
+                # path — so the two must agree, or a safely-named archive
+                # member could still smuggle a traversal id through the
+                # JSON payload itself.
+                if project.project.id != project_id:
+                    result.integrity_errors.append(
+                        f"Project ID mismatch for {name}: archive path says "
+                        f"{project_id!r}, JSON declares {project.project.id!r}"
+                    )
+                    continue
+
+                valid_projects[project_id] = project
+
+            # --- Cross-check manifest inventory against actual archive contents ---
+            for sha in sorted(manifest_asset_shas - archive_asset_shas):
+                result.integrity_errors.append(
+                    f"Asset {sha[:12]}… is listed in the manifest but not found in the archive."
+                )
+            for sha in sorted(archive_asset_shas - manifest_asset_shas):
+                result.integrity_errors.append(
+                    f"Asset {sha[:12]}… is present in the archive but not listed in the manifest."
+                )
+            for pid in sorted(manifest_project_ids - archive_project_ids):
+                result.integrity_errors.append(
+                    f"Project {pid} is listed in the manifest but not found in the archive."
+                )
+            for pid in sorted(archive_project_ids - manifest_project_ids):
+                result.integrity_errors.append(
+                    f"Project {pid} is present in the archive but not listed in the manifest."
+                )
+
+            result.project_integrity_verified = format_version >= 2 and all_project_hashes_ok
+
+            # ================================================================
+            # PASS 2 — write only what validated cleanly above.
+            # ================================================================
+
             for sha, (filename, data) in valid_assets.items():
                 dest_dir = self.assets_dir / sha
                 if dest_dir.exists():
@@ -829,38 +1032,23 @@ class Workspace:
                     (dest_dir / filename).write_bytes(data)
                     result.imported_asset_count += 1
 
-            # --- Import projects ---
-            for name in zf.namelist():
-                if not name.startswith("pbarchive/projects/"):
-                    continue
-                parts = name.split("/")
-                # Expected: pbarchive / projects / <project_id> / project.json
-                if len(parts) != 4 or parts[3] != "project.json":
-                    continue
+            result.skipped_project_ids.extend(already_present_project_ids)
 
-                project_id = parts[2]
-                proj_dir = self.projects_dir / project_id
-
-                if proj_dir.exists():
-                    result.skipped_project_ids.append(project_id)
-                    continue
-
-                proj_data = json.loads(zf.read(name).decode("utf-8"))
-                project = Project.model_validate(proj_data)
-
+            for project_id, project in valid_projects.items():
                 now = (
                     datetime.datetime.now(datetime.timezone.utc)
                     .replace(microsecond=0)
                     .isoformat()
                 )
-                project.operation_log.append(
+                append_log_entry(
+                    project,
                     OperationLogEntry(
                         timestamp_utc=now,
                         operation="imported_from_archive",
                         target_type="project",
                         target_id=project_id,
                         note=f"Imported from archive: {src_path.name}",
-                    )
+                    ),
                 )
 
                 self.save_project(project)

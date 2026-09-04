@@ -19,7 +19,8 @@ from pathlib import Path
 import json, zipfile
 
 from ..models import Blot, AssetEntry, OperationLogEntry
-from ..image_utils import is_jpeg, get_bit_depth
+from ..image_utils import is_jpeg, get_bit_depth, load_image_as_uint16, compute_saturation_stats
+from ..logchain import append_log_entry
 
 
 class _ProjectIOMixin:
@@ -51,7 +52,8 @@ class _ProjectIOMixin:
         if old_value == new_value and old_value is not None:
             return
 
-        self.current_project.operation_log.append(
+        append_log_entry(
+            self.current_project,
             OperationLogEntry(
                 timestamp_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 operation=operation,
@@ -62,7 +64,7 @@ class _ProjectIOMixin:
                 old_value=self._plain_log_value(old_value),
                 new_value=self._plain_log_value(new_value),
                 note=note,
-            )
+            ),
         )
 
     def open_project(self):
@@ -164,11 +166,23 @@ class _ProjectIOMixin:
         try:
             digest, dest = self.workspace.import_asset(path)
 
+            saturation = compute_saturation_stats(load_image_as_uint16(dest), bit_depth)
+
             self.current_project.assets[digest] = AssetEntry(
                 sha256=digest,
                 stored_original_path=str(dest),
                 original_source_path=str(path),
                 stored_preview_path=None,
+                saturation=saturation,
+            )
+            self.log_operation(
+                "saturation_assessed",
+                target_type="asset",
+                target_id=digest,
+                asset_sha256=digest,
+                field="saturation",
+                old_value=None,
+                new_value=saturation.model_dump(),
             )
 
             blot_id = f"blot_{len(self.current_project.panel.blots) + 1:02d}"
@@ -285,12 +299,25 @@ class _ProjectIOMixin:
                 acq_meta_val = acq_meta.get(ch.asset_sha256) or None
                 if ch.asset_sha256 not in self.current_project.assets:
                     fp, dest = imported_assets[ch.asset_sha256]
+                    ch_bit_depth = get_bit_depth(str(fp))
+                    saturation = compute_saturation_stats(load_image_as_uint16(dest), ch_bit_depth)
+
                     self.current_project.assets[ch.asset_sha256] = AssetEntry(
                         sha256=ch.asset_sha256,
                         stored_original_path=str(dest),
                         original_source_path=str(fp),
                         stored_preview_path=None,
                         acquisition_metadata=acq_meta_val,
+                        saturation=saturation,
+                    )
+                    self.log_operation(
+                        "saturation_assessed",
+                        target_type="asset",
+                        target_id=ch.asset_sha256,
+                        asset_sha256=ch.asset_sha256,
+                        field="saturation",
+                        old_value=None,
+                        new_value=saturation.model_dump(),
                     )
                 elif acq_meta_val and not self.current_project.assets[ch.asset_sha256].acquisition_metadata:
                     # Dedup hit on re-import: populate metadata if not yet captured.
@@ -683,6 +710,11 @@ class _ProjectIOMixin:
                 f"Skipped (already exist): {len(result.skipped_project_ids)} projects, "
                 f"{result.skipped_asset_count} assets",
             ]
+
+            if result.project_integrity_verified:
+                lines.append("Project integrity verified.")
+            elif result.archive_format_version == 1:
+                lines.append("Archive predates project integrity verification (format v1).")
 
             if result.integrity_errors:
                 lines.append("")

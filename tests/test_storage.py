@@ -444,9 +444,12 @@ class TestExportArchiveRoundtrip:
 
             manifest = json.loads(zf.read("pbarchive/manifest.json"))
             assert manifest["format"] == "pbarchive"
-            assert manifest["format_version"] == 1
+            assert manifest["format_version"] == 2
             assert project_id in manifest["project_ids"]
             assert sha in manifest["asset_sha256s"]
+            assert manifest["project_sha256s"][project_id] == hashlib.sha256(
+                zf.read(f"pbarchive/projects/{project_id}/project.json")
+            ).hexdigest()
 
             # project.json must be present
             assert f"pbarchive/projects/{project_id}/project.json" in names

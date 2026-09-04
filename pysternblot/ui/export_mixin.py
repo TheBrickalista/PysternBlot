@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import re
+import shutil
+
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QGraphicsScene
 from PySide6.QtGui import QPainter, QImage, QPdfWriter, QPageSize, QFont, QPen
 from PySide6.QtCore import Qt, QRectF, QRect, QSize
@@ -28,6 +31,7 @@ from ..integrity import (
     write_integrity_json,
     write_integrity_html,
 )
+from ..storage import sha256_file
 
 
 def _nir_channel_path(base_path: str, channel_index: int, wavelength_nm: int | None) -> str:
@@ -39,6 +43,48 @@ def _nir_channel_path(base_path: str, channel_index: int, wavelength_nm: int | N
     else:
         suffix = f"_ch{channel_index}"
     return str(p.parent / f"{p.stem}{suffix}{ext}")
+
+
+_UNSAFE_STEM_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _sanitize_stem(value: str) -> str:
+    """Replace every character outside [A-Za-z0-9._-] with '_'."""
+    sanitized = _UNSAFE_STEM_CHARS_RE.sub("_", value)
+    return sanitized or "source"
+
+
+def _source_export_basename(blot_id: str, original_source_path: str | None) -> str:
+    """Prefer the instrument's own filename stem, sanitised; fall back to the blot id."""
+    if original_source_path:
+        return _sanitize_stem(Path(original_source_path).stem)
+    return blot_id
+
+
+def _copy_verified_source_asset(workspace, sha256: str, dest_path: str) -> str:
+    """
+    Copy the stored source asset for *sha256* to *dest_path* byte for byte —
+    shutil.copyfile only, no library ever opens or reinterprets the bytes —
+    then re-hash the written copy and compare against *sha256*.
+
+    On mismatch the written file is deleted and a ValueError is raised: a
+    source export that silently corrupted its output would be worse than no
+    feature at all.
+
+    Returns the verified SHA-256 (== sha256) on success.
+    """
+    src_path = workspace.asset_original_file(sha256)
+    shutil.copyfile(str(src_path), dest_path)
+
+    computed = sha256_file(dest_path)
+    if computed != sha256:
+        Path(dest_path).unlink(missing_ok=True)
+        raise ValueError(
+            f"Source export verification failed for {dest_path}: "
+            f"expected {sha256[:12]}…, got {computed[:12]}…"
+        )
+
+    return computed
 
 
 def _compute_export_geometry(
@@ -457,6 +503,147 @@ class _ExportMixin:
             self.workspace.save_project(self.current_project)
 
             QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))
+
+    def export_current_source_asset(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        blot = self._get_active_blot()
+        if blot is None:
+            QMessageBox.information(self, "No blot", "No active blot to export.")
+            return
+
+        # Resolve a representative source path up front, for the default
+        # filename/extension the save dialog offers.
+        try:
+            if blot.is_nir():
+                rep_sha = sorted(blot.channels, key=lambda c: c.channel_index)[0].asset_sha256
+            else:
+                rep_sha = blot.asset_sha256
+            rep_src_path = self.workspace.asset_original_file(rep_sha)
+            rep_asset = self.current_project.assets.get(rep_sha)
+            original_source_path = rep_asset.original_source_path if rep_asset else None
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))
+            return
+
+        basename = _source_export_basename(blot.id, original_source_path)
+        default_name = f"{basename}_source{rep_src_path.suffix or '.bin'}"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Source File", default_name, "All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            if blot.is_nir():
+                written: list[str] = []
+                for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                    ch_path = _nir_channel_path(path, ch.channel_index, ch.wavelength_nm)
+                    _copy_verified_source_asset(self.workspace, ch.asset_sha256, ch_path)
+                    self.log_operation(
+                        "source_asset_exported",
+                        target_type="export",
+                        target_id=blot.id,
+                        asset_sha256=ch.asset_sha256,
+                        field="source_asset",
+                        old_value=None,
+                        new_value=ch_path,
+                    )
+                    written.append(ch_path)
+                self.workspace.save_project(self.current_project)
+                QMessageBox.information(
+                    self, "Exported",
+                    "Saved source files (SHA-256 verified):\n" + "\n".join(written),
+                )
+            else:
+                verified_hash = _copy_verified_source_asset(self.workspace, blot.asset_sha256, path)
+                self.log_operation(
+                    "source_asset_exported",
+                    target_type="export",
+                    target_id=blot.id,
+                    asset_sha256=blot.asset_sha256,
+                    field="source_asset",
+                    old_value=None,
+                    new_value=str(path),
+                )
+                self.workspace.save_project(self.current_project)
+                QMessageBox.information(
+                    self, "Exported",
+                    f"Source file exported (SHA-256 verified: {verified_hash[:8]}…).",
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Export error", str(e))
+
+    def export_all_source_assets(self):
+        if not self.current_project:
+            QMessageBox.information(self, "No project", "Create or open a project first.")
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose folder for Source File exports",
+        )
+
+        if not folder:
+            return
+
+        try:
+            for blot in self.current_project.panel.blots:
+                if blot.is_nir():
+                    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
+                        asset = self.current_project.assets.get(ch.asset_sha256)
+                        original_source_path = asset.original_source_path if asset else None
+                        src_path = self.workspace.asset_original_file(ch.asset_sha256)
+                        basename = _source_export_basename(blot.id, original_source_path)
+                        base = str(Path(folder) / f"{basename}_source{src_path.suffix or '.tif'}")
+                        ch_path = _nir_channel_path(base, ch.channel_index, ch.wavelength_nm)
+
+                        try:
+                            _copy_verified_source_asset(self.workspace, ch.asset_sha256, ch_path)
+                        except Exception as e:
+                            raise RuntimeError(
+                                f"Blot {blot.id} (channel {ch.channel_index}): {e}"
+                            ) from e
+
+                        self.log_operation(
+                            "source_asset_exported",
+                            target_type="export",
+                            target_id=blot.id,
+                            asset_sha256=ch.asset_sha256,
+                            field="source_asset",
+                            old_value=None,
+                            new_value=ch_path,
+                        )
+                else:
+                    asset = self.current_project.assets.get(blot.asset_sha256)
+                    original_source_path = asset.original_source_path if asset else None
+                    src_path = self.workspace.asset_original_file(blot.asset_sha256)
+                    basename = _source_export_basename(blot.id, original_source_path)
+                    dest_path = str(Path(folder) / f"{basename}_source{src_path.suffix or '.bin'}")
+
+                    try:
+                        _copy_verified_source_asset(self.workspace, blot.asset_sha256, dest_path)
+                    except Exception as e:
+                        raise RuntimeError(f"Blot {blot.id}: {e}") from e
+
+                    self.log_operation(
+                        "source_asset_exported",
+                        target_type="export",
+                        target_id=blot.id,
+                        asset_sha256=blot.asset_sha256,
+                        field="source_asset",
+                        old_value=None,
+                        new_value=dest_path,
+                    )
+            self.workspace.save_project(self.current_project)
+
+            QMessageBox.information(self, "Exported", f"Saved source files to:\n{folder}")
 
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))

@@ -157,11 +157,34 @@ The **MW markers** checkbox and the side dropdown are enabled only while
 
 ## Exports
 
+Pystern Blot can hand over the original image at three different levels, from raw
+instrument output to the finished figure:
+
+- **Source file** — the exact bytes imported from the instrument: untouched, with
+  no display settings, no annotations, and no format conversion. Every export
+  re-hashes the written copy and verifies it against the asset's stored SHA-256
+  before reporting success.
+- **Annotated context TIFF** — the original image rendered with the *current*
+  display settings (levels, gamma, rotation, invert) applied, with the crop
+  rectangle and MW markers burned in. Useful for reviewers who want to see the
+  whole source alongside what was cropped for the figure.
+- **Published panel** — the final composed figure, exported from the **Figure**
+  tab (PNG/PDF/SVG); see the [Figure tab](figure.md) guide.
+
+```{warning}
+"Annotated context TIFF" applies whatever display settings (levels, gamma,
+rotation, invert) are currently active on the blot — it is a presentation
+artefact, not the source. If you need the file exactly as the instrument
+produced it, use "Export Source File" / "Export All Source Files" instead.
+```
+
 | Button | Output |
 |---|---|
 | **Export Zone + Legend** | The selected legend export zone, exported as a 2x-scale PNG with the panel legend drawn above it and MW markers on the chosen side |
-| **Export Original TIFF** | The current blot's unmodified 16-bit source, with crop frame and band markers overlaid |
-| **Export All Originals** | Every blot in the project exported in one step |
+| **Export Annotated Context TIFF** | The current blot's image with the current display settings applied and the crop frame and band markers burned in |
+| **Export All Annotated Context** | Every blot in the project exported in one step |
+| **Export Source File** | The current blot's source file, copied byte for byte with no display settings, annotations, or format conversion applied |
+| **Export All Source Files** | Every blot's source file exported in one step, each verified independently |
 
-Exporting marked-up originals satisfies the raw-image submission requirements of
-Springer Nature, EMBO Press, eLife, and PLOS.
+Exporting the source file or the annotated context TIFF satisfies the raw-image
+submission requirements of Springer Nature, EMBO Press, eLife, and PLOS.

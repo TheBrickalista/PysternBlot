@@ -238,12 +238,22 @@ class Panel(BaseModel):
     legend: LegendSettings = Field(default_factory=LegendSettings)
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
 
+class SaturationStats(BaseModel):
+    max_value: int
+    full_scale: int              # 255 for 8-bit, 65535 for 16-bit
+    saturated_count: int         # pixels == full_scale
+    total_pixels: int
+    saturated_fraction: float
+    solid_saturated_count: int   # pixels surviving 3x3 erosion of the mask
+
 class AssetEntry(BaseModel):
     sha256: str
     stored_original_path: str
     original_source_path: Optional[str] = None
     stored_preview_path: Optional[str] = None
     acquisition_metadata: Optional[dict] = None
+    # None means "not assessed" (imported by an earlier version) — never "clean".
+    saturation: Optional[SaturationStats] = None
 
 class ProjectMeta(BaseModel):
     id: str
@@ -267,6 +277,9 @@ class OperationLogEntry(BaseModel):
     new_value: Optional[Any] = None
 
     note: Optional[str] = None
+
+    prev_hash: Optional[str] = None
+    entry_hash: Optional[str] = None
 
 class Project(BaseModel):
     project: ProjectMeta

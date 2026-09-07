@@ -22,7 +22,7 @@
 
 Western blot figures typically go through Photoshop for levels adjustments, then Illustrator for layout and annotation — a multi-step process with no record of what was changed or when. Pystern Blot replaces that pipeline with a single desktop application that handles everything from raw image import to final figure export. Both ECL and NIR fluorescence modalities are supported.
 
-All processing stays in 16-bit throughout, so no dynamic range is lost when you adjust contrast. Every crop, rotation, and levels change is logged with SHA256 checksums of the original files, giving you a complete provenance record you can attach to a submission.
+All processing stays in 16-bit throughout, so no dynamic range is lost when you adjust contrast. Every crop, rotation, and levels change is logged with SHA256 checksums of the original files in a hash-chained, tamper-evident operation log, giving you a complete provenance record you can attach to a submission.
 
 ---
 
@@ -41,10 +41,13 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - **Overlay protein ladder with per-band wavelength assignment** — Show 685 / Show 785 checkboxes per preset band; ticks and labels appear automatically in the final figure
 - **Include / exclude per blot and per NIR channel** — import multiple exposures or channels and choose which appear in the final figure without deleting the others
 - **Flexible legend annotation** — per-lane condition labels with grouped headers: assign cells to groups to draw shared underlines and centred group labels (e.g. one "Total" label spanning two lanes), supporting asymmetric layouts with mixed group sizes and standalone lanes
-- **Library archive** — export and import `.pbarchive` files for lab handover / long-term storage, with SHA256 integrity verification of every asset
+- **Library archive** — export and import `.pbarchive` files for lab handover / long-term storage, with SHA256 integrity verification of every asset and (since `format_version` 2) of each project's own state, plus archive path validation and decompression limits against untrusted input
 - **Project archiving** — soft-hide projects from the library without deleting them; restore at any time via the archive manager dialog or the right-click context menu on any project
 - **Antibody name field per blot** — persisted in project file and audit log
-- **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log, and crop/rotation metadata for every blot
+- **Hash-chained operation log** — every entry is cryptographically bound to the one before it; the integrity report shows whether the chain verifies, is unchained (pre-existing project), partially chained, or broken, so accidental corruption is visible without implying more than tamper-evidence
+- **Clipping (saturation) detection** — flags full-scale pixels on import, distinguishing a genuinely saturated band from a harmless dust speck via erosion-based analysis; reported for both the whole image and the current crop region
+- **Byte-exact source file export** — export the original imported file untouched, alongside the existing annotated-context export, with post-copy SHA256 verification
+- **Integrity report** — one-click export of a JSON or HTML report with SHA256 hashes, operation log with chain-verification status, saturation flags, and crop/rotation metadata for every blot
 - **Export to SVG, PDF, PNG, and 16-bit TIFF** — SVG and PDF preserve text as editable objects for final tweaks in Illustrator or Affinity Designer
 - **Legend export zone** — draw an independent second region on the original image and export it as a PNG with the panel legend and molecular-weight markers drawn above it, for journals that require raw images annotated in context
 - **DNA gel support** *(coming soon)* — the same integrity pipeline extended to agarose gel electrophoresis, with DNA ladder annotation and band tracking
@@ -122,26 +125,27 @@ No Python required. Download the latest build for your platform directly from th
 
 ```
 pysternblot/
-├── models.py               — Pydantic data model (Project, Panel, Blot, BlotChannel, …)
-├── storage.py              — Workspace I/O, asset import, archive export/import, Typhoon NIR import
+├── models.py               — Pydantic data model (Project, Panel, Blot, BlotChannel, SaturationStats, …)
+├── storage.py              — Workspace I/O, asset import, archive export/import (manifest binding, path validation, decompression limits), Typhoon NIR import
+├── logchain.py             — Hash-chained operation log: canonical entry hashing and four-state chain verification
 ├── render.py               — QGraphicsScene builders for final figure and provenance view
-├── image_utils.py          — 16-bit and 8-bit image pipeline; bit-depth detection helpers; multichannel TIFF loading and encoding detection
-├── integrity.py            — SHA256 provenance and integrity report generation; 8-bit source flagging
+├── image_utils.py          — 16-bit and 8-bit image pipeline; bit-depth detection helpers; erosion-based saturation detection; multichannel TIFF loading and encoding detection
+├── integrity.py            — SHA256 provenance and integrity report generation; operation-log chain and saturation reporting; 8-bit source flagging
 └── ui/
-    ├── main_window.py          — Main window, tab layout, display controls; levels sliders adapt to bit depth; Black/White fields are editable QLineEdit
-    ├── project_io_mixin.py     — Project create/open/import, library archive export/import, project archiving (soft-hide and restore)
+    ├── main_window.py          — Main window, tab layout, display controls; levels sliders adapt to bit depth; Black/White fields are editable QLineEdit; saturation badge
+    ├── project_io_mixin.py     — Project create/open/import (with saturation assessment), library archive export/import, project archiving (soft-hide and restore)
     ├── marker_set_mixin.py     — Protein ladder preset editor (Show 685/785 per band)
     ├── overlay_ladder_mixin.py — Ladder assignment and kDa annotation
-    ├── export_mixin.py         — PNG/PDF/SVG/TIFF/integrity report export; pre-export 8-bit warning
+    ├── export_mixin.py         — PNG/PDF/SVG/TIFF/integrity report export; byte-exact source file export; annotated-context export; pre-export 8-bit warning
     ├── nir_import_dialog.py    — NIR blot import dialog (1 or 2 channel Typhoon)
     ├── legend_tab.py           — Legend editor tab
     ├── widgets.py              — Shared UI widgets
     ├── zoomable_graphics_view.py — Zoomable/pannable graphics view
     └── crop_rect_item.py       — Interactive crop rectangle with Inkscape-style corner and edge handles; generous hit zones for precise grab
-tests/                      — pytest test suite (210 tests, plus 2 skipped pending LI-COR Odyssey sample file, covering models, rendering, provenance, archive integrity, 8-bit pipeline, and crop handle behaviour)
+tests/                      — pytest test suite (436 tests, plus 2 skipped pending LI-COR Odyssey sample file, covering models, rendering, provenance, hash-chained operation log, archive integrity and resource limits, saturation detection, 8-bit pipeline, and crop handle behaviour)
 ```
 
-> The test suite is run on every commit and covers models, rendering, provenance, archive integrity, 8-bit pipeline, and crop handle behaviour.
+> The test suite is run on every commit and covers models, rendering, provenance, hash-chained operation log verification, archive integrity and resource limits, saturation detection, 8-bit pipeline, and crop handle behaviour.
 
 ---
 
@@ -158,7 +162,7 @@ tests/                      — pytest test suite (210 tests, plus 2 skipped pen
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, and experimental metadata fields. Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, and repository/ELN integration. See [Roadmap.md](Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, experimental metadata fields, and provenance/security hardening (hash-chained operation log, archive manifest binding, byte-exact source export, saturation detection, resource limits). Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, repository/ELN integration, and macOS DMG packaging. See [Roadmap.md](Roadmap.md) for the full plan.
 
 ---
 

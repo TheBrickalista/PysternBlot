@@ -28,6 +28,35 @@ the file was altered or corrupted after the archive was created, and is surfaced
 rather than passed over silently. This makes the archive not just portable but
 *verifiable* — the chain of custody is checked, not merely asserted.
 
+Since `format_version` 2, the manifest also records the SHA-256 of each
+project's serialised `project.json` — the state that carries the operation
+log described in [Provenance and integrity](provenance.md). That hash is
+computed from the exact bytes written into the archive, so it can never
+describe content that was never actually produced. On import, each
+`project.json` is hashed before it is parsed, before it is validated, and
+before the `imported_from_archive` operation-log entry is appended — the
+manifest hash always describes the archive's own contents, never the result
+of importing it. A mismatch skips that project entirely and is reported;
+nothing is written for it. `project_integrity_verified` in the import result
+is `True` only when every project's hash checked out. A `format_version` 1
+archive — from before this check existed — still imports normally, with
+asset-level verification unchanged but no project-level guarantee; the import
+result reflects this rather than treating it as an error.
+
+Because a `.pbarchive` is exchanged between labs by design, it is untrusted
+input in the ordinary case, not the exceptional one. Import additionally
+validates every archive member's path — rejecting absolute paths, backslash
+separators, and `.`/`..` components — and restricts every path component
+(asset hash, project id, filename) to a safe character set, with destination
+paths resolved and checked against the workspace root as defence in depth. A
+project whose `project.json` declares an id different from the archive path
+it was stored under is rejected outright, since the file that actually writes
+project data trusts the JSON payload's own id. Decompression is bounded too:
+per-member and total uncompressed size, member count, and (for binary assets)
+compression ratio are all capped, so a small malicious archive cannot be
+crafted to exhaust memory on import. A rejected member is never written and
+is reported rather than silently dropped.
+
 ## Why JSON, not a database
 
 The `.pbarchive` format is built on human-readable JSON rather than a binary

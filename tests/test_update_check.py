@@ -118,8 +118,8 @@ class _FakeResponse:
     def __init__(self, body: bytes):
         self._body = body
 
-    def read(self):
-        return self._body
+    def read(self, amt=None):
+        return self._body if amt is None else self._body[:amt]
 
     def __enter__(self):
         return self

@@ -260,6 +260,125 @@ def _resolve_contained(base_dir: Path, *components: str) -> Path | None:
     return dest
 
 
+def _safe_cache_component(value: str) -> str:
+    """
+    Return *value* unchanged if it is safe to interpolate into a cache
+    filename (same rules as _safe_component); otherwise return a stable,
+    deterministic fallback derived from its SHA-256 digest.
+
+    A fallback rather than a rejection is deliberate: a malformed id (e.g.
+    one that arrived via a Stage-2-hardened but not otherwise hostile
+    project.json) must not make an otherwise valid project unopenable. The
+    cache is derived data, regenerated on demand, and can safely be keyed on
+    a sanitised name — nothing depends on the cache filename matching the
+    id verbatim.
+    """
+    if _safe_component(value):
+        return value
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+# --- .pbarchive resource limits -----------------------------------------
+# Archives are untrusted input in the ordinary case: .pbarchive exists so
+# projects can move between labs, so a malicious or merely corrupt archive
+# is expected traffic, not an edge case. These bound how much memory a
+# single import_archive() call can be made to allocate.
+#
+# A 2000x1500 16-bit Typhoon scan is about 6 MB, so 512 MB per member is
+# generous for any single acquisition; 4 GB total covers a large
+# multi-blot project. MAX_ARCHIVE_MEMBERS bounds the member-count scan
+# itself.
+#
+# MAX_COMPRESSION_RATIO applies to binary assets only (see check_ratio on
+# _read_member_limited) — manifest.json and project.json are exempt.
+# Measured: a real 2000x1500 16-bit Typhoon TIFF compresses at ~1.7:1 (image
+# data is near-incompressible, nowhere near the cap), but a realistic
+# project.json with 4,000 operation-log entries compresses at ~201:1 —
+# repeated field names, repeated timestamp prefixes, and two 64-char hex
+# hashes per entry make log-heavy JSON legitimately, not suspiciously,
+# compressible, and a long-running project could climb several times
+# higher. The ratio heuristic exists to flag content that is suspiciously
+# compressible; applying it to JSON risks rejecting a valid archive for no
+# security gain, since MAX_MEMBER_UNCOMPRESSED_BYTES and
+# MAX_TOTAL_UNCOMPRESSED_BYTES already bound every member's absolute size —
+# those are the checks that actually stop a decompression bomb.
+MAX_MEMBER_UNCOMPRESSED_BYTES = 512 * 1024 * 1024   # a single source TIFF
+MAX_TOTAL_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10_000
+MAX_COMPRESSION_RATIO = 1000                # per member, uncompressed / compressed; binary assets only
+MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+
+
+def _read_member_limited(
+    zf: "zipfile.ZipFile", name: str, max_bytes: int, check_ratio: bool = True,
+) -> bytes:
+    """
+    Read a zip member's contents under hard size and (optionally) compression-
+    ratio caps.
+
+    ZipInfo.file_size (the declared uncompressed size) is attacker-controlled
+    and can understate the real payload, so it is checked up front only as
+    an early exit — the actual guarantee is the running total accumulated
+    while streaming the member via zf.open(), which aborts the moment it
+    would exceed max_bytes regardless of what the header claimed. Both
+    checks are required; neither alone is sufficient.
+
+    check_ratio=False skips only the compression-ratio test; the declared-
+    size early exit, the streaming running-total cap, and the BadZipFile
+    rejection path below are unaffected. Callers pass False for JSON
+    members (manifest.json, project.json), where legitimate content is
+    routinely far more compressible than the ratio heuristic assumes — see
+    the comment on MAX_COMPRESSION_RATIO.
+
+    Raises ValueError if the declared size, the compression ratio (when
+    checked), or the actual streamed size exceeds its limit.
+    """
+    info = zf.getinfo(name)
+
+    if info.file_size > max_bytes:
+        raise ValueError(
+            f"declared uncompressed size {info.file_size} exceeds the {max_bytes}-byte limit"
+        )
+
+    if check_ratio:
+        ratio = info.file_size / max(info.compress_size, 1)
+        if ratio > MAX_COMPRESSION_RATIO:
+            raise ValueError(
+                f"compression ratio {ratio:.0f}:1 exceeds the {MAX_COMPRESSION_RATIO}:1 limit"
+            )
+
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with zf.open(name) as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(
+                        f"actual uncompressed size exceeds the {max_bytes}-byte limit "
+                        f"(declared size understated the real payload)"
+                    )
+                chunks.append(chunk)
+    except zipfile.BadZipFile as exc:
+        # CPython's ZipExtFile caps a read at the DECLARED file_size (it
+        # cannot itself be tricked into over-reading), so a lied-small
+        # file_size does not let more bytes through — it instead truncates
+        # the read and raises a CRC mismatch here, since the truncated data
+        # no longer matches the header's recorded checksum of the full
+        # payload. That is exactly the "declared size understates the real
+        # payload" case surfacing through a different door; it must be
+        # treated as a rejection too, not left to crash the whole import.
+        raise ValueError(
+            f"corrupt or inconsistent member (declared size does not match "
+            f"the actual data): {exc}"
+        ) from exc
+
+    return b"".join(chunks)
+
+
 @dataclass
 class Workspace:
     root: Path
@@ -576,6 +695,12 @@ class Workspace:
         """
         self.ensure()
 
+        # blot.id (and, defensively, the channel index) can arrive from an
+        # imported project.json rather than the internal id generator, so
+        # they are sanitised before being interpolated into a filesystem
+        # path — see _safe_cache_component.
+        safe_blot_id = _safe_cache_component(str(blot.id))
+
         if channel_index >= 0:
             ch = next((c for c in blot.channels if c.channel_index == channel_index), None)
             if ch is None:
@@ -584,11 +709,12 @@ class Workspace:
                 )
             sha256 = ch.asset_sha256
             display = ch.display
-            cache_name = f"preview_crop_{blot.id}_ch{channel_index}.tif"
+            safe_channel = _safe_cache_component(str(channel_index))
+            cache_name = f"preview_crop_{safe_blot_id}_ch{safe_channel}.tif"
         else:
             sha256 = blot.asset_sha256
             display = getattr(blot, "display", None)
-            cache_name = f"preview_crop_{blot.id}.tif"
+            cache_name = f"preview_crop_{safe_blot_id}.tif"
 
         original_path = self.asset_original_file(sha256)
         img = load_image_as_uint16(original_path)
@@ -834,11 +960,15 @@ class Workspace:
         with zipfile.ZipFile(src_path, "r") as zf:
             # --- Validate manifest ---
             try:
-                manifest_bytes = zf.read("pbarchive/manifest.json")
+                manifest_bytes = _read_member_limited(
+                    zf, "pbarchive/manifest.json", MAX_MANIFEST_BYTES, check_ratio=False,
+                )
             except KeyError:
                 raise ValueError(
                     "Not a valid .pbarchive file: missing pbarchive/manifest.json"
                 )
+            except ValueError as exc:
+                raise ValueError(f"Invalid .pbarchive manifest: {exc}") from exc
 
             manifest = json.loads(manifest_bytes.decode("utf-8"))
             if manifest.get("format") != "pbarchive":
@@ -857,12 +987,21 @@ class Workspace:
             manifest_project_ids = set(manifest.get("project_ids", []))
             manifest_project_hashes: dict[str, str] = manifest.get("project_sha256s") or {}
 
+            # Reject outright before any member is read — a member count this
+            # high is itself the attack, independent of any single member's size.
+            all_names = zf.namelist()
+            if len(all_names) > MAX_ARCHIVE_MEMBERS:
+                raise ValueError(
+                    f"Archive contains too many members ({len(all_names)} > "
+                    f"{MAX_ARCHIVE_MEMBERS}); refusing to import."
+                )
+
             # _safe_member_name is applied to every member up front, before any
             # member is dispatched by prefix — an absolute or backslash-laced
             # name must never reach the loops below, whether or not it happens
             # to also match a "pbarchive/..." prefix.
             names: list[str] = []
-            for raw_name in zf.namelist():
+            for raw_name in all_names:
                 if _safe_member_name(raw_name):
                     names.append(raw_name)
                 else:
@@ -875,11 +1014,21 @@ class Workspace:
             # point until every member has been checked.
             # ================================================================
 
+            # Running total across every member actually read in this pass —
+            # independent of any single member's own cap, since many
+            # individually-legal members can still exhaust memory in
+            # aggregate. Once exceeded, the whole import is aborted: pass 2
+            # is skipped entirely, so nothing already-validated is written.
+            running_total_bytes = 0
+            total_exceeded = False
+
             # --- Assets ---
             valid_assets: dict[str, tuple[str, bytes]] = {}  # sha256 -> (filename, data)
             archive_asset_shas: set[str] = set()
 
             for name in names:
+                if total_exceeded:
+                    break
                 if not name.startswith("pbarchive/assets/"):
                     continue
 
@@ -904,7 +1053,23 @@ class Workspace:
 
                 archive_asset_shas.add(sha256_in_path)
 
-                data = zf.read(name)
+                try:
+                    data = _read_member_limited(zf, name, MAX_MEMBER_UNCOMPRESSED_BYTES)
+                except ValueError as exc:
+                    result.integrity_errors.append(
+                        f"Rejected asset member exceeding size limits: {name!r} ({exc})"
+                    )
+                    continue
+
+                running_total_bytes += len(data)
+                if running_total_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                    result.integrity_errors.append(
+                        f"Archive exceeds the total uncompressed size limit "
+                        f"({MAX_TOTAL_UNCOMPRESSED_BYTES} bytes); import aborted."
+                    )
+                    total_exceeded = True
+                    break
+
                 computed = hashlib.sha256(data).hexdigest()
 
                 if computed != sha256_in_path:
@@ -924,6 +1089,8 @@ class Workspace:
             all_project_hashes_ok = True
 
             for name in names:
+                if total_exceeded:
+                    break
                 if not name.startswith("pbarchive/projects/"):
                     continue
 
@@ -956,7 +1123,24 @@ class Workspace:
                 # json.loads, before model validation, and before the
                 # imported_from_archive entry is appended. The manifest hash
                 # describes the archive's contents, never the imported result.
-                raw_bytes = zf.read(name)
+                try:
+                    raw_bytes = _read_member_limited(
+                        zf, name, MAX_MEMBER_UNCOMPRESSED_BYTES, check_ratio=False,
+                    )
+                except ValueError as exc:
+                    result.integrity_errors.append(
+                        f"Rejected project member exceeding size limits: {name!r} ({exc})"
+                    )
+                    continue
+
+                running_total_bytes += len(raw_bytes)
+                if running_total_bytes > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                    result.integrity_errors.append(
+                        f"Archive exceeds the total uncompressed size limit "
+                        f"({MAX_TOTAL_UNCOMPRESSED_BYTES} bytes); import aborted."
+                    )
+                    total_exceeded = True
+                    break
 
                 if format_version >= 2:
                     expected_hash = manifest_project_hashes.get(project_id)
@@ -1020,38 +1204,42 @@ class Workspace:
             result.project_integrity_verified = format_version >= 2 and all_project_hashes_ok
 
             # ================================================================
-            # PASS 2 — write only what validated cleanly above.
+            # PASS 2 — write only what validated cleanly above. If the total
+            # size budget was exceeded, the whole import is aborted: even
+            # members that individually validated earlier in this pass are
+            # discarded, so nothing from this archive touches disk.
             # ================================================================
 
-            for sha, (filename, data) in valid_assets.items():
-                dest_dir = self.assets_dir / sha
-                if dest_dir.exists():
-                    result.skipped_asset_count += 1
-                else:
-                    dest_dir.mkdir(parents=True, exist_ok=True)
-                    (dest_dir / filename).write_bytes(data)
-                    result.imported_asset_count += 1
+            if not total_exceeded:
+                for sha, (filename, data) in valid_assets.items():
+                    dest_dir = self.assets_dir / sha
+                    if dest_dir.exists():
+                        result.skipped_asset_count += 1
+                    else:
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        (dest_dir / filename).write_bytes(data)
+                        result.imported_asset_count += 1
 
-            result.skipped_project_ids.extend(already_present_project_ids)
+                result.skipped_project_ids.extend(already_present_project_ids)
 
-            for project_id, project in valid_projects.items():
-                now = (
-                    datetime.datetime.now(datetime.timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat()
-                )
-                append_log_entry(
-                    project,
-                    OperationLogEntry(
-                        timestamp_utc=now,
-                        operation="imported_from_archive",
-                        target_type="project",
-                        target_id=project_id,
-                        note=f"Imported from archive: {src_path.name}",
-                    ),
-                )
+                for project_id, project in valid_projects.items():
+                    now = (
+                        datetime.datetime.now(datetime.timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat()
+                    )
+                    append_log_entry(
+                        project,
+                        OperationLogEntry(
+                            timestamp_utc=now,
+                            operation="imported_from_archive",
+                            target_type="project",
+                            target_id=project_id,
+                            note=f"Imported from archive: {src_path.name}",
+                        ),
+                    )
 
-                self.save_project(project)
-                result.imported_project_ids.append(project_id)
+                    self.save_project(project)
+                    result.imported_project_ids.append(project_id)
 
         return result

@@ -18,6 +18,11 @@ GITHUB_RELEASES_LATEST_URL = "https://api.github.com/repos/TheBrickalista/Pyster
 RELEASES_PAGE_URL = "https://github.com/TheBrickalista/PysternBlot/releases/latest"
 _USER_AGENT = "PysternBlot-update-check"
 
+# The GitHub releases API response is a small JSON document (well under 10 KB
+# in practice); 1 MB is generous headroom while still capping a malicious or
+# misbehaving endpoint from streaming an unbounded body into memory.
+MAX_RESPONSE_BYTES = 1 * 1024 * 1024
+
 
 def get_installed_version() -> str:
     try:
@@ -95,7 +100,9 @@ def fetch_latest_release(timeout: float = 3.0) -> str | None:
             },
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read()
+            body = resp.read(MAX_RESPONSE_BYTES + 1)
+        if len(body) > MAX_RESPONSE_BYTES:
+            return None
         data = json.loads(body)
         return str(data["tag_name"])
     except Exception:

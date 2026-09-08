@@ -76,7 +76,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 ## Requirements
 
 - Python ≥ 3.10
-- PySide6 ≥ 6.6
+- PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
 - Pillow ≥ 10.0
@@ -112,6 +112,10 @@ No Python required. Download the latest build for your platform directly from th
 
 - **macOS:** download `PysternBlot-vX.X.X-macOS.zip`, unzip and open `PysternBlot.app`
 - **Windows:** download `PysternBlot-vX.X.X-Windows.exe` and run it
+
+### System requirements (Linux)
+
+"Export Annotated Context TIFF" renders through Qt's TIFF plugin. In PySide6 6.11.1 that plugin linked against the system `libtiff.so.5`, which current distributions (Ubuntu 24.04+) no longer ship. Pystern Blot requires **PySide6 ≥ 6.11.2**, where the plugin no longer depends on a system `libtiff` at all — no package to install. If the plugin still fails to load for any reason, Pystern Blot names the problem when you use that export; every other export, including the byte-exact source file export, is unaffected. macOS and Windows standalone builds ship their own Qt plugins and are not affected. See [System requirements](https://pysternblot.readthedocs.io/en/latest/installation.html#system-requirements) for details.
 
 ---
 

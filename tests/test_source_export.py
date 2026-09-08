@@ -280,6 +280,46 @@ class TestDiffersFromAnnotatedContext:
         assert source_dest.read_bytes() == png_bytes
         assert source_dest.read_bytes() != annotated_dest.read_bytes()
 
+    def test_missing_tiff_plugin_raises_explanatory_error(self, qapp, tmp_path):
+        """When the Qt TIFF plugin cannot load (e.g. the system libtiff runtime
+        library is missing — the actual failure mode on a bare Linux install),
+        the annotated-context export must fail with a message naming the cause
+        and the remedy, surfaced through QMessageBox.critical — not the old
+        bare "Could not save TIFF" with nothing actionable. The source-file
+        export does not use this plugin and is not exercised here."""
+        w, h = 64, 64
+        arr = np.full((h, w), 32768, dtype=np.uint16)
+        png_bytes = _encode_png_uint16(arr)
+
+        ws_dir = tmp_path / "ws"
+        sha = _write_asset(ws_dir, png_bytes, ".png")
+
+        blot = Blot(
+            id="blot_01", asset_sha256=sha, crop=Crop(x=0, y=0, w=float(w), h=float(h)),
+            ladder=_minimal_ladder(), protein_label=ProteinLabel(text=""),
+        )
+        project = _minimal_project([blot], assets={
+            sha: AssetEntry(sha256=sha, stored_original_path=str(ws_dir / "assets" / sha / "original.png")),
+        })
+        project.panel.crop_template = CropTemplate(w=float(w), h=float(h))
+
+        win = _make_main_window(tmp_path, project)
+        annotated_dest = tmp_path / "annotated.tif"
+
+        p1, p2, p3, p4 = _patched_dialogs(save_path=str(annotated_dest))
+        with p1, p2, p3, p4 as critical_mock, \
+             patch.object(
+                 export_mixin_module.QImageWriter, "supportedImageFormats",
+                 return_value=[b"png", b"jpeg"],  # tiff excluded
+             ):
+            win.export_current_original_tiff()
+
+        critical_mock.assert_called_once()
+        message = critical_mock.call_args.args[-1]
+        assert "TIFF plugin" in message, message
+        assert "libtiff" in message, message
+        assert not annotated_dest.exists()
+
 
 # ===========================================================================
 # 4. 8-bit legacy source is exported unchanged (no promotion to 16-bit)

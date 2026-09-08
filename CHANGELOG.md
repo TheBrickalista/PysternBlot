@@ -47,6 +47,17 @@ resource limits on untrusted archive input.
   bytes — are enforced independently, since the declared size is attacker-controlled and can
   understate the real payload.
 
+### Fixed
+- **Annotated-context TIFF export on Linux.** PySide6 6.11.1's Qt TIFF plugin linked against
+  the system `libtiff.so.5`, which current distributions (Ubuntu 24.04 and later) no longer
+  ship, only the incompatible `libtiff.so.6`. On a clean Linux install this made "Export
+  Annotated Context TIFF" fail with an unexplained `Could not save TIFF` — silently, since
+  every other Qt image-format plugin loaded normally and PNG (used by the byte-exact source
+  export) is compiled into QtGui rather than being a plugin. The minimum PySide6 version is
+  now **6.11.2**, whose TIFF plugin no longer depends on a system `libtiff` at all. If the
+  plugin still fails to load for any other reason, the error now names the cause and the
+  remedy instead of a bare failure message.
+
 ### Changed
 - **"Export Original TIFF" / "Export All Originals"** renamed to **"Export Annotated Context
   TIFF"** / **"Export All Annotated Context"**, with tooltips clarifying that these apply the

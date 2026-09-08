@@ -11,7 +11,7 @@ import re
 import shutil
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QGraphicsScene
-from PySide6.QtGui import QPainter, QImage, QPdfWriter, QPageSize, QFont, QPen
+from PySide6.QtGui import QPainter, QImage, QImageWriter, QPdfWriter, QPageSize, QFont, QPen
 from PySide6.QtCore import Qt, QRectF, QRect, QSize
 from PySide6.QtSvg import QSvgGenerator
 
@@ -363,6 +363,18 @@ class _ExportMixin:
         QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
 
     def _export_provenance_scene_to_tiff(self, blot_id: str, path: str, nir_channel_index: int = 0):
+        if b"tiff" not in QImageWriter.supportedImageFormats():
+            raise RuntimeError(
+                "The Qt TIFF plugin is not available on this system, so the annotated "
+                "context TIFF cannot be written. On Linux this usually means PySide6 is "
+                "older than 6.11.2 — earlier versions link the TIFF plugin against a "
+                "system libtiff version that current distributions no longer provide. "
+                "Upgrading PySide6 (pip install --upgrade 'PySide6>=6.11.2') resolves it; "
+                "see 'System requirements' in the installation guide. The source file "
+                "export (a byte-exact copy of the original file) does not use this plugin "
+                "and is unaffected."
+            )
+
         scene = build_provenance_scene(
             self.current_project,
             self.workspace.root,

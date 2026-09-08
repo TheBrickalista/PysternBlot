@@ -36,6 +36,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
+      - name: Verify Qt TIFF plugin loads
+        run: |
+          uv run python -c "
+          from PySide6.QtGui import QImageWriter
+          f = sorted(bytes(x).decode() for x in QImageWriter.supportedImageFormats())
+          print('writable formats:', f)
+          assert 'tiff' in f, 'Qt TIFF plugin did not load'
+          "
+
       - name: Run tests
         run: uv run pytest tests/ -v
 

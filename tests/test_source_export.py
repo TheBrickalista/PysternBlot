@@ -144,7 +144,17 @@ def _make_main_window(tmp_path: Path, project: Project) -> MainWindow:
 
 
 def _patched_dialogs(save_path: str | None = None, folder: str | None = None):
-    """Patch QFileDialog/QMessageBox in export_mixin so handlers run headless."""
+    """Patch QFileDialog/QMessageBox in export_mixin so handlers run headless.
+
+    Returns (p_save, p_dir, p_info, p_critical) — four unentered patchers.
+    p_critical is the one worth capturing: enter it with
+    `with p1, p2, p3, p4 as critical_mock:` (the "as" binds only to the last
+    item) and assert `not critical_mock.called` before checking any file
+    output. export_mixin's handlers route every exception to
+    QMessageBox.critical, so a handler that silently raised — rather than
+    declining to run — otherwise looks identical to a missing file, and the
+    test can only report "assert False" instead of the real error.
+    """
     return (
         patch.object(
             export_mixin_module.QFileDialog, "getSaveFileName",
@@ -183,9 +193,10 @@ class TestByteIdentity:
         dest = tmp_path / "exported_source.tif"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
 
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
         assert dest.exists()
         exported_bytes = dest.read_bytes()
         assert exported_bytes == data
@@ -218,9 +229,10 @@ class TestByteIdentity:
         dest = tmp_path / "exported_source.tif"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
 
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
         assert dest.read_bytes() == data
         assert hashlib.sha256(dest.read_bytes()).hexdigest() == sha
 
@@ -254,13 +266,15 @@ class TestDiffersFromAnnotatedContext:
         annotated_dest = tmp_path / "annotated.tif"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(source_dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
+        assert not critical_mock.called, f"source export raised: {critical_mock.call_args}"
         assert source_dest.exists()
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(annotated_dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_original_tiff()
+        assert not critical_mock.called, f"annotated-context export raised: {critical_mock.call_args}"
         assert annotated_dest.exists()
 
         assert source_dest.read_bytes() == png_bytes
@@ -294,9 +308,10 @@ class TestLegacy8BitSource:
         dest = tmp_path / "exported_8bit.png"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
 
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
         assert dest.read_bytes() == data
         assert Image.open(dest).mode == "L", "8-bit source must not be promoted to 16-bit"
 
@@ -332,8 +347,10 @@ class TestNirPerChannelExport:
         base_dest = tmp_path / "nir_blot_source.tif"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(base_dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
+
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
 
         ch0_path = tmp_path / "nir_blot_source_ch0_685nm.tif"
         ch1_path = tmp_path / "nir_blot_source_ch1_785nm.tif"
@@ -369,8 +386,10 @@ class TestOperationLogAndChain:
         dest = tmp_path / "exported.tif"
 
         p1, p2, p3, p4 = _patched_dialogs(save_path=str(dest))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_current_source_asset()
+
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
 
         entries = [
             e for e in win.current_project.operation_log
@@ -408,8 +427,10 @@ class TestOperationLogAndChain:
         out_dir.mkdir()
 
         p1, p2, p3, p4 = _patched_dialogs(folder=str(out_dir))
-        with p1, p2, p3, p4:
+        with p1, p2, p3, p4 as critical_mock:
             win.export_all_source_assets()
+
+        assert not critical_mock.called, f"export raised: {critical_mock.call_args}"
 
         entries = [
             e for e in win.current_project.operation_log

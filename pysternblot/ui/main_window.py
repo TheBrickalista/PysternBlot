@@ -21,6 +21,7 @@ from importlib.metadata import version as _pkg_version
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
 from ..image_utils import get_bit_depth, load_image_as_uint16
+from ..integrity import SATURATION_SOLID_PIXEL_THRESHOLD
 from ..models import (
     Blot,
     LegendZone,
@@ -442,13 +443,39 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.export_legend_zone_btn.clicked.connect(self.export_legend_zone_png)
         prov_row2.addWidget(self.export_legend_zone_btn)
 
-        self.export_original_tiff_btn = QPushButton("Export Original TIFF")
+        self.export_original_tiff_btn = QPushButton("Export Annotated Context TIFF")
+        self.export_original_tiff_btn.setToolTip(
+            "Renders the original image with the current display settings applied and the "
+            "crop rectangle and MW markers burned in. For the unmodified source file, use "
+            "\"Export Source File\" instead."
+        )
         self.export_original_tiff_btn.clicked.connect(self.export_current_original_tiff)
         prov_row2.addWidget(self.export_original_tiff_btn)
 
-        self.export_all_original_tiff_btn = QPushButton("Export All Originals")
+        self.export_all_original_tiff_btn = QPushButton("Export All Annotated Context")
+        self.export_all_original_tiff_btn.setToolTip(
+            "Renders every blot's original image with the current display settings applied "
+            "and the crop rectangle and MW markers burned in. For the unmodified source "
+            "files, use \"Export All Source Files\" instead."
+        )
         self.export_all_original_tiff_btn.clicked.connect(self.export_all_original_tiffs)
         prov_row2.addWidget(self.export_all_original_tiff_btn)
+
+        self.export_source_asset_btn = QPushButton("Export Source File")
+        self.export_source_asset_btn.setToolTip(
+            "Exports the imported file byte for byte, with no display settings, "
+            "annotations or format conversion applied."
+        )
+        self.export_source_asset_btn.clicked.connect(self.export_current_source_asset)
+        prov_row2.addWidget(self.export_source_asset_btn)
+
+        self.export_all_source_assets_btn = QPushButton("Export All Source Files")
+        self.export_all_source_assets_btn.setToolTip(
+            "Exports the imported file byte for byte, with no display settings, "
+            "annotations or format conversion applied."
+        )
+        self.export_all_source_assets_btn.clicked.connect(self.export_all_source_assets)
+        prov_row2.addWidget(self.export_all_source_assets_btn)
 
         prov_row2.addStretch(1)
 
@@ -559,8 +586,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_8bit_badge = QLabel("⚠ 8-bit")
         self.prov_8bit_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
         self.prov_8bit_badge.setVisible(False)
+        self.prov_saturation_badge = QLabel("⚠ Saturated")
+        self.prov_saturation_badge.setStyleSheet("color: #b45309; font-weight: bold; font-size: 11px;")
+        self.prov_saturation_badge.setVisible(False)
         prov_info_row.addWidget(self.prov_label)
         prov_info_row.addWidget(self.prov_8bit_badge)
+        prov_info_row.addWidget(self.prov_saturation_badge)
         prov_info_row.addStretch(1)
 
         # --- Display controls frame ---
@@ -1944,6 +1975,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.prov_label.setText("Current blot: —")
             self.prov_label.setToolTip("")
             self.prov_8bit_badge.setVisible(False)
+            self.prov_saturation_badge.setVisible(False)
             return
 
         asset = self.current_project.assets.get(blot.asset_sha256)
@@ -1963,6 +1995,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.prov_8bit_badge.setVisible(get_bit_depth(orig_path) == 8)
         except Exception:
             self.prov_8bit_badge.setVisible(False)
+
+        # Only a solid (contiguous) saturated region is surfaced here — a
+        # handful of isolated hot pixels (dust/fibre) is common and harmless,
+        # and flagging it too would turn the badge into ignorable noise.
+        saturation = getattr(asset, "saturation", None) if asset else None
+        if saturation is not None and saturation.solid_saturated_count >= SATURATION_SOLID_PIXEL_THRESHOLD:
+            self.prov_saturation_badge.setVisible(True)
+            self.prov_saturation_badge.setToolTip(
+                f"{saturation.saturated_count} pixel(s) at full scale, "
+                f"{saturation.solid_saturated_count} in solid (non-dust) regions. "
+                f"True intensity in these regions is clipped and unrecoverable."
+            )
+        else:
+            self.prov_saturation_badge.setVisible(False)
+            self.prov_saturation_badge.setToolTip("")
 
     def _update_gamma_badge(self):
         _display = self._active_display()

@@ -6,6 +6,116 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.0] — 2026-09-07
+
+This release collects five stages of provenance and security work: a hash-chained operation
+log, `.pbarchive` manifest binding, byte-exact source export, full-scale clipping detection, and
+resource limits on untrusted archive input.
+
+### Added
+- **Hash-chained operation log** — every operation-log entry now carries `prev_hash` and
+  `entry_hash`, binding it to the one before it (`pysternblot/logchain.py`). All five append
+  sites (`log_operation()`, `set_project_archived()`, `rename_project()`, NIR channel import,
+  archive import) route through a single `append_log_entry()` helper, so no entry can be added
+  outside the chain. Verification reports one of four states — `ok`, `not_chained`, `partial`
+  (a pre-chain log that starts being chained partway through), or `broken` (with the index of
+  the first inconsistency) — surfaced as a line in the integrity report next to the operation
+  log.
+- **Archive integrity verification** — a `.pbarchive`'s manifest now records the SHA-256 of each
+  project's serialised `project.json` (`format_version` 2), computed and written from the exact
+  same bytes so the hash can never describe content that was never actually written. On import,
+  each `project.json` is hashed before parsing and before the `imported_from_archive` entry is
+  appended, so the recorded hash always describes the archive's contents, not the imported
+  result. A mismatch skips that project and is reported; nothing is written for it.
+- **Byte-exact source file export** — "Export Source File" / "Export All Source Files" copy the
+  stored source asset with `shutil.copyfile`, untouched by any image library, then re-hash the
+  written copy and compare it against the asset's stored SHA-256 before reporting success. A
+  failed verification deletes the written file and reports the failure rather than leaving a
+  silently corrupted copy on disk. This sits alongside the existing annotated-context export as
+  a third, more literal level: source file, annotated context, published panel.
+- **Clipping (saturation) detection** — every imported asset is assessed for pixels at full
+  scale (255 for 8-bit, 65535 for 16-bit) on the source array, before any display transform.
+  A 3×3 binary erosion of the saturation mask distinguishes a solid, coherent saturated region
+  (a genuine acquisition problem) from isolated hot pixels or dust (harmless and common), so the
+  flag does not become noise that trains users to ignore it. The integrity report shows both the
+  whole-image result (a fixed fact about the acquisition, recorded at import) and the
+  current crop-region result (recomputed live, since it changes as the figure is re-cropped).
+- **Resource limits on untrusted archive input** — `import_archive()` now bounds per-member
+  uncompressed size, total uncompressed size across the archive, member count, and (for binary
+  assets only) compression ratio, and caps the manifest's own size. The update checker caps the
+  GitHub API response it reads. Both size checks — the declared header and the actual streamed
+  bytes — are enforced independently, since the declared size is attacker-controlled and can
+  understate the real payload.
+
+### Fixed
+- **Annotated-context TIFF export on Linux.** PySide6 6.11.1's Qt TIFF plugin linked against
+  the system `libtiff.so.5`, which current distributions (Ubuntu 24.04 and later) no longer
+  ship, only the incompatible `libtiff.so.6`. On a clean Linux install this made "Export
+  Annotated Context TIFF" fail with an unexplained `Could not save TIFF` — silently, since
+  every other Qt image-format plugin loaded normally and PNG (used by the byte-exact source
+  export) is compiled into QtGui rather than being a plugin. The minimum PySide6 version is
+  now **6.11.2**, whose TIFF plugin no longer depends on a system `libtiff` at all. If the
+  plugin still fails to load for any other reason, the error now names the cause and the
+  remedy instead of a bare failure message.
+
+### Changed
+- **"Export Original TIFF" / "Export All Originals"** renamed to **"Export Annotated Context
+  TIFF"** / **"Export All Annotated Context"**, with tooltips clarifying that these apply the
+  current display settings and burn in the crop rectangle and MW markers — they were never the
+  unmodified source, and the old names implied otherwise.
+- **Integrity report schema** bumped to `pysternblot.integrity_report.v2` and
+  `pysternblot.detailed_integrity_report.v2` — both reports gain a top-level
+  `operation_log_chain` field; the blot provenance table gains a Saturation column alongside the
+  existing bit-depth and gamma warning columns.
+- **`.pbarchive` archives are now written at `format_version` 2.** Version 1 archives remain
+  fully readable — see Compatibility below.
+- **Compression-ratio check restricted to binary assets.** `manifest.json` and `project.json`
+  are exempt: measured against real data, a Typhoon TIFF compresses at roughly 1.7:1 while a
+  realistic, log-heavy `project.json` can reach several hundred to one on repeated field names,
+  timestamps, and hashes — a ratio heuristic tuned for image data would reject a legitimate,
+  merely long-running project for no security benefit, since the absolute size caps already
+  bound every member.
+
+### Security
+- **Archive member path validation and workspace containment.** Every `.pbarchive` member name
+  is checked before being dispatched by prefix — no leading `/`, no backslash, no `.`/`..` path
+  component — and every path component (asset SHA-256, project id, filename) is restricted to
+  `[A-Za-z0-9._-]`. Destination paths are additionally resolved and checked against the
+  workspace root as defence in depth. A rejected member is never written and is recorded in
+  `integrity_errors`.
+- **Project id / archive path agreement.** A project whose `project.json` declares an id
+  different from the (already-validated) directory it was stored under in the archive is
+  rejected. `save_project()` derives its write location from the JSON payload's own declared
+  id, not from the archive path, so without this check a safely-named archive member could
+  still smuggle a traversal id through the JSON content itself.
+- **Decompression, member-count, and compression-ratio limits** on archive import (see Added
+  above), plus a **response size cap** on the update checker and **identifier sanitisation** for
+  the preview-cache filenames derived from `blot.id` and channel index — a malformed id falls
+  back to a SHA-256-derived name rather than making an otherwise valid project unopenable.
+- **The operation log is tamper-evident, not tamper-proof.** The hash chain detects accidental
+  corruption, a dropped or reordered entry, or an edit made without recomputing the downstream
+  chain. It does not, and cannot, stop someone with access to the source from editing an entry
+  and regenerating a consistent chain from that point forward. Treat it as making silent,
+  unintentional divergence visible — not as a cryptographic guarantee against a deliberate,
+  competent forgery.
+
+### Compatibility
+Projects and archives created by earlier versions remain fully readable under 1.2.0, and none of
+the checks above are retroactive accusations of tampering:
+- An operation log written before this release has no `entry_hash` on any entry. It is reported
+  as **`not_chained`**, never as `broken` — that status exists specifically so a pre-chain
+  history is not misread as evidence of corruption.
+- A **`format_version` 1** archive imports normally, without project-level hash verification
+  (`project_integrity_verified` is `False` rather than an error). Asset-level SHA-256 checking,
+  present since 1.0.x, is unchanged.
+- An asset imported before this release has no recorded saturation assessment. It is reported as
+  **"not assessed,"** never as "clean" — the distinction matters because a genuinely clean
+  assessment and the absence of one look identical unless the report says which it is.
+
+### Provenance
+- Operation vocabulary extended from 35 to 37 verbs. New: `source_asset_exported`,
+  `saturation_assessed`.
+
 ## [1.1.0] — 2026-09-02
 
 ### Added

@@ -259,7 +259,7 @@ The core image pipeline (16-bit, non-destructive, SHA256 provenance) applies dir
 
 ## Phase 10 — Distribution and Packaging *(planned)*
 
-Packaging and delivery of the standalone binaries, distinct from the application feature work above. Targeted for 1.2.0; 1.1.0 ships the signed, notarized, stapled macOS `.zip`.
+Packaging and delivery of the standalone binaries, distinct from the application feature work above. Originally targeted for 1.2.0; deferred — 1.2.0 shipped the provenance and security hardening in Phase 11 instead, and this phase remains open for a future release. 1.1.0 and 1.2.0 both ship the signed, notarized, stapled macOS `.zip`.
 
 ### 10.1 macOS DMG Distribution
 
@@ -282,6 +282,62 @@ Packaging and delivery of the standalone binaries, distinct from the application
 
 ---
 
+## ✅ Phase 11 — Provenance and Security Hardening *(Completed — 1.2.0)*
+
+Five stages of work closing the gap between "we log what happened" and "the log itself can be
+trusted," plus the resource-exhaustion backlog that untrusted `.pbarchive` input had left open.
+
+### 11.1 Hash-Chained Operation Log
+
+- [x] ✅ `pysternblot/logchain.py` — `prev_hash`/`entry_hash` per entry, `append_log_entry()` as
+      the single append path, `verify_log_chain()` reporting `ok` / `not_chained` / `partial` /
+      `broken`
+- [x] ✅ All five append sites routed through `append_log_entry()`: `log_operation()`,
+      `set_project_archived()`, `rename_project()`, NIR channel import, archive import
+- [x] ✅ Chain status surfaced in the integrity report next to the operation log
+
+### 11.2 Archive Integrity (`.pbarchive` manifest binding)
+
+- [x] ✅ Manifest records each project's `project.json` SHA-256 (`format_version` 2), hashed
+      from the exact bytes written
+- [x] ✅ Import hashes `project.json` before parsing and before the `imported_from_archive`
+      entry is appended; a mismatch skips that project and is reported
+- [x] ✅ Archive member path validation and workspace containment (`_safe_component`,
+      `_safe_member_name`, `_resolve_contained`); rejection of a project whose declared id
+      disagrees with its validated archive path
+- [x] ✅ Decompression limits — per-member and total uncompressed size, member count,
+      per-member compression ratio (binary assets only; `manifest.json`/`project.json` exempt),
+      manifest size cap
+- [x] ✅ `format_version` 1 archives remain importable, without project-level verification
+
+### 11.3 Byte-Exact Source Export
+
+- [x] ✅ "Export Source File" / "Export All Source Files" — `shutil.copyfile`, no image library
+      in the path, post-copy SHA-256 re-verification against the stored asset hash
+- [x] ✅ Existing "Export Original TIFF" / "Export All Originals" renamed to "Export Annotated
+      Context TIFF" / "Export All Annotated Context" for honesty about what they produce
+
+### 11.4 Clipping (Saturation) Detection
+
+- [x] ✅ `compute_saturation_stats()` — full-scale pixel detection on the source array, before
+      any display transform
+- [x] ✅ 3×3 binary erosion discriminates solid saturated regions from isolated dust/hot pixels
+- [x] ✅ Whole-image (recorded at import) and crop-region (recomputed live) results, both shown
+      in the integrity report
+
+### 11.5 Resource Limits on Untrusted Input
+
+- [x] ✅ Update checker response size cap
+- [x] ✅ Preview-cache filename sanitisation (`_safe_cache_component`) for `blot.id` and channel
+      index, with a hash-derived fallback rather than rejecting an otherwise valid project
+
+**Scope note:** This phase changes what the application verifies and reports, not the figure
+composition or export pipeline. The operation log is tamper-evident, not tamper-proof — see the
+1.2.0 CHANGELOG entry for the precise claim. macOS DMG packaging (Phase 10.1) was originally
+also targeted for 1.2.0 and did **not** ship in this release; it remains open.
+
+---
+
 ## Implementation Batches
 
 | Batch | Content | Phase(s) |
@@ -296,6 +352,7 @@ Packaging and delivery of the standalone binaries, distinct from the application
 | **Batch 8 — Manuscript** | Methods and legend auto-generation | 8 |
 | **Batch 9 — DNA Gel** | Gel type selector, DNA ladder presets, bp annotation, gel metadata fields | 9 |
 | **Batch 10 — Distribution** | macOS DMG packaging, deferred Windows signing, workflow consistency | 10 |
+| ~~Batch 11 — Provenance & Security~~ | ~~Hash-chained operation log, archive manifest binding, byte-exact source export, saturation detection, resource limits~~ | ~~11~~ |
 
 ---
 

@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .image_utils import get_bit_depth
+from .image_utils import get_bit_depth, load_image_as_uint16, crop_uint16, compute_saturation_stats
+from .logchain import verify_log_chain
 from .models import Project
 from .storage import Workspace, sha256_file
 
@@ -19,7 +20,74 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str, Any]:
+# --- Saturation reporting thresholds -----------------------------------------
+# A single hot pixel from dust/fibre is common and harmless; a saturated band
+# is a solid, contiguous region of clipped signal. 3x3 binary erosion of the
+# saturation mask removes isolated specks and one-pixel-wide structures,
+# leaving only solid regions. SATURATION_SOLID_PIXEL_THRESHOLD is the minimum
+# number of eroded ("solid") pixels required before a report escalates from
+# an informational note to an amber warning.
+#
+# 1 was chosen because a pixel that survives 3x3 erosion already has all 8
+# neighbours saturated too — by construction that is no longer an isolated
+# speck, it is the core of a real clipped region. Raise this if erosion alone
+# proves too sensitive on real acquisition noise (e.g. clustered hot pixels
+# from a dirty scanner glass that are not a genuine saturated band).
+SATURATION_SOLID_PIXEL_THRESHOLD = 1
+
+
+def _saturation_message(sat: dict[str, Any] | None) -> tuple[str, str]:
+    """
+    Classify a whole-image or crop-region SaturationStats dict.
+
+    Returns (severity, message). severity is one of:
+    "not_assessed" | "clean" | "dust" | "warning".
+
+    None means "not assessed" (an asset imported by an earlier version) —
+    it must never be reported as "clean".
+    """
+    if sat is None:
+        return "not_assessed", "Not assessed (imported by an earlier version)."
+
+    saturated = sat["saturated_count"]
+    solid = sat["solid_saturated_count"]
+
+    if saturated == 0:
+        return "clean", "None."
+
+    if solid < SATURATION_SOLID_PIXEL_THRESHOLD:
+        return "dust", f"{saturated} isolated pixel(s) (no solid regions)."
+
+    return "warning", f"{saturated} saturated pixel(s), {solid} in solid regions."
+
+
+def _saturation_crop_message(sat: dict[str, Any] | None) -> tuple[str, str]:
+    """Like _saturation_message, but a warning is worded to say the displayed
+    panel itself — not just the source image — contains clipped signal."""
+    severity, message = _saturation_message(sat)
+    if severity == "warning":
+        message = (
+            f"Displayed panel contains clipped signal: {sat['saturated_count']} "
+            f"saturated pixel(s) within the crop, {sat['solid_saturated_count']} "
+            f"in solid regions."
+        )
+    return severity, message
+
+
+def _asset_info(
+    workspace: Workspace,
+    project: Project,
+    sha256: str,
+    crop_rect: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """
+    crop_rect, if given, is (x, y, w, h) in source-image pixel space — the
+    effective crop for the blot this asset belongs to (panel.crop_template
+    supplies w/h; blot.crop supplies x/y). When present, crop-region
+    saturation is additionally computed at report time from the current
+    crop, since only whole-image saturation is a fixed fact recorded at
+    import — crop-region saturation changes as the user re-crops.
+    """
     path = workspace.asset_original_file(sha256)
     asset = project.assets.get(sha256)
 
@@ -43,6 +111,15 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
         if bit_depth == 8 else None
     )
 
+    saturation = getattr(asset, "saturation", None) if asset else None
+
+    saturation_crop_region = None
+    if crop_rect is not None and bit_depth is not None:
+        x, y, w, h = crop_rect
+        arr = load_image_as_uint16(path)
+        cropped = crop_uint16(arr, int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+        saturation_crop_region = compute_saturation_stats(cropped, bit_depth)
+
     return {
         "sha256": sha256,
         "stored_original_path": str(path),
@@ -55,6 +132,10 @@ def _asset_info(workspace: Workspace, project: Project, sha256: str) -> dict[str
         "width_px": width,
         "height_px": height,
         "acquisition_metadata": getattr(asset, "acquisition_metadata", None) if asset else None,
+        "saturation": saturation.model_dump() if saturation else None,
+        "saturation_crop_region": (
+            saturation_crop_region.model_dump() if saturation_crop_region else None
+        ),
     }
 
 
@@ -104,7 +185,10 @@ def _blot_record(workspace: Workspace, project: Project, blot) -> dict[str, Any]
             "font_size_pt": blot.protein_label.font_size_pt,
         },
         "gamma_warning": gamma_warning,
-        "source_image": _asset_info(workspace, project, blot.asset_sha256),
+        "source_image": _asset_info(
+            workspace, project, blot.asset_sha256,
+            crop_rect=(crop.x, crop.y, project.panel.crop_template.w, project.panel.crop_template.h),
+        ),
         "operations": {
             "crop": {
                 "x": crop.x,
@@ -163,9 +247,10 @@ def build_integrity_report(
     exported_files = exported_files or []
 
     report = {
-        "schema": "pysternblot.integrity_report.v1",
+        "schema": "pysternblot.integrity_report.v2",
         "created_utc": _utc_now(),
         "pysternblot_version": __version__,
+        "operation_log_chain": verify_log_chain(project).model_dump(),
         "system": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -240,6 +325,21 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         else:
             gamma_cell = "<td></td>"
 
+        sat_severity, sat_message = _saturation_message(src.get("saturation"))
+        crop_severity, crop_message = _saturation_crop_message(src.get("saturation_crop_region"))
+
+        sat_lines = [f"Whole image: {sat_message}"]
+        if src.get("saturation_crop_region") is not None or crop_severity != "not_assessed":
+            sat_lines.append(f"Crop region: {crop_message}")
+
+        if sat_severity == "warning" or crop_severity == "warning":
+            sat_style = "background:#fef3c7;color:#92400e;font-weight:bold;"
+        elif sat_severity == "not_assessed":
+            sat_style = "background:#f3f4f6;color:#4b5563;"
+        else:
+            sat_style = ""
+        saturation_cell = f'<td style="{sat_style}">{"<br>".join(sat_lines)}</td>'
+
         acq = src.get("acquisition_metadata") or {}
         if acq:
             acq_parts = []
@@ -273,6 +373,7 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
           {bit_depth_cell}
           <td>{warning_text}</td>
           {gamma_cell}
+          {saturation_cell}
           {acq_cell}
           <td>{src["width_px"]} × {src["height_px"]}</td>
           <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, w={ops["crop"]["w"]}, h={ops["crop"]["h"]}</td>
@@ -297,10 +398,24 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         </tr>
         """)
 
+    chain = report.get("operation_log_chain") or {}
+    chain_status = chain.get("status")
+    chain_message = chain.get("message", "")
+    chain_style = {
+        "ok": "background:#dcfce7;color:#166534;font-weight:bold;",
+        "not_chained": "background:#f3f4f6;color:#4b5563;",
+        "partial": "background:#fef3c7;color:#92400e;font-weight:bold;",
+        "broken": "background:#fee2e2;color:#991b1b;font-weight:bold;",
+    }.get(chain_status, "")
+    chain_line = (
+        f'<p style="{chain_style}padding:6px;">{chain_message}</p>' if chain_message else ""
+    )
+
     operation_section = ""
     if operation_rows:
         operation_section = f"""
 <h2>Chronological operation log</h2>
+{chain_line}
 <table>
 <thead>
 <tr>
@@ -356,6 +471,7 @@ code {{ font-size: 11px; word-break: break-all; }}
 <th>Bit depth</th>
 <th>Bit depth warning</th>
 <th>Gamma warning</th>
+<th>Saturation</th>
 <th>Acquisition</th>
 <th>Source size</th>
 <th>Crop</th>
@@ -395,7 +511,7 @@ def build_detailed_integrity_report(
         exported_files=exported_files,
     )
 
-    report["schema"] = "pysternblot.detailed_integrity_report.v1"
+    report["schema"] = "pysternblot.detailed_integrity_report.v2"
     report["operation_log"] = [
         entry.model_dump()
         for entry in getattr(project, "operation_log", [])

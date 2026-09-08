@@ -90,13 +90,32 @@ The requirements below apply only to the PyPI and from-source methods. The
 standalone builds bundle everything, including Python itself.
 
 - Python ≥ 3.10
-- PySide6 ≥ 6.6
+- PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
 - Pillow ≥ 10.0
 
 Dependencies are installed automatically by `pip`; you do not need to install
 them by hand.
+
+## System requirements
+
+**Linux — TIFF export.** "Export Annotated Context TIFF" and "Export All
+Annotated Context" render through Qt's TIFF plugin. In PySide6 6.11.1, that
+plugin linked against the system `libtiff.so.5`, which current Linux
+distributions (Ubuntu 24.04 and later, for example) no longer ship — they
+provide `libtiff.so.6` instead, a different, incompatible library version.
+This is why Pystern Blot requires **PySide6 ≥ 6.11.2**: from that release the
+TIFF plugin no longer depends on a system `libtiff` at all, so this is not a
+system package you need to install. If a `pip install` somehow resolves an
+older PySide6, or the TIFF plugin fails to load for any other reason, Pystern
+Blot names the problem when you use that export rather than failing with an
+unexplained error; every other export format, including the byte-exact
+source file export, is unaffected either way.
+
+**macOS and Windows.** The signed standalone application bundles are
+unaffected — they ship their own copies of Qt's plugins and the libraries
+those plugins depend on.
 
 ## Verifying the installation
 

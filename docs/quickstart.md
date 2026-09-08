@@ -237,13 +237,24 @@ submission.
 
 ### Original image with markers (required by most journals)
 
+Pystern Blot can hand over the original image at three different levels, from raw
+instrument output to the finished figure:
+
+| Level | What it is | Where to export it |
+|---|---|---|
+| **Source file** | The exact bytes imported from the instrument — untouched, no display settings, no annotations, not even a format conversion. SHA-256 verified against the stored asset on every export. | **Original Image** tab |
+| **Annotated context TIFF** | The original image rendered with the *current* display settings (levels, gamma, rotation, invert) applied, with the crop rectangle and MW markers burned in — useful for reviewers who want to see the whole source alongside what was cropped for the figure. | **Original Image** tab |
+| **Published panel** | The final composed figure (PNG/PDF/SVG), described above. | **Figure** tab |
+
 In the **Original Image** tab:
 
 | Button | Output |
 |---|---|
 | **Export Zone + Legend** | The selected zone of the original, exported as a 2x PNG with the panel legend drawn above it and MW markers on the chosen side |
-| **Export Original TIFF** | Current blot's unmodified 16-bit source with crop frame and band markers overlaid |
-| **Export All Originals** | All blots in the project exported in one step |
+| **Export Annotated Context TIFF** | Current blot's image with the current display settings applied and the crop rectangle and MW markers burned in |
+| **Export All Annotated Context** | All blots in the project exported in one step |
+| **Export Source File** | Current blot's source file, copied byte for byte with no display settings, annotations, or format conversion applied |
+| **Export All Source Files** | Every blot's source file exported in one step, each verified independently |
 
 ```{note}
 The legend export zone is an optional selection rectangle you enable from the
@@ -253,8 +264,8 @@ region is automatically widened to contain the whole crop box. See the
 [Original Image tab](guide/original-image.md) guide for details.
 ```
 
-Exporting the original image satisfies the raw image submission requirements of
-Springer Nature, EMBO Press, eLife, and PLOS.
+Exporting the source file or the annotated context TIFF satisfies the raw image
+submission requirements of Springer Nature, EMBO Press, eLife, and PLOS.
 
 ## 9. Archive and share your project
 

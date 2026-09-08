@@ -17,8 +17,10 @@ This gives two guarantees:
   The same original file always produces the same hash, so a figure can be tied
   back to a specific source acquisition beyond dispute.
 - **Tamper-evidence.** If a source file is later altered, its hash no longer
-  matches the one recorded at import. Checksums are re-verified when a project
-  archive is opened, so silent corruption or substitution is detected.
+  matches the one recorded at import. Checksums are re-verified when a
+  `.pbarchive` is opened, so silent corruption or substitution is detected.
+  The operation log itself carries the same property — see
+  [The operation log hash chain](#the-operation-log-hash-chain) below.
 
 The source file itself is **never modified**. Pystern Blot treats every
 acquisition as read-only and records adjustments separately, so the original
@@ -43,6 +45,57 @@ events include:
 Because the log records *parameters* rather than baking changes into pixels, the
 path from raw image to final figure is fully reconstructable. Nothing about how
 the published picture was produced is lost.
+
+## The operation log hash chain
+
+Recording events is not, on its own, tamper-evident: a log that can be edited
+freely is just a list of claims. Each operation-log entry therefore carries two
+extra fields — `prev_hash`, the hash of the entry immediately before it, and
+`entry_hash`, the hash of the entry itself — computed from every field of the
+entry (including `prev_hash`) via SHA-256 over a canonical, deterministic
+serialisation. Changing any field of any entry, or reordering, deleting, or
+inserting an entry, breaks the hash relationship with whatever comes after it.
+
+The integrity report shows the result of verifying this chain as one line next
+to the operation log, in one of four states:
+
+- **Verified (`ok`)** — every entry's hash matches, and each entry's
+  `prev_hash` matches the hash of the one before it. The log is internally
+  consistent from end to end.
+- **Not chained (`not_chained`)** — no entry carries a hash. This is the
+  normal, expected state for a project created before this feature existed; it
+  is not a warning, and never implies tampering. See
+  [Backward compatibility](#backward-compatibility) below.
+- **Partial (`partial`)** — the log begins unchained (a pre-existing project)
+  and becomes chained from some point onward, reported as the index where
+  chaining starts. Everything from that index forward is verified as normal;
+  everything before it is, correctly, unverifiable.
+- **Broken (`broken`)** — a hash does not match, reported with the index of
+  the first entry where the inconsistency appears. This is the state that
+  actually indicates a problem: an edited, deleted, reordered, or inserted
+  entry, or corruption of the stored project file.
+
+**This is tamper-evident, not tamper-proof.** The chain detects accidental
+corruption and edits made without regenerating the chain — which covers every
+ordinary failure mode, including a bad merge, a manual JSON edit, or a
+corrupted archive transfer. It does not, and cannot, stop someone with access
+to the application source from editing an entry and recomputing a consistent
+chain from that point forward. Treat a verified chain as evidence that nothing
+was changed *casually* or *accidentally* — not as a cryptographic guarantee
+against a deliberate, competent forgery.
+
+(backward-compatibility)=
+### Backward compatibility
+
+A project saved by an earlier version of Pystern Blot has an operation log
+with no `prev_hash`/`entry_hash` on any entry. Opening or re-saving it does not
+retroactively hash the old entries — the chain begins at whatever point new,
+hash-carrying entries start being appended, and the log correctly reports
+`not_chained` or `partial` rather than `broken`. The same applies to `.pbarchive`
+project-state verification (see [PBArchive format](pbarchive-format.md)) and to
+clipping detection below: an asset imported before this feature existed reports
+as *not assessed*, never as *clean* — the two are not the same claim, and the
+report says which one applies.
 
 ## Non-destructive display
 
@@ -78,6 +131,49 @@ should be disclosed, Pystern Blot raises a dedicated **integrity flag** when
 gamma departs from linear on a blot or NIR channel — an amber badge in the
 interface and a corresponding entry in the integrity report. The adjustment is
 still permitted; it is simply never silent.
+
+## Clipping (saturation) detection
+
+A saturated pixel — one sitting at the sensor's full scale (255 for an 8-bit
+source, 65535 for 16-bit) — has an unknown true intensity: whatever signal
+produced it, the acquisition could not record any more, so the value is
+clipped, not measured. A band with saturated pixels cannot be reliably
+quantified, which is why detecting saturation matters for the same reason bit
+depth and gamma do.
+
+The naive version of this check — flag any image containing a full-scale
+pixel — would fire constantly and for the wrong reason: a single hot pixel
+from sensor noise, dust, or a fibre on the glass is common and harmless, and
+is not the same problem as a genuinely clipped band. A flag that fires on
+every image with one bright speck becomes noise, and noise trains users to
+ignore it — which is worse than not having the flag at all.
+
+Pystern Blot distinguishes the two with a **3×3 binary erosion** of the
+saturation mask: a pixel survives erosion only if all eight of its neighbours
+are also saturated, so an isolated speck or a one-pixel-wide line vanishes
+under erosion while a solid, contiguous saturated region survives. The
+integrity report accordingly separates the raw saturated pixel count from the
+count that survives erosion, and only a nonzero surviving ("solid") count is
+treated as a warning; isolated saturation is reported as an informational
+note, not flagged.
+
+Saturation is assessed on the **source array exactly as imported** — before
+any levels, gamma, rotation, or flip — because saturation is a property of the
+acquisition, not of how it is currently displayed. The integrity report shows
+two results for each blot:
+
+- **Whole image** — the fixed assessment recorded at import. This does not
+  change as the project is edited.
+- **Crop region** — recomputed live from the current crop rectangle each time
+  a report is generated, since only the cropped region actually reaches the
+  published figure, and re-cropping can move saturated pixels in or out of
+  frame.
+
+A blot whose only saturated region sits outside the current crop shows a
+whole-image warning but a clean crop region — an honest reflection of what is
+actually in the figure, not just what is in the source file. As with every
+other integrity check in Pystern Blot, saturation is reported for the
+researcher's judgement; it never blocks import or export.
 
 ## Integrity as a consequence, not a feature
 

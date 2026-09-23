@@ -9,10 +9,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from PIL import Image, UnidentifiedImageError
+
 from . import __version__
-from .image_utils import get_bit_depth, load_image_as_uint16, crop_uint16, compute_saturation_stats
+from .image_utils import (
+    get_bit_depth,
+    get_source_bits,
+    load_image_as_uint16,
+    load_tiff_source,
+    crop_uint16,
+    compute_saturation_stats,
+)
 from .logchain import verify_log_chain
-from .models import Project
+from .models import Project, SaturationStats
 from .storage import Workspace, sha256_file
 
 
@@ -41,13 +51,23 @@ def _saturation_message(sat: dict[str, Any] | None) -> tuple[str, str]:
     Classify a whole-image or crop-region SaturationStats dict.
 
     Returns (severity, message). severity is one of:
-    "not_assessed" | "clean" | "dust" | "warning".
+    "not_assessed" | "not_assessable" | "clean" | "dust" | "warning".
 
     None means "not assessed" (an asset imported by an earlier version) —
-    it must never be reported as "clean".
+    it must never be reported as "clean". A non-None dict with
+    assessable=False means "not assessable" — a float source has no fixed
+    detector ceiling to test against, a different claim from "not assessed":
+    this asset WAS actively evaluated, and the answer is that the question
+    does not apply.
     """
     if sat is None:
         return "not_assessed", "Not assessed (imported by an earlier version)."
+
+    if not sat.get("assessable", True):
+        return (
+            "not_assessable",
+            "Not assessable (float source has no fixed detector ceiling to test against).",
+        )
 
     saturated = sat["saturated_count"]
     solid = sat["solid_saturated_count"]
@@ -97,13 +117,23 @@ def _asset_info(
             f"Source bit depth must be read from the original asset, not a preview: {path}"
         )
 
-    from PIL import Image
-    with Image.open(path) as im:
-        mode = im.mode
-        width, height = im.size
+    # Pillow's im.mode/im.size is the exact, unchanged path for every source
+    # that already worked (uint8/uint16/etc.) — it is only bypassed when
+    # Pillow cannot open the file at all (e.g. a tiled float16 TIFF), in
+    # which case the same shared reader the loader uses supplies width/height.
+    try:
+        with Image.open(path) as im:
+            mode = im.mode
+            width, height = im.size
+    except (UnidentifiedImageError, OSError):
+        arr_for_shape, source_dtype = load_tiff_source(path)
+        height, width = arr_for_shape.shape[:2]
+        mode = source_dtype
 
     raw_depth = get_bit_depth(path)
     bit_depth = raw_depth if raw_depth > 0 else None
+    sample_format = "float" if bit_depth == 32 else ("uint" if bit_depth else None)
+    source_bits = get_source_bits(path)
 
     bit_depth_warning = (
         "8-bit image: limited dynamic range. Not recommended for quantification purposes. "
@@ -112,13 +142,38 @@ def _asset_info(
     )
 
     saturation = getattr(asset, "saturation", None) if asset else None
+    float_display_scale = getattr(asset, "float_display_scale", None) if asset else None
+
+    float_scale_warning = None
+    if float_display_scale and float_display_scale.get("negative_clipped_count"):
+        float_scale_warning = (
+            f"{float_display_scale['negative_clipped_count']} negative pixel(s) clipped to 0 "
+            f"when building the display representation (source min: "
+            f"{float_display_scale.get('source_min')})."
+        )
 
     saturation_crop_region = None
     if crop_rect is not None and bit_depth is not None:
         x, y, w, h = crop_rect
-        arr = load_image_as_uint16(path)
-        cropped = crop_uint16(arr, int(round(x)), int(round(y)), int(round(w)), int(round(h)))
-        saturation_crop_region = compute_saturation_stats(cropped, bit_depth)
+        if bit_depth == 32:
+            # Float source: the bridged (display-only) uint16 array has a
+            # pixel at 65535 by construction and must never be tested for
+            # saturation. Compute from the true float array instead, and
+            # the result is always not-assessable, same as the whole-image
+            # record — this is a property of the source, not of the crop.
+            arr, _source_dtype = load_tiff_source(path)
+            cropped = crop_uint16(arr, int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+            finite = cropped[np.isfinite(cropped)]
+            crop_max = float(finite.max()) if finite.size else 0.0
+            saturation_crop_region = SaturationStats(
+                max_value=crop_max,
+                total_pixels=int(cropped.size),
+                assessable=False,
+            )
+        else:
+            arr = load_image_as_uint16(path)
+            cropped = crop_uint16(arr, int(round(x)), int(round(y)), int(round(w)), int(round(h)))
+            saturation_crop_region = compute_saturation_stats(cropped, bit_depth)
 
     return {
         "sha256": sha256,
@@ -129,6 +184,8 @@ def _asset_info(
         "image_mode": mode,
         "bit_depth": bit_depth,
         "bit_depth_warning": bit_depth_warning,
+        "sample_format": sample_format,          # "uint" | "float" | None
+        "source_bits": source_bits,               # true on-disk BitsPerSample; 16 for a float16 source
         "width_px": width,
         "height_px": height,
         "acquisition_metadata": getattr(asset, "acquisition_metadata", None) if asset else None,
@@ -136,6 +193,8 @@ def _asset_info(
         "saturation_crop_region": (
             saturation_crop_region.model_dump() if saturation_crop_region else None
         ),
+        "float_display_scale": float_display_scale,
+        "float_scale_warning": float_scale_warning,
     }
 
 
@@ -306,13 +365,24 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         ops = blot["operations"]
         overlay = blot["overlay"]
 
+        sample_format_val = src.get("sample_format")
+        source_bits_val = src.get("source_bits")
+        depth_suffix = ""
+        if sample_format_val == "float":
+            depth_suffix = (
+                f" (float32 in memory; {source_bits_val}-bit float source)"
+                if source_bits_val else " (float32 in memory)"
+            )
+        elif source_bits_val and source_bits_val != src.get("bit_depth"):
+            depth_suffix = f" ({source_bits_val}-bit source)"
+
         if src.get("bit_depth") == 8:
             bit_depth_cell = (
                 '<td style="background:#fef3c7;color:#92400e;font-weight:bold;">'
-                "8-bit ⚠ Not recommended for quantification</td>"
+                f"8-bit ⚠ Not recommended for quantification{depth_suffix}</td>"
             )
         else:
-            bit_depth_cell = f'<td>{src.get("bit_depth", "")}</td>'
+            bit_depth_cell = f'<td>{src.get("bit_depth", "")}{depth_suffix}</td>'
 
         warning_text = src.get("bit_depth_warning") or ""
 
@@ -332,9 +402,13 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         if src.get("saturation_crop_region") is not None or crop_severity != "not_assessed":
             sat_lines.append(f"Crop region: {crop_message}")
 
-        if sat_severity == "warning" or crop_severity == "warning":
+        float_scale_warning_val = src.get("float_scale_warning") or ""
+        if float_scale_warning_val:
+            sat_lines.append(f"⚠ {float_scale_warning_val}")
+
+        if sat_severity == "warning" or crop_severity == "warning" or float_scale_warning_val:
             sat_style = "background:#fef3c7;color:#92400e;font-weight:bold;"
-        elif sat_severity == "not_assessed":
+        elif sat_severity == "not_assessed" or sat_severity == "not_assessable":
             sat_style = "background:#f3f4f6;color:#4b5563;"
         else:
             sat_style = ""

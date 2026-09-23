@@ -239,12 +239,24 @@ class Panel(BaseModel):
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
 
 class SaturationStats(BaseModel):
-    max_value: int
-    full_scale: int              # 255 for 8-bit, 65535 for 16-bit
-    saturated_count: int         # pixels == full_scale
+    # float so a not-assessable float source can record its real (non-integer)
+    # maximum here; uint sources still populate it with a whole number.
+    max_value: float
+    # full_scale and the count/fraction fields are None when assessable is
+    # False — a float source has no fixed detector ceiling to test against,
+    # so there is nothing to count. total_pixels stays populated regardless:
+    # it is a property of the image's shape, not of its sample format.
+    full_scale: Optional[int] = None             # 255 for 8-bit, 65535 for 16-bit
+    saturated_count: Optional[int] = None         # pixels == full_scale
     total_pixels: int
-    saturated_fraction: float
-    solid_saturated_count: int   # pixels surviving 3x3 erosion of the mask
+    saturated_fraction: Optional[float] = None
+    solid_saturated_count: Optional[int] = None   # pixels surviving 3x3 erosion of the mask
+    # False for float sources: there is no known detector ceiling to test
+    # against, so saturation is "not assessable", a different claim from
+    # AssetEntry.saturation being None ("not assessed", predates this
+    # feature). Defaults True so existing serialized records — all of which
+    # were genuinely assessable uint sources — round-trip unchanged.
+    assessable: bool = True
 
 class AssetEntry(BaseModel):
     sha256: str
@@ -254,6 +266,11 @@ class AssetEntry(BaseModel):
     acquisition_metadata: Optional[dict] = None
     # None means "not assessed" (imported by an earlier version) — never "clean".
     saturation: Optional[SaturationStats] = None
+    # Provenance for the display-only float->uint16 bridge (see
+    # image_utils.bridge_float_to_uint16). None for non-float sources.
+    # {method, source_dtype, source_min, source_max, scale_factor,
+    #  nonfinite_count, negative_clipped_count}
+    float_display_scale: Optional[dict] = None
 
 class ProjectMeta(BaseModel):
     id: str

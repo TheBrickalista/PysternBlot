@@ -27,6 +27,7 @@ from .models import (
 from .logchain import append_log_entry
 import datetime, uuid
 from PIL import Image
+import tifffile
 
 
 @dataclass
@@ -207,6 +208,96 @@ def parse_typhoon_inf(inf_path: Path) -> dict:
             result["signal_process"] = signal_process
 
         return result
+    except Exception:
+        return {}
+
+
+def parse_licor_metadata(path: str | Path) -> dict:
+    """
+    Parse LI-COR Image Studio / Odyssey instrument metadata from a TIFF's
+    baseline tags, via tifffile (works whether or not Pillow can decode the
+    file's pixel data -- LI-COR's own float16 tiled/pyramid TIFFs cannot be
+    opened by Pillow at all, but their tags read fine).
+
+    Gated on the Make tag (271) containing "LI-COR"; returns {} for any
+    non-LI-COR, unreadable, or non-TIFF file, and never raises. Safe to call
+    unconditionally on any imported file, the same way parse_typhoon_tag270
+    and parse_typhoon_inf already are.
+
+    Applies equally to float and legacy uint16 LI-COR files -- whichever
+    tags a given file happens to carry.
+
+    Keys returned (only when the underlying tag is present and parseable;
+    an absent or unparseable tag simply leaves that key out):
+        channel           int    e.g. 700   (from DocumentName "Channel: 700")
+        model             str    e.g. "Odyssey CLx 1.0.11"
+        software          str    e.g. "Image Studio 3.1.4"
+        instrument_serial str    e.g. "CLX-0684"           (Artist tag)
+        datetime          str    raw DateTime tag value
+        pixel_size_um     float  derived from XResolution + ResolutionUnit
+                                 (handles both CENTIMETER and INCH)
+    """
+    try:
+        with tifffile.TiffFile(str(path)) as tif:
+            tags = tif.pages[0].tags
+
+            make_tag = tags.get(271)
+            make_value = str(make_tag.value) if make_tag is not None else ""
+            if "LI-COR" not in make_value.upper():
+                return {}
+
+            result: dict = {}
+
+            doc_name = tags.get(269)
+            if doc_name is not None:
+                m = re.search(r"Channel:\s*(\d+)", str(doc_name.value))
+                if m:
+                    result["channel"] = int(m.group(1))
+
+            model = tags.get(272)
+            if model is not None:
+                result["model"] = str(model.value)
+
+            software = tags.get(305)
+            if software is not None:
+                result["software"] = str(software.value)
+
+            artist = tags.get(315)
+            if artist is not None:
+                result["instrument_serial"] = str(artist.value)
+
+            dt = tags.get(306)
+            if dt is not None:
+                result["datetime"] = str(dt.value)
+
+            xres_tag = tags.get(282)
+            unit_tag = tags.get(296)
+            if xres_tag is not None and unit_tag is not None:
+                px_per_unit = None
+                xres_value = xres_tag.value
+                try:
+                    if isinstance(xres_value, (tuple, list)) and len(xres_value) == 2:
+                        num, den = xres_value
+                        px_per_unit = (num / den) if den else None
+                    elif isinstance(xres_value, (int, float)):
+                        px_per_unit = float(xres_value)
+                except (TypeError, ValueError, ZeroDivisionError):
+                    px_per_unit = None
+
+                if px_per_unit:
+                    # tifffile represents ResolutionUnit as a RESUNIT enum
+                    # member whose str() is just the bare numeric code in
+                    # some tifffile versions (e.g. "3", not "CENTIMETER") --
+                    # read .name when present, and also accept the raw TIFF
+                    # spec codes (2 = INCH, 3 = CENTIMETER) as a fallback.
+                    unit_value = unit_tag.value
+                    unit_name = str(getattr(unit_value, "name", unit_value)).upper()
+                    if "CENTIMETER" in unit_name or unit_value == 3:
+                        result["pixel_size_um"] = 10000.0 / px_per_unit
+                    elif "INCH" in unit_name or unit_value == 2:
+                        result["pixel_size_um"] = 25400.0 / px_per_unit
+
+            return result
     except Exception:
         return {}
 
@@ -812,6 +903,12 @@ class Workspace:
             inf_path = fp.with_suffix(".inf")
             if inf_path.exists():
                 inf_meta = parse_typhoon_inf(inf_path)
+
+            # LI-COR files carry no .inf sidecar and no Typhoon Tag 270, so
+            # this never conflicts with the above — it only ever adds keys.
+            licor_meta = parse_licor_metadata(str(fp))
+            if licor_meta:
+                inf_meta = {**inf_meta, **licor_meta}
 
             # Fall back to file order if channel_index is not in metadata.
             idx = meta.get("channel_index")

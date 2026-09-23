@@ -2000,7 +2000,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         # handful of isolated hot pixels (dust/fibre) is common and harmless,
         # and flagging it too would turn the badge into ignorable noise.
         saturation = getattr(asset, "saturation", None) if asset else None
-        if saturation is not None and saturation.solid_saturated_count >= SATURATION_SOLID_PIXEL_THRESHOLD:
+        if (
+            saturation is not None
+            and getattr(saturation, "assessable", True)
+            and saturation.solid_saturated_count is not None
+            and saturation.solid_saturated_count >= SATURATION_SOLID_PIXEL_THRESHOLD
+        ):
             self.prov_saturation_badge.setVisible(True)
             self.prov_saturation_badge.setToolTip(
                 f"{saturation.saturated_count} pixel(s) at full scale, "

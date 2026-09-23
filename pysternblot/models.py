@@ -6,7 +6,7 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Literal, Any
+from typing import List, Optional, Dict, Literal, Any, Union
 from pydantic import BaseModel, Field
 
 class Group(BaseModel):
@@ -148,6 +148,10 @@ class BlotChannel(BaseModel):
     channel_index: int                                          # 0-based, from Scan number tag
     wavelength_nm: Optional[int] = None                        # e.g. 685, 785
     filter_name: Optional[str] = None                          # e.g. "IRshort 720BP20"
+    # Instrument's conventional channel name (LI-COR: "700"/"800"). NOT a
+    # physical wavelength -- wavelength_nm is the Typhoon excitation laser
+    # and stays None for LI-COR.
+    channel_label: Optional[str] = None
     fluorophore: Optional[str] = None                          # user-editable, e.g. "IRDye 800CW"
     antibody_name: str = ""
     protein_label: ProteinLabel = Field(
@@ -239,9 +243,10 @@ class Panel(BaseModel):
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
 
 class SaturationStats(BaseModel):
-    # float so a not-assessable float source can record its real (non-integer)
-    # maximum here; uint sources still populate it with a whole number.
-    max_value: float
+    # Union (not float): uint sources must keep serializing as an int, exactly
+    # as before, because saturation.model_dump() feeds hashed log entries; a
+    # float source records its real (non-integer) maximum here.
+    max_value: Union[int, float]
     # full_scale and the count/fraction fields are None when assessable is
     # False — a float source has no fixed detector ceiling to test against,
     # so there is nothing to count. total_pixels stays populated regardless:

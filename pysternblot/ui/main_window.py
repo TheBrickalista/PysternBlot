@@ -1715,6 +1715,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             label = f"Ch{ch.channel_index + 1}"
             if ch.wavelength_nm:
                 label += f" — {ch.wavelength_nm}nm"
+            elif ch.channel_label:
+                label += f" — {ch.channel_label} channel"
             if ch.filter_name:
                 label += f" {ch.filter_name}"
             rb = QRadioButton(label)

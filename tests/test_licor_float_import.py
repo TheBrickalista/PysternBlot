@@ -24,6 +24,7 @@ Run from repo root:
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -741,3 +742,241 @@ class TestSaturationBadgeNoneSafe:
         win._update_prov_label()  # must not raise on None solid_saturated_count
 
         assert win.prov_saturation_badge.isVisible() is False
+
+
+# ===========================================================================
+# 10. v1.2.0-format project: hashed content must be unchanged by the model
+#     changes (SaturationStats.max_value type, new optional fields)
+# ===========================================================================
+
+def _independent_entry_hash(entry: dict) -> str:
+    """Re-implements logchain's canonical hashing from first principles, so
+    the fixture's hashes do not depend on the code under test."""
+    payload = {k: v for k, v in entry.items() if k != "entry_hash"}
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class TestV120ProjectStillVerifies:
+
+    def _write_v120_project(self, ws: Workspace, tmp_path: Path):
+        from pysternblot.logchain import GENESIS_HASH
+
+        proj_path = ws.create_new_project("v1.2.0 fixture", app_version="1.2.0")
+        data = json.loads(Path(proj_path).read_text(encoding="utf-8"))
+
+        sha = "a" * 64
+        # Exactly what v1.2.0 wrote: int max_value, no `assessable`, no
+        # `float_display_scale` keys.
+        old_saturation = {
+            "max_value": 65535, "full_scale": 65535, "saturated_count": 400,
+            "total_pixels": 10000, "saturated_fraction": 0.04,
+            "solid_saturated_count": 324,
+        }
+        data["assets"] = {sha: {
+            "sha256": sha, "stored_original_path": "x", "original_source_path": None,
+            "stored_preview_path": None, "acquisition_metadata": None,
+            "saturation": old_saturation,
+        }}
+
+        log = []
+        prev = GENESIS_HASH
+        for i, (op, new_value) in enumerate([
+            ("saturation_assessed", old_saturation),
+            ("blot_imported", {"blot_id": "blot_01"}),
+        ]):
+            entry = {
+                "timestamp_utc": f"2026-01-0{i + 1}T00:00:00+00:00", "operation": op,
+                "target_type": "asset", "target_id": sha, "asset_sha256": sha,
+                "field": "saturation", "old_value": None, "new_value": new_value,
+                "note": None, "prev_hash": prev,
+            }
+            entry["entry_hash"] = _independent_entry_hash(entry)
+            prev = entry["entry_hash"]
+            log.append(entry)
+        data["operation_log"] = log
+        Path(proj_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return proj_path
+
+    def test_loads_verifies_saves_reloads_and_stays_ok(self, tmp_path):
+        from pysternblot.logchain import verify_log_chain
+
+        ws = _make_workspace(tmp_path)
+        proj_path = self._write_v120_project(ws, tmp_path)
+
+        project = ws.load_project(str(proj_path))
+        assert verify_log_chain(project).status == "ok"
+        assert verify_log_chain(project).n_chained == 2
+
+        ws.save_project(project)
+        reloaded = ws.load_project(str(proj_path))
+        assert verify_log_chain(reloaded).status == "ok"
+
+    def test_uint_max_value_still_serializes_as_int(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        proj_path = self._write_v120_project(ws, tmp_path)
+
+        project = ws.load_project(str(proj_path))
+        ws.save_project(project)
+
+        saved_text = Path(proj_path).read_text(encoding="utf-8")
+        saved = json.loads(saved_text)
+        sat = saved["assets"]["a" * 64]["saturation"]
+        assert sat["max_value"] == 65535
+        assert isinstance(sat["max_value"], int)
+        assert '"max_value": 65535,' in saved_text or '"max_value": 65535\n' in saved_text
+
+    def test_new_uint_import_log_entry_serializes_int_max_value(self):
+        from pysternblot.image_utils import compute_saturation_stats
+        stats = compute_saturation_stats(np.full((4, 4), 1000, dtype=np.uint16), 16)
+        assert isinstance(stats.model_dump()["max_value"], int)
+        assert '"max_value":1000,' in stats.model_dump_json()
+
+    def test_float_max_value_still_serializes_as_float(self):
+        stats = SaturationStats(max_value=46.7, total_pixels=4, assessable=False)
+        assert stats.model_dump()["max_value"] == 46.7
+
+
+class TestBridgeIsScaleOnly:
+
+    def test_no_min_subtraction_when_min_is_positive(self):
+        arr = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32)
+        out, info = bridge_float_to_uint16(arr, "float32")
+        # uint16 = round(v * 65535 / max): the source minimum (10) must NOT
+        # map to 0, or proportionality (and any ratio between pixels) is lost.
+        assert out.tolist() == [[16384, 32768], [49151, 65535]]
+        assert out[0, 0] != 0
+        assert info["scale_factor"] == pytest.approx(65535.0 / 40.0)
+
+
+# ===========================================================================
+# 11. LI-COR channel label (NIR radio) and integrity HTML acquisition cell
+# ===========================================================================
+
+TESTS_DIR = Path(__file__).parent
+
+
+def _radio_labels(win: MainWindow, blot) -> list[str]:
+    from PySide6.QtWidgets import QRadioButton
+    win._rebuild_nir_channel_selector(blot)
+    return [
+        win._nir_ch_layout.itemAt(i).widget().text()
+        for i in range(win._nir_ch_layout.count())
+        if isinstance(win._nir_ch_layout.itemAt(i).widget(), QRadioButton)
+    ]
+
+
+def _nir_blot(channels):
+    from pysternblot.models import Blot
+    return Blot.model_validate({
+        "id": "b1", "asset_sha256": channels[0].asset_sha256, "modality": "nir_fluorescence",
+        "channels": [c.model_dump() for c in channels],
+        "crop": {"x": 0, "y": 0, "w": 10, "h": 10},
+        "ladder": {"lane_index": 0, "marker_set_id": "ms1", "calibration_points": [
+            {"y_px": 1, "kda": 55}, {"y_px": 2, "kda": 36}]},
+        "protein_label": {"text": ""},
+    })
+
+
+class TestLicorChannelLabel:
+
+    def test_licor_import_sets_channel_label_not_wavelength(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        project = ws.load_project(str(ws.create_new_project("p")))
+        f700, f800 = tmp_path / "a.tif", tmp_path / "b.tif"
+        _write_licor_float_tiff(f700, channel=700, seed=1)
+        _write_licor_float_tiff(f800, channel=800, seed=2)
+
+        channels, _ = ws.import_nir_blot_typhoon([f700, f800], project)
+
+        assert [c.channel_label for c in channels] == ["700", "800"]
+        assert all(c.wavelength_nm is None for c in channels)
+
+    def test_licor_radio_labels_show_channel(self, qapp, tmp_path):
+        ws = _make_workspace(tmp_path)
+        project = ws.load_project(str(ws.create_new_project("p")))
+        f700, f800 = tmp_path / "a.tif", tmp_path / "b.tif"
+        _write_licor_float_tiff(f700, channel=700, seed=1)
+        _write_licor_float_tiff(f800, channel=800, seed=2)
+        channels, _ = ws.import_nir_blot_typhoon([f700, f800], project)
+
+        labels = _radio_labels(MainWindow(ws), _nir_blot(channels))
+        assert labels == ["Ch1 — 700 channel", "Ch2 — 800 channel"]
+        assert not any("nm" in lbl for lbl in labels)
+
+    def test_licor_file_without_channel_tag_has_no_label(self, tmp_path):
+        ws = _make_workspace(tmp_path)
+        project = ws.load_project(str(ws.create_new_project("p")))
+        f = tmp_path / "a.tif"
+        _write_licor_float_tiff(f, include_docname=False)
+        channels, _ = ws.import_nir_blot_typhoon([f], project)
+        assert channels[0].channel_label is None
+
+    def test_typhoon_labels_unchanged(self, qapp, tmp_path):
+        ch_short = TESTS_DIR / "20260507-142651-[IRshort].tif"
+        ch_long = TESTS_DIR / "20260507-142651-[IRlong].tif"
+        if not ch_short.exists() or not ch_long.exists():
+            pytest.skip("Typhoon test files not found in tests/")
+        ws = _make_workspace(tmp_path)
+        project = ws.load_project(str(ws.create_new_project("p")))
+
+        channels, _ = ws.import_nir_blot_typhoon([ch_short, ch_long], project)
+
+        assert all(c.channel_label is None for c in channels)
+        assert [c.wavelength_nm for c in channels] == [785, 685]
+        labels = _radio_labels(MainWindow(ws), _nir_blot(channels))
+        assert labels == ["Ch1 — 785nm IRlong 825BP30", "Ch2 — 685nm IRshort 720BP20"]
+        notes = [e.note for e in project.operation_log if e.operation == "nir_channel_imported"]
+        assert all(n.startswith("Typhoon: ") for n in notes)
+
+    def test_old_project_json_without_channel_label_loads(self):
+        from pysternblot.models import BlotChannel
+        ch = BlotChannel.model_validate({"asset_sha256": "a" * 64, "channel_index": 0, "wavelength_nm": 785})
+        assert ch.channel_label is None
+
+
+class TestIntegrityHtmlAcquisition:
+
+    def _html(self, tmp_path, acq):
+        report = {
+            "blots": [{
+                "blot_id": "b1", "protein_label": {"text": "P"}, "gamma_warning": None,
+                "source_image": {
+                    "sha256": "x", "bit_depth": 16, "bit_depth_warning": None,
+                    "saturation": None, "saturation_crop_region": None,
+                    "acquisition_metadata": acq, "width_px": 1, "height_px": 1,
+                },
+                "operations": {
+                    "crop": {"x": 0, "y": 0, "w": 1, "h": 1}, "rotation_deg": 0,
+                    "levels": {"black": 0, "white": 1, "gamma": 1.0},
+                },
+                "overlay": {"present": False},
+            }],
+            "project": {"name": "n", "id": "i"}, "created_utc": "t",
+            "pysternblot_version": "v", "schema": "s",
+        }
+        return write_integrity_html(report, tmp_path / "r.html").read_text(encoding="utf-8")
+
+    def test_licor_keys_rendered(self, tmp_path):
+        html = self._html(tmp_path, {
+            "channel": 700, "model": "Odyssey CLx 1.0.11", "software": "Image Studio 3.1.4",
+            "instrument_serial": "CLX-0684", "datetime": "2026:05:07 14:26:51",
+            "pixel_size_um": 169.19,
+        })
+        assert "Channel: 700" in html
+        assert "Instrument: Odyssey CLx 1.0.11" in html
+        assert "Serial: CLX-0684" in html
+        assert "Software: Image Studio 3.1.4" in html
+        assert "Acquired: 2026:05:07 14:26:51" in html
+        assert "Pixel size: 169.2 µm" in html
+
+    def test_partial_licor_metadata_renders_only_present_keys(self, tmp_path):
+        html = self._html(tmp_path, {"model": "Odyssey CLx 1.0.11"})
+        assert "Instrument: Odyssey CLx 1.0.11" in html
+        assert "Channel:" not in html and "Serial:" not in html
+
+    def test_typhoon_rendering_unchanged(self, tmp_path):
+        html = self._html(tmp_path, {"scale_type": "Linear", "scan_mode": "Fast", "pmt_voltage": 399})
+        assert "<b>Scale: Linear</b>" in html
+        assert "Mode: Fast" in html and "PMT: 399 V" in html
+        assert "Channel:" not in html and "Instrument:" not in html

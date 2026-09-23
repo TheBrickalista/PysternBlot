@@ -931,10 +931,15 @@ class Workspace:
             wavelength_nm = meta.get("laser_nm")
             channel_total = meta.get("channel_total") or len(file_paths)
 
-            note = (
-                f"Typhoon: {filter_name}, {wavelength_nm}nm, "
-                f"channel {channel_index + 1}/{channel_total}"
-            )
+            licor_channel = inf_meta.get("channel")
+            channel_label = str(licor_channel) if licor_channel is not None else None
+            if channel_label is not None:
+                note = f"LI-COR: channel {channel_label}, file {channel_index + 1}/{channel_total}"
+            else:
+                note = (
+                    f"Typhoon: {filter_name}, {wavelength_nm}nm, "
+                    f"channel {channel_index + 1}/{channel_total}"
+                )
             if inf_meta.get("scale_type"):
                 note += f", scale={inf_meta['scale_type']}"
 
@@ -954,6 +959,7 @@ class Workspace:
                     channel_index=channel_index,
                     wavelength_nm=wavelength_nm,
                     filter_name=filter_name or None,
+                    channel_label=channel_label,
                 )
             )
             if inf_meta:

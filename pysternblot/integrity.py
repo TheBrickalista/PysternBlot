@@ -417,6 +417,18 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         acq = src.get("acquisition_metadata") or {}
         if acq:
             acq_parts = []
+            if acq.get("channel") is not None:
+                acq_parts.append(f"<b>Channel: {acq['channel']}</b>")
+            if acq.get("model"):
+                acq_parts.append(f"Instrument: {acq['model']}")
+            if acq.get("instrument_serial"):
+                acq_parts.append(f"Serial: {acq['instrument_serial']}")
+            if acq.get("software"):
+                acq_parts.append(f"Software: {acq['software']}")
+            if acq.get("datetime"):
+                acq_parts.append(f"Acquired: {acq['datetime']}")
+            if acq.get("pixel_size_um") is not None:
+                acq_parts.append(f"Pixel size: {float(acq['pixel_size_um']):.1f} µm")
             if acq.get("scale_type"):
                 acq_parts.append(f"<b>Scale: {acq['scale_type']}</b>")
             if acq.get("scan_mode"):

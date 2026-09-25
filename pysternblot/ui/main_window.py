@@ -1058,8 +1058,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             "  https://github.com/TheBrickalista/PysternBlot/issues\n\n"
             "Citation:\n"
             f"  Boulter E. & Féral C.C. (2026). PysternBlot (v{_APP_VERSION}).\n"
-            "  https://doi.org/10.5281/zenodo.20185279\n\n"
-            "  (DOI will be updated after first Zenodo release)"
+            # Concept DOI — resolves to the latest version; do not replace with a version DOI.
+            "  https://doi.org/10.5281/zenodo.20185279"
         ))
 
         _load_legal()

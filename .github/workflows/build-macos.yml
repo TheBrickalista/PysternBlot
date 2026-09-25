@@ -66,7 +66,26 @@ jobs:
             --add-data "pysternblot/resources:pysternblot/resources" \
             --collect-data certifi \
             --copy-metadata pysternblot \
+            --osx-bundle-identifier "io.github.thebrickalista.pysternblot" \
             launcher.py
+
+      - name: Set Info.plist version keys
+        run: |
+          set -euo pipefail
+          V=$(uv run python -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from make_version_file import parse_version
+          x, y, z = parse_version('pyproject.toml')
+          print(f'{x}.{y}.{z}')
+          ")
+          PLIST="dist/PysternBlot.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $V" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $V" "$PLIST"
+          echo "Info.plist version set to $V"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST"
 
       - name: Import signing certificate
         env:
@@ -165,6 +184,38 @@ jobs:
           fi
 
           xcrun stapler validate "$APP"
+
+          echo "--- Info.plist version/identifier check (issue #187) ---"
+          EXPECTED_VERSION=$(uv run python -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from make_version_file import parse_version
+          x, y, z = parse_version('pyproject.toml')
+          print(f'{x}.{y}.{z}')
+          ")
+          EXPECTED_ID="io.github.thebrickalista.pysternblot"
+          PLIST="$APP/Contents/Info.plist"
+          ACTUAL_SHORT=$(plutil -extract CFBundleShortVersionString raw "$PLIST")
+          ACTUAL_BUNDLE=$(plutil -extract CFBundleVersion raw "$PLIST")
+          ACTUAL_ID=$(plutil -extract CFBundleIdentifier raw "$PLIST")
+          echo "CFBundleShortVersionString=$ACTUAL_SHORT (expected $EXPECTED_VERSION)"
+          echo "CFBundleVersion=$ACTUAL_BUNDLE (expected $EXPECTED_VERSION)"
+          echo "CFBundleIdentifier=$ACTUAL_ID (expected $EXPECTED_ID)"
+          FAIL=0
+          if [ "$ACTUAL_SHORT" != "$EXPECTED_VERSION" ]; then
+            echo "::error::CFBundleShortVersionString ($ACTUAL_SHORT) does not match pyproject.toml ($EXPECTED_VERSION)."
+            FAIL=1
+          fi
+          if [ "$ACTUAL_BUNDLE" != "$EXPECTED_VERSION" ]; then
+            echo "::error::CFBundleVersion ($ACTUAL_BUNDLE) does not match pyproject.toml ($EXPECTED_VERSION)."
+            FAIL=1
+          fi
+          if [ "$ACTUAL_ID" != "$EXPECTED_ID" ]; then
+            echo "::error::CFBundleIdentifier ($ACTUAL_ID) does not match the expected identifier ($EXPECTED_ID)."
+            FAIL=1
+          fi
+          if [ "$FAIL" -ne 0 ]; then
+            exit 1
+          fi
 
           echo "--- spctl assessment (informational) ---"
           spctl -a -t exec -vvv "$APP" || echo "spctl returned non-zero; review output above"

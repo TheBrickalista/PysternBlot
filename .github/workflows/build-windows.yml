@@ -83,6 +83,10 @@ jobs:
                 f"{sum(len(p) for p in png_bufs)} bytes total")
           EOF
 
+      - name: Generate version file
+        run: |
+          uv run python scripts/make_version_file.py pyproject.toml build/version_file.txt
+
       - name: Build .exe with PyInstaller
         run: |
           uv run pyinstaller `
@@ -94,7 +98,32 @@ jobs:
             --add-data "pysternblot/resources;pysternblot/resources" `
             --collect-data certifi `
             --copy-metadata pysternblot `
+            --version-file "build/version_file.txt" `
             launcher.py
+
+      - name: Verify .exe version resource
+        run: |
+          $expected = (uv run python -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from make_version_file import parse_version
+          x, y, z = parse_version('pyproject.toml')
+          print(f'{x}.{y}.{z}.0')
+          ").Trim()
+          $info = (Get-Item "dist\PysternBlot.exe").VersionInfo
+          Write-Host "ProductVersion: $($info.ProductVersion) (expected $expected)"
+          Write-Host "FileVersion: $($info.FileVersion) (expected $expected)"
+          Write-Host "ProductName: $($info.ProductName)"
+          Write-Host "CompanyName: $($info.CompanyName)"
+          $fail = $false
+          if ($info.ProductVersion.Trim() -ne $expected) {
+            Write-Host "::error::ProductVersion ($($info.ProductVersion)) does not match pyproject.toml ($expected)."
+            $fail = $true
+          }
+          if ($info.FileVersion.Trim() -ne $expected) {
+            Write-Host "::error::FileVersion ($($info.FileVersion)) does not match pyproject.toml ($expected)."
+            $fail = $true
+          }
+          if ($fail) { exit 1 }
 
       - name: Selfcheck built exe
         run: |

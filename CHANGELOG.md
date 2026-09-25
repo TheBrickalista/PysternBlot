@@ -8,7 +8,22 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-CI only — no functional or version change.
+### Changed
+- **The macOS app and Windows executable now carry the application version in their OS
+  metadata** (issue #187) — Finder's Get Info panel and Windows' Properties → Details tab
+  previously showed no version at all (PyInstaller's unset defaults: `0.0.0` on macOS, nothing
+  on Windows). Both are now read from `pyproject.toml` at build time via a shared parser
+  (`scripts/make_version_file.py`), which rejects any version that isn't a plain `x.y.z`. CI now
+  fails the build if the packaged version doesn't match.
+- **The macOS bundle identifier changes from the literal string `"PysternBlot"`
+  (PyInstaller's unset default) to `io.github.thebrickalista.pysternblot`.** This affects code
+  signing identity only. It does **not** affect user preferences (`QSettings` derives its
+  storage location from the app's organization/application name set in code, never from the
+  bundle identifier — confirmed by inspecting the actual preferences file path) and the app
+  requests no privacy-gated (TCC) permissions, so no user data or preferences are affected by
+  this change.
+
+CI-only entries below — no functional or version change.
 
 ### Fixed
 - **`publish.yml`'s "Run tests" job could hang indefinitely.** A `pytest.mark.parametrize` case

@@ -64,6 +64,8 @@ jobs:
             --noconfirm \
             --icon "build/pysternblot.icns" \
             --add-data "pysternblot/resources:pysternblot/resources" \
+            --collect-data certifi \
+            --copy-metadata pysternblot \
             launcher.py
 
       - name: Import signing certificate
@@ -166,6 +168,21 @@ jobs:
 
           echo "--- spctl assessment (informational) ---"
           spctl -a -t exec -vvv "$APP" || echo "spctl returned non-zero; review output above"
+
+          echo "--- --selfcheck on the extracted bundle (the artifact users download) ---"
+          RESULT="$RUNNER_TEMP/selfcheck.txt"
+          rm -f "$RESULT"
+          set +e
+          "$APP/Contents/MacOS/PysternBlot" --selfcheck --selfcheck-out "$RESULT"
+          CODE=$?
+          set -e
+          if [ -f "$RESULT" ]; then cat "$RESULT"; fi
+          case "$CODE" in
+            0) echo "selfcheck passed" ;;
+            2) echo "::warning::selfcheck: GitHub rate-limited the request (HTTP 403/429) after a successful TLS handshake. TLS is fine; not failing the build." ;;
+            *) echo "::error::selfcheck failed (exit $CODE). The packaged app cannot complete the update check; see the output above."
+               exit 1 ;;
+          esac
 
           rm -rf "$VERIFY_DIR"
 

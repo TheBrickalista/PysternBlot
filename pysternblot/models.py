@@ -6,7 +6,7 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Literal, Any
+from typing import List, Optional, Dict, Literal, Any, Union
 from pydantic import BaseModel, Field
 
 class Group(BaseModel):
@@ -148,6 +148,10 @@ class BlotChannel(BaseModel):
     channel_index: int                                          # 0-based, from Scan number tag
     wavelength_nm: Optional[int] = None                        # e.g. 685, 785
     filter_name: Optional[str] = None                          # e.g. "IRshort 720BP20"
+    # Instrument's conventional channel name (LI-COR: "700"/"800"). NOT a
+    # physical wavelength -- wavelength_nm is the Typhoon excitation laser
+    # and stays None for LI-COR.
+    channel_label: Optional[str] = None
     fluorophore: Optional[str] = None                          # user-editable, e.g. "IRDye 800CW"
     antibody_name: str = ""
     protein_label: ProteinLabel = Field(
@@ -239,12 +243,25 @@ class Panel(BaseModel):
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
 
 class SaturationStats(BaseModel):
-    max_value: int
-    full_scale: int              # 255 for 8-bit, 65535 for 16-bit
-    saturated_count: int         # pixels == full_scale
+    # Union (not float): uint sources must keep serializing as an int, exactly
+    # as before, because saturation.model_dump() feeds hashed log entries; a
+    # float source records its real (non-integer) maximum here.
+    max_value: Union[int, float]
+    # full_scale and the count/fraction fields are None when assessable is
+    # False — a float source has no fixed detector ceiling to test against,
+    # so there is nothing to count. total_pixels stays populated regardless:
+    # it is a property of the image's shape, not of its sample format.
+    full_scale: Optional[int] = None             # 255 for 8-bit, 65535 for 16-bit
+    saturated_count: Optional[int] = None         # pixels == full_scale
     total_pixels: int
-    saturated_fraction: float
-    solid_saturated_count: int   # pixels surviving 3x3 erosion of the mask
+    saturated_fraction: Optional[float] = None
+    solid_saturated_count: Optional[int] = None   # pixels surviving 3x3 erosion of the mask
+    # False for float sources: there is no known detector ceiling to test
+    # against, so saturation is "not assessable", a different claim from
+    # AssetEntry.saturation being None ("not assessed", predates this
+    # feature). Defaults True so existing serialized records — all of which
+    # were genuinely assessable uint sources — round-trip unchanged.
+    assessable: bool = True
 
 class AssetEntry(BaseModel):
     sha256: str
@@ -254,6 +271,11 @@ class AssetEntry(BaseModel):
     acquisition_metadata: Optional[dict] = None
     # None means "not assessed" (imported by an earlier version) — never "clean".
     saturation: Optional[SaturationStats] = None
+    # Provenance for the display-only float->uint16 bridge (see
+    # image_utils.bridge_float_to_uint16). None for non-float sources.
+    # {method, source_dtype, source_min, source_max, scale_factor,
+    #  nonfinite_count, negative_clipped_count}
+    float_display_scale: Optional[dict] = None
 
 class ProjectMeta(BaseModel):
     id: str

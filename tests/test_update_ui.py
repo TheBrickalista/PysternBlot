@@ -153,14 +153,102 @@ class TestReleaseNotesButton:
         mock_open.assert_not_called()
 
 
+from pysternblot import update_check as uc
+
+
+def _update_result():
+    return uc.CheckResult(outcome=uc.OUTCOME_UPDATE_AVAILABLE, **{
+        k: SAMPLE_RESULT[k] for k in ("current", "latest", "install_type", "instruction", "url")
+    })
+
+
+def _failed(category, **kw):
+    return uc.CheckResult(outcome=uc.OUTCOME_CHECK_FAILED, category=category, detail="boom", **kw)
+
+
 class TestAutoUpdateResult:
     def test_none_result_leaves_no_banner(self, main_window):
         main_window._on_auto_update_result(None)
         assert main_window._update_banner is None
 
-    def test_dict_result_shows_banner(self, main_window):
-        main_window._on_auto_update_result(SAMPLE_RESULT)
+    def test_update_available_shows_banner(self, main_window):
+        main_window._on_auto_update_result(_update_result())
         assert main_window._update_banner is not None
+
+    def test_up_to_date_is_silent(self, main_window):
+        main_window._on_auto_update_result(uc.CheckResult(outcome=uc.OUTCOME_UP_TO_DATE))
+        assert main_window._update_banner is None
+
+    @pytest.mark.parametrize("result", [
+        _failed(uc.CATEGORY_TLS),
+        _failed(uc.CATEGORY_BAD_RESPONSE),
+        _failed(uc.CATEGORY_HTTP, status_code=500),
+    ])
+    def test_serious_failures_show_non_modal_line(self, main_window, result):
+        with patch("pysternblot.ui.main_window.QMessageBox") as mock_box:
+            main_window._on_auto_update_result(result)
+        assert main_window._update_banner is not None
+        mock_box.assert_not_called()  # non-modal
+
+    @pytest.mark.parametrize("result", [
+        _failed(uc.CATEGORY_NETWORK),
+        _failed(uc.CATEGORY_HTTP, status_code=403, rate_limited=True),
+        _failed(uc.CATEGORY_HTTP, status_code=429, rate_limited=True),
+    ])
+    def test_network_and_rate_limit_stay_silent(self, main_window, result):
+        main_window._on_auto_update_result(result)
+        assert main_window._update_banner is None
+
+    def test_failure_line_can_be_dismissed(self, main_window):
+        main_window._on_auto_update_result(_failed(uc.CATEGORY_TLS))
+        main_window._dismiss_update_banner()
+        assert main_window._update_banner is None
+
+
+class TestManualUpdateResult:
+    def test_up_to_date_message(self, main_window):
+        with patch("pysternblot.ui.main_window.QMessageBox") as mock_box:
+            main_window._on_manual_update_result(
+                uc.CheckResult(outcome=uc.OUTCOME_UP_TO_DATE, current="1.2.0"))
+        mock_box.information.assert_called_once()
+        assert "latest published release" in mock_box.information.call_args.args[2]
+
+    def test_update_available_shows_banner_no_dialog(self, main_window):
+        with patch("pysternblot.ui.main_window.QMessageBox") as mock_box:
+            main_window._on_manual_update_result(_update_result())
+        assert main_window._update_banner is not None
+        mock_box.information.assert_not_called()
+
+    @pytest.mark.parametrize("result, expected", [
+        (_failed(uc.CATEGORY_TLS), "security certificate"),
+        (_failed(uc.CATEGORY_NETWORK), "could not reach GitHub"),
+        (_failed(uc.CATEGORY_HTTP, status_code=429, rate_limited=True), "limiting"),
+        (_failed(uc.CATEGORY_HTTP, status_code=500), "HTTP 500"),
+        (_failed(uc.CATEGORY_BAD_RESPONSE), "could not be understood"),
+    ])
+    def test_failure_is_never_shown_as_up_to_date(self, main_window, result, expected):
+        with patch("pysternblot.ui.main_window.QMessageBox") as mock_box:
+            main_window._on_manual_update_result(result)
+        mock_box.information.assert_not_called()
+        text = mock_box.call_args.args[2]
+        assert expected in text
+        assert "latest published release" not in text
+        # exception text lives in the details section
+        details = mock_box.return_value.setDetailedText.call_args.args[0]
+        assert "boom" in details and f"Category: {result.category}" in details
+        mock_box.return_value.exec.assert_called_once()
+
+
+class TestWorker:
+    def test_worker_converts_a_crash_into_check_failed(self, qapp):
+        from pysternblot.ui.update_worker import UpdateCheckWorker
+        got = []
+        w = UpdateCheckWorker(enabled=True)
+        w.signals.finished.connect(got.append)
+        with patch("pysternblot.ui.update_worker.check_for_update", side_effect=RuntimeError("bug")):
+            w.run()
+        assert got[0].failed and got[0].category == uc.CATEGORY_UNEXPECTED
+        assert "bug" in got[0].detail
 
 
 # ---------------------------------------------------------------------------

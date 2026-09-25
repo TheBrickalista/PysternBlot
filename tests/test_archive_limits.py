@@ -534,7 +534,7 @@ class TestUpdateCheckResponseCap:
         def __exit__(self, *exc_info):
             return False
 
-    def test_over_length_response_returns_none(self, monkeypatch):
+    def test_over_length_response_is_bad_response(self, monkeypatch):
         monkeypatch.setattr(update_check_module, "MAX_RESPONSE_BYTES", 50)
         # A body longer than the cap, still syntactically valid-ish JSON so a
         # failure here can only be the size guard, nothing else.
@@ -545,8 +545,9 @@ class TestUpdateCheckResponseCap:
             update_check_module.urllib.request, "urlopen",
             lambda *a, **k: self._FakeResponse(oversized_body),
         )
-        result = update_check_module.fetch_latest_release()
-        assert result is None
+        with pytest.raises(update_check_module.UpdateCheckError) as info:
+            update_check_module.fetch_latest_release()
+        assert info.value.category == update_check_module.CATEGORY_BAD_RESPONSE
 
     def test_under_length_response_still_works(self, monkeypatch):
         monkeypatch.setattr(update_check_module, "MAX_RESPONSE_BYTES", 50)

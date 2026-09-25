@@ -18,9 +18,56 @@ from datetime import datetime, timezone, date
 from pathlib import Path
 import json, zipfile
 
-from ..models import Blot, AssetEntry, OperationLogEntry
-from ..image_utils import is_jpeg, get_bit_depth, load_image_as_uint16, compute_saturation_stats
+import numpy as np
+
+from ..models import Blot, AssetEntry, OperationLogEntry, SaturationStats
+from ..image_utils import (
+    is_jpeg,
+    get_bit_depth,
+    load_image_as_uint16,
+    load_tiff_source,
+    bridge_float_to_uint16,
+    compute_saturation_stats,
+)
 from ..logchain import append_log_entry
+from ..storage import parse_licor_metadata
+
+
+# bit_depth == 32 is this codebase's sentinel for "float source" (see
+# image_utils.get_bit_depth) -- any float16/float32 TIFF, after float16 is
+# promoted to float32 in memory. Never a genuine 32-bit integer format.
+def _assess_asset_on_import(
+    dest_path, bit_depth: int,
+) -> tuple[SaturationStats, dict | None, "np.ndarray | None"]:
+    """
+    Compute saturation stats for a freshly-imported asset, routing on
+    whether the source is float.
+
+    Returns (saturation, float_display_scale, bridged_uint16):
+    - Non-float sources: saturation is the normal, fully-assessed result;
+      float_display_scale and bridged_uint16 are both None.
+    - Float sources: the bridged (display-only) uint16 array has a pixel at
+      65535 by construction and must never be tested for saturation -- so
+      saturation is computed from the true float array instead, and always
+      comes back not-assessable. float_display_scale records how the bridge
+      was built (see bridge_float_to_uint16). bridged_uint16 is returned so
+      the caller can derive default display levels from it without a
+      second, redundant bridge computation.
+    """
+    if bit_depth == 32:
+        arr, source_dtype = load_tiff_source(dest_path)
+        finite = arr[np.isfinite(arr)]
+        max_value = float(finite.max()) if finite.size else 0.0
+        saturation = SaturationStats(
+            max_value=max_value,
+            total_pixels=int(arr.size),
+            assessable=False,
+        )
+        bridged, scale_info = bridge_float_to_uint16(arr, source_dtype)
+        return saturation, scale_info, bridged
+
+    saturation = compute_saturation_stats(load_image_as_uint16(dest_path), bit_depth)
+    return saturation, None, None
 
 
 class _ProjectIOMixin:
@@ -161,12 +208,26 @@ class _ProjectIOMixin:
             return
 
         bit_depth = get_bit_depth(path)
+        levels_black = 0
         levels_white = 255 if bit_depth == 8 else 65535
 
         try:
             digest, dest = self.workspace.import_asset(path)
 
-            saturation = compute_saturation_stats(load_image_as_uint16(dest), bit_depth)
+            saturation, float_display_scale, bridged = _assess_asset_on_import(dest, bit_depth)
+
+            if bridged is not None:
+                # Float source: the default display range comes from
+                # percentiles of the bridged (display-only) array, not from
+                # a fixed 0..65535 span that has no relationship to this
+                # source's actual values. This is an adjustable display
+                # parameter, not a change to the stored data.
+                levels_black = int(round(float(np.percentile(bridged, 0.1))))
+                levels_white = int(round(float(np.percentile(bridged, 99.9))))
+                if levels_white <= levels_black:
+                    levels_white = levels_black + 1
+
+            licor_meta = parse_licor_metadata(dest)
 
             self.current_project.assets[digest] = AssetEntry(
                 sha256=digest,
@@ -174,6 +235,8 @@ class _ProjectIOMixin:
                 original_source_path=str(path),
                 stored_preview_path=None,
                 saturation=saturation,
+                float_display_scale=float_display_scale,
+                acquisition_metadata=(licor_meta or None),
             )
             self.log_operation(
                 "saturation_assessed",
@@ -212,7 +275,7 @@ class _ProjectIOMixin:
                     "overlay_alpha": 0.35,
                     "overlay_visible": True,
                     "rotation_deg": 0.0,
-                    "levels_black": 0,
+                    "levels_black": levels_black,
                     "levels_white": levels_white,
                     "levels_gamma": 1.0,
                 },
@@ -296,11 +359,28 @@ class _ProjectIOMixin:
                     ch.display.levels_white = 255
 
             for ch in channels:
+                # acq_meta already carries LI-COR tags merged in by
+                # import_nir_blot_typhoon() (parse_licor_metadata, gated on
+                # the Make tag) alongside any Typhoon .inf sidecar data.
                 acq_meta_val = acq_meta.get(ch.asset_sha256) or None
                 if ch.asset_sha256 not in self.current_project.assets:
                     fp, dest = imported_assets[ch.asset_sha256]
                     ch_bit_depth = get_bit_depth(str(fp))
-                    saturation = compute_saturation_stats(load_image_as_uint16(dest), ch_bit_depth)
+                    saturation, float_display_scale, bridged = _assess_asset_on_import(
+                        dest, ch_bit_depth,
+                    )
+
+                    if bridged is not None:
+                        # Float channel: per-channel default display range
+                        # from percentiles of this channel's own bridged
+                        # array — the blot-level bit_depth==8 branch above
+                        # only ever covers the uint8 case, per channel.
+                        ch_black = int(round(float(np.percentile(bridged, 0.1))))
+                        ch_white = int(round(float(np.percentile(bridged, 99.9))))
+                        if ch_white <= ch_black:
+                            ch_white = ch_black + 1
+                        ch.display.levels_black = ch_black
+                        ch.display.levels_white = ch_white
 
                     self.current_project.assets[ch.asset_sha256] = AssetEntry(
                         sha256=ch.asset_sha256,
@@ -309,6 +389,7 @@ class _ProjectIOMixin:
                         stored_preview_path=None,
                         acquisition_metadata=acq_meta_val,
                         saturation=saturation,
+                        float_display_scale=float_display_scale,
                     )
                     self.log_operation(
                         "saturation_assessed",

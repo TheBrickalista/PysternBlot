@@ -92,7 +92,34 @@ jobs:
             --noconfirm `
             --icon "build/pysternblot.ico" `
             --add-data "pysternblot/resources;pysternblot/resources" `
+            --collect-data certifi `
+            --copy-metadata pysternblot `
             launcher.py
+
+      - name: Selfcheck built exe
+        run: |
+          # The exe is a GUI-subsystem (no console) build: run it via
+          # Start-Process -Wait so the shell waits, and read the result file.
+          $result = Join-Path $PWD "selfcheck-result.txt"
+          if (Test-Path $result) { Remove-Item $result }
+          $p = Start-Process -FilePath (Join-Path $PWD "dist\PysternBlot.exe") `
+            -ArgumentList "--selfcheck", "--selfcheck-out", $result `
+            -Wait -PassThru
+          $code = $p.ExitCode
+          if (Test-Path $result) {
+            Get-Content $result
+          } else {
+            Write-Host "::error::selfcheck wrote no result file (exit $code)"
+            exit 1
+          }
+          if ($code -eq 0) {
+            Write-Host "selfcheck passed"
+          } elseif ($code -eq 2) {
+            Write-Host "::warning::selfcheck: GitHub rate-limited the request (HTTP 403/429) after a successful TLS handshake. TLS is fine; not failing the build."
+          } else {
+            Write-Host "::error::selfcheck failed (exit $code). The packaged app cannot complete the update check; see the output above."
+            exit 1
+          }
 
       - name: Set version tag
         id: version

@@ -6,6 +6,64 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.1] — Unreleased (TODO: release date)
+
+### Added
+- **LI-COR Odyssey CLx / Image Studio float16 TIFF import.** These files (float16 samples, tiled,
+  with a reduced-resolution pyramid) previously failed to import. Both "Import blot" and NIR
+  import now share one reader that always takes the full-resolution image, never a pyramid
+  level.
+- **Proportional display mapping for float images.** Float data is shown through a linear
+  `value × 65535 / max` mapping (no offset, no clipping of the top end), with the applied scale
+  recorded per asset (`float_display_scale`) and the initial display levels set from the
+  0.1 / 99.9 percentiles. The stored file and its SHA-256 are never touched. Any negative,
+  NaN or infinite pixels are counted, and negative values clipped for display are flagged in
+  the integrity report.
+- **Saturation is reported as "not assessable" for float sources.** A float image has no known
+  detector ceiling to test against, so no clipping claim is made either way. This is distinct
+  from "not assessed" (assets imported by earlier versions). The integrity report also records
+  `sample_format` and `source_bits` (the file's true bits per sample).
+- **LI-COR channel and acquisition metadata.** Channel, instrument model, software, serial
+  number, acquisition time and pixel size are read from the TIFF tags, for float16 files and
+  for older uint16 Odyssey exports alike, and appear in the integrity report. The channel is
+  shown in the NIR channel selector (e.g. "Ch1 — 700 channel"); Typhoon labels are unchanged.
+
+### Changed
+- **Update checker distinguishes three outcomes:** up to date, update available, and check
+  failed. A failure is classified (`tls_certificate`, `network`, `http`, `bad_response`),
+  shown in plain language with the technical detail available, and is never reported as "you
+  are running the latest release". Startup checks stay silent for offline and rate-limited
+  cases and show a non-blocking notice for the rest.
+- **macOS and Windows builds bundle CA certificates (`certifi`) and the package metadata.**
+  `certifi` is now a direct dependency, and TLS verification uses its CA bundle explicitly.
+- **New `--selfcheck` command-line flag** (`--selfcheck-out FILE` writes the result to a
+  file). It checks the version lookup and the CA bundle and makes one real request to GitHub,
+  without opening a window. CI now runs it on the built macOS and Windows apps, and a failure
+  fails the build.
+- The About tab's citation block no longer carries the placeholder note "DOI will be updated
+  after first Zenodo release". The DOI shown is the Zenodo concept DOI, which always resolves to
+  the latest version.
+- `PYSTERNBLOT_FAKE_VERSION` overrides the version used by the update check only, for testing
+  packaged builds. It does not affect About, provenance or project files.
+
+### Fixed
+- **Update notifications never reached macOS bundle users.** In the 1.1.0 and 1.2.0 macOS
+  builds the update check could not verify GitHub's certificate (no CA bundle was packaged),
+  and the resulting error was swallowed and shown as "up to date".
+
+### Notice
+- **If you use the macOS app from 1.1.0 or 1.2.0, you were never notified of new releases
+  because of the bug above. Please download 1.2.1 manually from the releases page; automatic
+  notifications work from 1.2.1 onward.**
+
+### Compatibility
+Projects containing only 8/16-bit images open in 1.2.0, which ignores the new fields; re-saving
+them in 1.2.0 drops those fields (e.g. the LI-COR channel label of older Odyssey exports).
+Projects and `.pbarchive` files containing a float (LI-COR Image Studio) image require 1.2.1 or
+later.
+
+---
+
 ## [1.2.0] — 2026-09-07
 
 This release collects five stages of provenance and security work: a hash-chained operation

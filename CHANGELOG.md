@@ -6,6 +6,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+CI only — no functional or version change.
+
+### Fixed
+- **`publish.yml`'s "Run tests" job could hang indefinitely.** A `pytest.mark.parametrize` case
+  in `tests/test_update_check.py` (an oversized-response test) passed a ~1 MB `bytes` literal
+  with no explicit `id`; pytest fell back to embedding the raw content, producing a test node ID
+  over 1,000,000 characters on a single line. The test itself ran in under a second locally —
+  the hang was GitHub Actions' log processing choking on that one line. The case now has an
+  explicit `id="oversize"`.
+- Added a regression test (`tests/test_node_id_length.py`) that collects the suite and fails if
+  any node ID exceeds 300 characters, so another unlabeled parametrize value can't reintroduce
+  this.
+- Added `pytest-timeout` (`--timeout=120` in `pyproject.toml`) so a genuine hang in any test
+  fails fast with a traceback instead of exhausting the job's time budget silently.
+- Added `timeout-minutes: 15` to the test jobs in `pytest.yml` and `publish.yml`, as a backstop
+  independent of pytest's own timeout.
+
+---
+
 ## [1.2.1] — Unreleased (TODO: release date)
 
 ### Added

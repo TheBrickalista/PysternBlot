@@ -35,6 +35,10 @@ from .marker_set_mixin import _MarkerSetMixin
 from .overlay_ladder_mixin import _OverlayLadderMixin
 from .export_mixin import _ExportMixin
 from .update_worker import UpdateCheckWorker
+from ..update_check import (
+    OUTCOME_UPDATE_AVAILABLE, OUTCOME_UP_TO_DATE, describe_failure,
+    should_show_auto_failure,
+)
 from . import update_prefs
 
 try:
@@ -1112,19 +1116,72 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._update_pool.start(worker)
 
     def _on_auto_update_result(self, result):
-        # Silent unless there's an update.
-        if result:
-            self._show_update_banner(result)
+        # Silent when up to date. Failures always reach the log; only ones
+        # that will not fix themselves (TLS, bad response, non-rate-limit
+        # HTTP) also get a non-modal line.
+        if result is None:
+            return
+        if result.outcome == OUTCOME_UPDATE_AVAILABLE:
+            self._show_update_banner(result.update_info())
+        elif result.failed and should_show_auto_failure(result):
+            self._show_update_failure_banner(result)
 
     def _on_manual_update_result(self, result):
-        if result:
-            self._show_update_banner(result)
-        else:
+        if result is None:
+            return
+        if result.outcome == OUTCOME_UPDATE_AVAILABLE:
+            self._show_update_banner(result.update_info())
+        elif result.outcome == OUTCOME_UP_TO_DATE:
             QMessageBox.information(
                 self, "Up to date",
-                "You are running the latest published release, or no update "
-                "information is available right now."
+                f"You are running the latest published release ({result.current})."
             )
+        else:
+            box = QMessageBox(
+                QMessageBox.Warning, "Update check failed",
+                describe_failure(result), QMessageBox.Ok, self,
+            )
+            box.setDetailedText(self._failure_details(result))
+            box.exec()
+
+    @staticmethod
+    def _failure_details(result) -> str:
+        lines = [f"Category: {result.category}"]
+        if result.status_code is not None:
+            lines.append(f"HTTP status: {result.status_code}")
+        if result.detail:
+            lines.append(f"Error: {result.detail}")
+        return "\n".join(lines)
+
+    def _show_update_failure_banner(self, result):
+        self._dismiss_update_banner()
+        banner = QFrame()
+        banner.setStyleSheet(
+            "QFrame { background: #f3f4f6; border: 1px solid #d1d5db; "
+            "border-radius: 6px; } QLabel { border: none; }"
+        )
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(12, 8, 12, 8)
+        msg = QLabel(describe_failure(result))
+        msg.setWordWrap(True)
+        row.addWidget(msg, 1)
+        details_btn = QPushButton("Details")
+
+        def _show_details():
+            box = QMessageBox(
+                QMessageBox.Information, "Update check details",
+                describe_failure(result), QMessageBox.Ok, self,
+            )
+            box.setDetailedText(self._failure_details(result))
+            box.exec()
+
+        details_btn.clicked.connect(_show_details)
+        row.addWidget(details_btn)
+        dismiss = QPushButton("Dismiss")
+        dismiss.clicked.connect(self._dismiss_update_banner)
+        row.addWidget(dismiss)
+        self._home_root_layout.insertWidget(0, banner)
+        self._update_banner = banner
 
     def _show_update_banner(self, result: dict):
         # Remove any existing banner first (idempotent).

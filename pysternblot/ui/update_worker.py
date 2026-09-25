@@ -9,11 +9,17 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from ..update_check import check_for_update
+import logging
+
+from ..update_check import (
+    CATEGORY_UNEXPECTED, OUTCOME_CHECK_FAILED, CheckResult, check_for_update,
+)
+
+_log = logging.getLogger("pysternblot.update")
 
 
 class _UpdateSignals(QObject):
-    finished = Signal(object)  # emits dict | None
+    finished = Signal(object)  # emits CheckResult | None (None only if disabled)
 
 
 class UpdateCheckWorker(QRunnable):
@@ -27,6 +33,10 @@ class UpdateCheckWorker(QRunnable):
     def run(self):
         try:
             result = check_for_update(self.enabled, self.timeout)
-        except Exception:
-            result = None
+        except Exception as exc:  # a bug in the check: report it, never look "up to date"
+            _log.exception("Update check crashed")
+            result = CheckResult(
+                outcome=OUTCOME_CHECK_FAILED, category=CATEGORY_UNEXPECTED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
         self.signals.finished.emit(result)

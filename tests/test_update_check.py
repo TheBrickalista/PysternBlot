@@ -226,7 +226,10 @@ def test_httperror_is_not_misclassified_as_network():
     json.dumps({"tag_name": None}).encode(),
     json.dumps({"tag_name": "nightly"}).encode(),
     b"\xff\xfe not utf-8",
-    b"x" * (update_check.MAX_RESPONSE_BYTES + 10),
+    # Explicit id: pytest can't make a short id from a ~1 MB bytes value on
+    # its own, and embedding the raw content produced a >1,000,000-character
+    # node ID that hung a GitHub Actions run (see CHANGELOG "Unreleased").
+    pytest.param(b"x" * (update_check.MAX_RESPONSE_BYTES + 10), id="oversize"),
 ])
 def test_bad_response(body):
     e = _fetch_error(return_value=_FakeResponse(body))

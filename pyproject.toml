@@ -47,6 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "pytest-timeout>=2.3",
   "build>=1.0",
   "pip-audit>=2.7"
 ]
@@ -70,3 +71,11 @@ required-version = "==0.11.31"
 constraint-dependencies = [
   "pip>=26.2"
 ]
+
+[tool.pytest.ini_options]
+# A per-test cap so a real hang fails fast with a traceback instead of
+# running out the CI job's timeout-minutes. 120s is generous headroom over
+# the slowest individual test locally (well under 1s); it exists to catch
+# unexpected blocking (e.g. a stray real network call), not to bound normal
+# runtime.
+addopts = "--timeout=120"

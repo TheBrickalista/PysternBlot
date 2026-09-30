@@ -1,0 +1,22 @@
+# Minimum supported versions, tested by the `minimum` job in pytest.yml on
+# Python 3.10 (the lowest requires-python). Maintained by hand.
+#
+# Section 1 must match the floors in pyproject.toml [project].dependencies
+# exactly (tests/test_dependency_floors.py). Section 2 is the test tooling
+# the suite needs, at the dev-extra floors.
+#
+# Regenerate the hashed lock with:
+#   uv pip compile ci/requirements-min.in --generate-hashes --universal --python-version 3.10 -o ci/requirements-min.txt
+
+# --- Runtime floors (== pyproject.toml) ---
+PySide6==6.11.2
+pydantic==2.6
+numpy==1.24
+Pillow==12.3.0
+tifffile==2023.1.23
+certifi==2024.7.4
+
+# --- Test tooling ---
+pytest==9.0.3
+pytest-timeout==2.3.1
+pyyaml==6.0.1

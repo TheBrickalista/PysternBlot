@@ -22,6 +22,18 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   bundle identifier — confirmed by inspecting the actual preferences file path) and the app
   requests no privacy-gated (TCC) permissions, so no user data or preferences are affected by
   this change.
+- **Raised minimum dependency versions for pip installs.** `certifi>=2024.7.4` (CVE-2024-39689),
+  `Pillow>=12.3.0` (CVE-2023-50447, CVE-2024-28219, and 17 advisories fixed between 12.1.1 and
+  12.3.0, including CVE-2026-25990, an out-of-bounds write in PSD loading), and
+  `tifffile>=2023.1.23` (the previous floor, 2023.1.0, was never released). A new CI job tests
+  the suite at exactly these floors on Python 3.10. The macOS app, Windows executable and
+  `uv.lock` already used these versions or newer, so they are unaffected.
+- **The macOS app now declares its real minimum: macOS 15 or later, Apple Silicon only**
+  (`LSMinimumSystemVersion = 15.0` in `Info.plist`; previously the key was absent). The bundled
+  PySide6 6.11.2 binding modules are built for macOS 15.0, so older systems were never a
+  supported target; macOS now says so up front instead of the app failing at launch. Intel Macs
+  and older macOS versions can install with pip. The build now fails if any bundled binary
+  requires a newer macOS than the declared minimum.
 
 CI-only entries below — no functional or version change.
 
@@ -42,6 +54,14 @@ CI-only entries below — no functional or version change.
   - Dependabot now updates `uv.lock` (lockfile-only) instead of scanning with the `pip`
     ecosystem, which never touched the lock; `docs/requirements.txt` keeps its own entry; all
     entries have a 14-day cooldown.
+  - A `minimum` job installs the declared floors on Python 3.10 from a hash-pinned lock
+    (`ci/requirements-min.txt`) and runs the suite, then pip-audits that lock from Python 3.10
+    (so 3.10-only dependencies are covered).
+    `tests/test_dependency_floors.py` keeps the floors and the pins equal.
+  - A `lint` job runs pyflakes; the existing warnings (unused imports and variables) are fixed.
+  - Runner images are pinned (`ubuntu-24.04`, `macos-26`; Windows was already
+    `windows-2025-vs2026`) so an OS upgrade is a deliberate change; the workflow test rejects
+    any `*-latest` label.
 
 ### Fixed
 - **`publish.yml`'s "Run tests" job could hang indefinitely.** A `pytest.mark.parametrize` case
@@ -53,7 +73,7 @@ CI-only entries below — no functional or version change.
 - Added a regression test (`tests/test_node_id_length.py`) that collects the suite and fails if
   any node ID exceeds 300 characters, so another unlabeled parametrize value can't reintroduce
   this.
-- Added `pytest-timeout` (`--timeout=120` in `pyproject.toml`) so a genuine hang in any test
+- Added `pytest-timeout` (`timeout = 120` in `pyproject.toml`) so a genuine hang in any test
   fails fast with a traceback instead of exhausting the job's time budget silently.
 - Added `timeout-minutes: 15` to the test jobs in `pytest.yml` and `publish.yml`, as a backstop
   independent of pytest's own timeout.

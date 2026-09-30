@@ -79,7 +79,9 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 - PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
-- Pillow ≥ 10.0
+- Pillow ≥ 12.3.0
+- tifffile ≥ 2023.1.23
+- certifi ≥ 2024.7.4
 
 > **Note:** requirements only apply to the source/PyPI install methods. Standalone ports bundle everything.
 
@@ -112,6 +114,8 @@ No Python required. Download the latest build for your platform directly from th
 
 - **macOS:** download `PysternBlot-vX.X.X-macOS.zip`, unzip and open `PysternBlot.app`
 - **Windows:** download `PysternBlot-vX.X.X-Windows.exe` and run it
+
+macOS app: macOS 15 or later, Apple Silicon only. Intel Macs and older macOS: install with pip.
 
 ### System requirements (Linux)
 

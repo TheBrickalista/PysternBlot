@@ -21,8 +21,6 @@ import json
 import zipfile
 from pathlib import Path
 
-import pytest
-
 from pysternblot.logchain import verify_log_chain
 from pysternblot.models import AssetEntry, Blot, Project
 from pysternblot.storage import Workspace

@@ -35,23 +35,25 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Bio-Informatics",
   "Topic :: Scientific/Engineering :: Visualization"
 ]
+# Floors are raised by hand only and must equal the == pins in
+# ci/requirements-min.in (enforced by tests/test_dependency_floors.py).
 dependencies = [
   "PySide6>=6.11.2",
   "pydantic>=2.6",
   "numpy>=1.24",
-  "Pillow>=10.0",
-  "tifffile>=2023.1.0",
-  "certifi>=2024.2.2",
+  "Pillow>=12.3.0",
+  "tifffile>=2023.1.23",
+  "certifi>=2024.7.4",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0",
-  "pytest-timeout>=2.3",
-  "build>=1.0",
+  "pytest>=9.0.3",
+  "pytest-timeout>=2.3.1",
   "pip-audit>=2.7",
   "twine>=6.1",
-  "pyyaml>=6.0.1"
+  "pyyaml>=6.0.1",
+  "pyflakes>=3.2"
 ]
 build = [
   "pyinstaller>=6.21"
@@ -80,4 +82,4 @@ constraint-dependencies = [
 # the slowest individual test locally (well under 1s); it exists to catch
 # unexpected blocking (e.g. a stray real network call), not to bound normal
 # runtime.
-addopts = "--timeout=120"
+timeout = 120

@@ -25,9 +25,20 @@ permissions:
 jobs:
   build-macos:
     name: Build macOS .app
-    runs-on: macos-latest
+    # Pinned (was macos-latest, i.e. macOS 26 arm64). The runner's macOS
+    # version affects which wheels uv picks and so the app's minimum macOS
+    # (e.g. numpy's macosx_14_0 wheel on runners >= 14). The .app is
+    # arm64-only.
+    runs-on: macos-26
     permissions:
       contents: write
+    env:
+      # Written to Info.plist as LSMinimumSystemVersion. Must be >= the
+      # highest minimum of any bundled binary; "Verify archived bundle" fails
+      # the build otherwise. 15.0 comes from the PySide6 6.11.2 / shiboken6
+      # binding modules (their wheels are tagged macosx_13_0, but the
+      # binaries are built for 15.0). Keep README.md in step.
+      MACOS_MIN_VERSION: "15.0"
 
     steps:
       - name: Checkout code
@@ -100,10 +111,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $V" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $V" "$PLIST"
-          echo "Info.plist version set to $V"
+          /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOS_MIN_VERSION" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $MACOS_MIN_VERSION" "$PLIST"
+          echo "Info.plist version set to $V, minimum macOS $MACOS_MIN_VERSION"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$PLIST"
 
       - name: Import signing certificate
         env:
@@ -237,6 +251,43 @@ jobs:
           if [ "$ACTUAL_ID" != "$EXPECTED_ID" ]; then
             echo "::error::CFBundleIdentifier ($ACTUAL_ID) does not match the expected identifier ($EXPECTED_ID)."
             FAIL=1
+          fi
+
+          echo "--- Minimum macOS check (LSMinimumSystemVersion vs bundled binaries) ---"
+          DECLARED_MIN=$(plutil -extract LSMinimumSystemVersion raw "$PLIST" 2>/dev/null || echo "")
+          echo "LSMinimumSystemVersion=$DECLARED_MIN (expected $MACOS_MIN_VERSION)"
+          if [ "$DECLARED_MIN" != "$MACOS_MIN_VERSION" ]; then
+            echo "::error::LSMinimumSystemVersion ($DECLARED_MIN) does not match MACOS_MIN_VERSION ($MACOS_MIN_VERSION)."
+            FAIL=1
+          fi
+          # Highest minimum macOS (LC_BUILD_VERSION minos, or the older
+          # LC_VERSION_MIN_MACOSX version) over every Mach-O file and slice.
+          MINOS_LIST="$RUNNER_TEMP/minos.txt"
+          : > "$MINOS_LIST"
+          while IFS= read -r -d '' F; do
+            case "$(file -b "$F")" in
+              *Mach-O*)
+                xcrun vtool -show-build "$F" 2>/dev/null \
+                  | awk -v f="${F#"$APP"/}" '
+                      $1 == "cmd" { cmd = $2 }
+                      $1 == "minos" && cmd == "LC_BUILD_VERSION" { print $2, f }
+                      $1 == "version" && cmd == "LC_VERSION_MIN_MACOSX" { print $2, f }' \
+                  >> "$MINOS_LIST" ;;
+            esac
+          done < <(find "$APP" -type f -print0)
+          MACHO_COUNT=$(cut -d' ' -f2- "$MINOS_LIST" | sort -u | wc -l | tr -d ' ')
+          if [ "$MACHO_COUNT" -eq 0 ]; then
+            echo "::error::No Mach-O minimum-version information found in the bundle."
+            FAIL=1
+          else
+            REQUIRED_MIN=$(cut -d' ' -f1 "$MINOS_LIST" | sort -V | tail -1)
+            echo "Highest minimum macOS across $MACHO_COUNT Mach-O files: $REQUIRED_MIN"
+            awk -v m="$REQUIRED_MIN" '$1 == m' "$MINOS_LIST" | sort -u -k2 | head -5 | sed 's/^/  /'
+            LOWER=$(printf '%s\n%s\n' "$DECLARED_MIN" "$REQUIRED_MIN" | sort -V | head -1)
+            if [ -z "$DECLARED_MIN" ] || { [ "$LOWER" = "$DECLARED_MIN" ] && [ "$DECLARED_MIN" != "$REQUIRED_MIN" ]; }; then
+              echo "::error::LSMinimumSystemVersion ($DECLARED_MIN) is lower than the bundle's highest binary minimum ($REQUIRED_MIN). Raise MACOS_MIN_VERSION in build-macos.yml (and the README) or pin the dependency that raised it."
+              FAIL=1
+            fi
           fi
           if [ "$FAIL" -ne 0 ]; then
             exit 1

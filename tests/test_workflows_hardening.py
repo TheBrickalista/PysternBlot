@@ -107,6 +107,18 @@ def test_actions_pinned_to_full_sha(workflow):
         assert SHA_PINNED.match(ref), f"{workflow.name}: {ref!r} is not pinned to a 40-char SHA"
 
 
+def test_runner_images_pinned(workflow):
+    """A *-latest label moves to a new OS under us; upgrades must be deliberate."""
+    for job_id, job in _jobs(workflow):
+        labels = job.get("runs-on")
+        if labels is None:  # reusable-workflow call; the callee is checked
+            continue
+        for label in [labels] if isinstance(labels, str) else labels:
+            assert not str(label).endswith("-latest"), (
+                f"{workflow.name}:{job_id} runs-on {label!r}; pin a versioned image"
+            )
+
+
 def test_no_event_expressions_in_run_blocks(workflow):
     """Event data (tag names, titles, ...) must reach shell only through env."""
     for job_id, step in _steps(workflow):

@@ -16,28 +16,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 import zipfile
 
-from pysternblot.storage import Workspace, sha256_file, ImportArchiveResult, parse_typhoon_tag270
+from pysternblot.storage import Workspace, sha256_file, parse_typhoon_tag270
 from pysternblot.models import (
     Blot,
     BlotChannel,
-    CalibrationPoint,
-    ConditionRow,
-    Crop,
-    Group,
-    HeaderBlock,
-    Ladder,
-    LaneLayout,
-    Layout,
-    Panel,
-    ProjectMeta,
-    ProteinLabel,
     Project,
 )
 
@@ -786,7 +775,7 @@ def _make_uint16_tiff(path, width: int = 10, height: int = 8) -> None:
 
 def _minimal_blot_model(blot_id: str, sha: str) -> "Blot":
     from pysternblot.models import (
-        Blot, Crop, Ladder, CalibrationPoint, ProteinLabel, CropTemplate,
+        Blot, Crop, Ladder, CalibrationPoint, ProteinLabel,
     )
     return Blot(
         id=blot_id,
@@ -886,7 +875,7 @@ class TestEnsureBlotCropPreviewNIR:
         asset_dir.mkdir(parents=True, exist_ok=True)
         _make_uint16_tiff(asset_dir / "original.tif")
 
-        from pysternblot.models import CropTemplate, Panel, LaneLayout, HeaderBlock, Group, ConditionRow, Layout, LegendSettings
+        from pysternblot.models import CropTemplate
         blot = _minimal_blot_model("blot_01", sha)
 
         class _FakePanel:
@@ -909,7 +898,7 @@ class TestEnsureBlotCropPreviewNIR:
             d.mkdir(parents=True, exist_ok=True)
             _make_uint16_tiff(d / "original.tif")
 
-        from pysternblot.models import BlotChannel, DisplaySettings, ProteinLabel, CropTemplate
+        from pysternblot.models import BlotChannel, CropTemplate
 
         blot = _minimal_blot_model("blot_nir", sha0)
         blot.modality = "nir_fluorescence"

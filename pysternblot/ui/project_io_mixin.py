@@ -178,7 +178,7 @@ class _ProjectIOMixin:
                 "You may proceed, but this limitation will be recorded in the "
                 "integrity report and flagged on export."
             )
-            proceed_btn = msg.addButton("I understand, proceed", QMessageBox.AcceptRole)
+            msg.addButton("I understand, proceed", QMessageBox.AcceptRole)
             cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
             msg.exec()
             if msg.clickedButton() is cancel_btn:

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 
 from pysternblot.image_utils import compute_saturation_stats, save_uint16_tiff
 from pysternblot.logchain import verify_log_chain
-from pysternblot.models import AssetEntry, SaturationStats
+from pysternblot.models import AssetEntry
 from pysternblot.storage import Workspace
 from pysternblot.ui import project_io_mixin as project_io_mixin_module
 from pysternblot.ui.main_window import MainWindow

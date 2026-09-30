@@ -29,7 +29,6 @@ from pysternblot.models import (
     LaneLayout,
     Layout,
     LegendRow,
-    LegendSettings,
     MarkerBand,
     OperationLogEntry,
     OverlayLadder,
@@ -37,7 +36,6 @@ from pysternblot.models import (
     ProjectMeta,
     ProteinLabel,
     Project,
-    Style,
 )
 
 

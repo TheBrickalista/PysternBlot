@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import sys
 import hashlib
-import tempfile
 from pathlib import Path
 
 import numpy as np

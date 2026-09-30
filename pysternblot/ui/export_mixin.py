@@ -152,7 +152,7 @@ class _ExportMixin:
             "This warning is recorded in the integrity report."
         )
         proceed_btn = msg.addButton("Proceed with export", QMessageBox.AcceptRole)
-        cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.addButton("Cancel", QMessageBox.RejectRole)
         msg.exec()
         return msg.clickedButton() is proceed_btn
 

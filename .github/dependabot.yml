@@ -14,10 +14,17 @@ updates:
           - "*"
     commit-message:
       prefix: "ci"
+    # github-actions supports default-days only (no semver-*-days).
+    cooldown:
+      default-days: 14
 
-  # Keep Python dependencies up to date
-  - package-ecosystem: "pip"
+  # Keep uv.lock up to date. lockfile-only: the pyproject.toml floors are
+  # raised by hand only. ci/ holds hand-maintained hashed pins.
+  - package-ecosystem: "uv"
     directory: "/"
+    versioning-strategy: "lockfile-only"
+    exclude-paths:
+      - "ci/**"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -25,6 +32,26 @@ updates:
       timezone: "Europe/Paris"
     groups:
       python-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps"
+    cooldown:
+      default-days: 14
+      semver-major-days: 14
+      semver-minor-days: 14
+      semver-patch-days: 14
+
+  # Read the Docs build requirements (docs/requirements.txt)
+  - package-ecosystem: "pip"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Paris"
+    groups:
+      docs-dependencies:
         patterns:
           - "*"
     commit-message:

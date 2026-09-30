@@ -1,0 +1,4 @@
+# Build backend for `uv build` in publish.yml, pinned by hash.
+# Keep in step with the setuptools version in uv.lock. Regenerate with:
+#   uv pip compile ci/build-constraints.in --generate-hashes --universal -o ci/build-constraints.txt
+setuptools==83.0.0

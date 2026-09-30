@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     name: Run tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       QT_QPA_PLATFORM: offscreen
@@ -75,7 +75,7 @@ jobs:
   build:
     name: Build package
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,7 +137,7 @@ jobs:
     name: Publish to PyPI
     needs: [build, build-macos, build-windows]
     if: github.event_name == 'release'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write

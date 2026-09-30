@@ -50,7 +50,7 @@ from pysternblot.integrity import (
     build_detailed_integrity_report,
     write_integrity_html,
 )
-from pysternblot.models import AssetEntry, SaturationStats
+from pysternblot.models import SaturationStats
 from pysternblot.storage import Workspace, parse_licor_metadata, sha256_file
 from pysternblot.ui import project_io_mixin as project_io_mixin_module
 from pysternblot.ui.main_window import MainWindow

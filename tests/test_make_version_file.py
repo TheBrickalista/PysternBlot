@@ -141,7 +141,7 @@ class TestMain:
         assert "::error::" in capsys.readouterr().err
 
     def test_defaults_to_pyproject_toml_and_build_version_file(self, tmp_path, monkeypatch):
-        pyproject = _write_pyproject(tmp_path, "4.5.6")
+        _write_pyproject(tmp_path, "4.5.6")
         monkeypatch.chdir(tmp_path)
         assert mvf.main([]) == 0
         assert (tmp_path / "build" / "version_file.txt").exists()

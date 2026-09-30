@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       QT_QPA_PLATFORM: offscreen
@@ -53,8 +53,85 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v
 
+  # The declared floors, on the lowest supported Python. Installed from a
+  # hash-pinned lock (ci/requirements-min.txt), then the package itself with
+  # --no-deps so nothing else is resolved. --no-config: [tool.uv]
+  # constraint-dependencies (pip>=26.2) is not a == pin and would be
+  # rejected under --require-hashes.
+  minimum:
+    name: Tests (minimum versions, Python 3.10)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Qt system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libfreetype6 libx11-xcb1 libxcb-cursor0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.31"
+
+      - name: Install minimum versions
+        run: |
+          uv venv --python 3.10
+          uv pip install --no-config --require-hashes -r ci/requirements-min.txt
+          uv pip install --no-config --no-deps -e .
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest tests/ -v
+
+      # Audited from Python 3.10 so the lock's `python_full_version < '3.11'`
+      # entries (tomli, exceptiongroup) are included. pip-audit itself comes
+      # from uv.lock (dev extra), in its own environment so it cannot touch
+      # the minimum-versions .venv. colorama (Windows-only, via pytest) is
+      # not audited on this Linux runner.
+      - name: Run pip-audit on the minimum-versions lock
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv-audit
+        run: uv run --locked --extra dev --python 3.10 pip-audit -r ci/requirements-min.txt --require-hashes --disable-pip
+
+  lint:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.31"
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run pyflakes
+        run: uv run pyflakes pysternblot tests scripts launcher.py
+
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code

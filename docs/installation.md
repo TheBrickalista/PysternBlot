@@ -23,6 +23,9 @@ from the [Releases page](https://github.com/TheBrickalista/PysternBlot/releases/
 
 **Windows** — download `PysternBlot-vX.X.X-Windows.exe` and run it.
 
+macOS app: macOS 15 or later, Apple Silicon only. Intel Macs and older macOS:
+install with pip (Option 2).
+
 ### First launch
 
 **macOS** — the application is code-signed with an Apple Developer ID
@@ -93,7 +96,9 @@ standalone builds bundle everything, including Python itself.
 - PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
-- Pillow ≥ 10.0
+- Pillow ≥ 12.3.0
+- tifffile ≥ 2023.1.23
+- certifi ≥ 2024.7.4
 
 Dependencies are installed automatically by `pip`; you do not need to install
 them by hand.

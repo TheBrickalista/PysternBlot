@@ -13,7 +13,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QPen
 from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent
 
 from pysternblot.ui.crop_rect_item import CropRectItem

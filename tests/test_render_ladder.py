@@ -14,7 +14,6 @@ from pysternblot.models import (
     BlotChannel,
     CalibrationPoint,
     Crop,
-    DisplaySettings,
     Ladder,
     LadderBandAssignment,
     MarkerBand,
@@ -279,7 +278,6 @@ class TestLadderSide:
         import pytest
         LABEL_GAP  =  4.0
         tick_x1    = 375.0
-        br_width   =  80.0  # noqa: F841 — kept for symmetry with left test
 
         label_x = tick_x1 + LABEL_GAP
         assert label_x == pytest.approx(379.0)

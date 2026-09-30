@@ -25,6 +25,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 CI-only entries below — no functional or version change.
 
+### Security
+- **CI and release-pipeline hardening; no change to the application.**
+  - `publish.yml` now installs only from `uv.lock` (`uv sync --locked`), mirroring `pytest.yml`'s
+    test job, and builds with `uv build` against a hash-pinned build backend
+    (`ci/build-constraints.txt`), followed by `twine check`. A release fails if its tag is not
+    `v` + the `pyproject.toml` version.
+  - The macOS and Windows app builds are now called from `publish.yml` after its tests pass
+    (they no longer run independently on release), so signed binaries are never attached to a
+    release whose tests fail; the PyPI upload waits for both. All three can still be run by
+    hand (`workflow_dispatch`); a manual `publish.yml` run skips the PyPI upload.
+  - Every workflow defaults to a read-only token (`contents: read`), with job-level widenings
+    only where needed; checkouts no longer persist credentials; release tags reach shell
+    scripts only through environment variables. `tests/test_workflows_hardening.py` enforces
+    these rules and full-SHA pinning of every action.
+  - Dependabot now updates `uv.lock` (lockfile-only) instead of scanning with the `pip`
+    ecosystem, which never touched the lock; `docs/requirements.txt` keeps its own entry; all
+    entries have a 14-day cooldown.
+
 ### Fixed
 - **`publish.yml`'s "Run tests" job could hang indefinitely.** A `pytest.mark.parametrize` case
   in `tests/test_update_check.py` (an oversized-response test) passed a ~1 MB `bytes` literal

@@ -1,9 +1,26 @@
 name: Build macOS App
 
 on:
-  release:
-    types: [published]
+  # Release builds are called from publish.yml after its tests pass, so signed
+  # binaries are never attached to a release whose tests fail.
+  workflow_call:
+    secrets:
+      MACOS_CERTIFICATE:
+        required: true
+      MACOS_CERTIFICATE_PWD:
+        required: true
+      KEYCHAIN_PWD:
+        required: true
+      APPLE_API_KEY:
+        required: true
+      APPLE_API_KEY_ID:
+        required: true
+      APPLE_API_ISSUER_ID:
+        required: true
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-macos:
@@ -15,12 +32,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: "pip"
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -138,23 +156,30 @@ jobs:
 
       - name: Set version tag
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" == "release" ]; then
+            echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=manual-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+            echo "tag=manual-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Zip the .app
+        env:
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             dist/PysternBlot.app \
-            "PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+            "PysternBlot-${VERSION_TAG}-macOS.zip"
 
       - name: Verify archived bundle
+        env:
+          VERSION_TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          ARCHIVE="PysternBlot-${{ steps.version.outputs.tag }}-macOS.zip"
+          ARCHIVE="PysternBlot-${VERSION_TAG}-macOS.zip"
           VERIFY_DIR="$RUNNER_TEMP/verify"
           rm -rf "$VERIFY_DIR"
           mkdir -p "$VERIFY_DIR"

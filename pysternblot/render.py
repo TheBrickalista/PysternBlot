@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QFont, QPixmap, QPen, QColor
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Blot, BlotChannel, Crop, MarkerBand, Project, LegendRow, LegendZone
+from .models import BlotChannel, Crop, MarkerBand, Project, LegendRow, LegendZone
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -55,50 +55,6 @@ def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> 
     if wavelength_nm is None:
         return True
     return wavelength_nm in band.channels
-
-
-def _ladder_row_for_blot(blot: Blot, marker_sets: list) -> int:
-    """Returns the channel_index of the row that should display the ladder column.
-
-    For ECL blots: always 0 (irrelevant, there is only one row).
-    For NIR blots: the channel_index of the first channel whose marker key
-    (_marker_channel_key) matches at least one assigned band's channels list.
-    Falls back to channel_index 0 if no match is found (e.g. all bands have
-    empty channels list, meaning show on all — in that case first row is correct).
-    """
-    if not blot.is_nir():
-        return 0
-    if blot.overlay_ladder is None or not blot.overlay_ladder.bands:
-        return 0
-
-    marker_set = next(
-        (ms for ms in marker_sets if ms.id == blot.overlay_ladder.marker_set_id),
-        None,
-    )
-
-    # Collect wavelengths that are explicitly restricted via MarkerBand.channels.
-    # Bands with channels==[] are deliberately excluded — they mean "show everywhere".
-    explicit_wavelengths: set[int] = set()
-    if marker_set is not None:
-        for assignment in blot.overlay_ladder.bands:
-            preset_band = next(
-                (b for b in marker_set.bands if abs(float(b.kda) - float(assignment.kda)) < 0.001),
-                None,
-            )
-            if preset_band is not None and preset_band.channels:
-                explicit_wavelengths.update(preset_band.channels)
-
-    # All bands have channels==[] → fall back to first row (backward compatible).
-    if not explicit_wavelengths:
-        return 0
-
-    # Return the channel_index of the first channel (sorted) whose wavelength matches.
-    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-        key = _marker_channel_key(ch)
-        if key is not None and key in explicit_wavelengths:
-            return ch.channel_index
-
-    return 0
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:

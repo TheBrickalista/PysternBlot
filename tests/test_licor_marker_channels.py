@@ -7,11 +7,11 @@ LI-COR channels and per-band marker visibility.
 MarkerBand.channels is keyed on the Typhoon excitation wavelengths (685/785).
 LI-COR channels carry channel_label "700"/"800" and no wavelength_nm, so
 _marker_channel_key maps them onto those keys. These tests cover the mapping,
-the Figure render, ladder-row selection and the legend-zone export.
+the Figure render, the Original Image view and the legend-zone export.
 
 The LI-COR test blot deliberately puts the 800 channel at channel_index 0 and
-the 700 channel at channel_index 1, so "the 700 row" is never the same as the
-first-row fallback.
+the 700 channel at channel_index 1, so "the 700 row" is never simply the
+first row.
 """
 
 from __future__ import annotations
@@ -61,7 +61,6 @@ from pysternblot.models import (
 )
 from pysternblot.render import (
     _band_visible_on_channel,
-    _ladder_row_for_blot,
     _marker_channel_key,
     build_panel_scene,
     build_provenance_scene,
@@ -221,21 +220,6 @@ class TestMarkerChannelKey:
         ch = _ch(0, channel_label="700")
         _marker_channel_key(ch)
         assert ch.wavelength_nm is None
-
-
-# ===========================================================================
-# Ladder row selection
-# ===========================================================================
-
-class TestLicorLadderRow:
-
-    def test_685_band_selects_700_row(self):
-        """700 is channel_index 1 here, so the result is not the fallback 0."""
-        assert _ladder_row_for_blot(_licor_blot(), [_marker_set()]) == 1
-
-    def test_unknown_channels_fall_back_to_first_row(self):
-        blot = _licor_blot(labels=("600", "500"))
-        assert _ladder_row_for_blot(blot, [_marker_set()]) == 0
 
 
 # ===========================================================================

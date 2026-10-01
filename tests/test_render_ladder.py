@@ -2,76 +2,60 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 """
-Tests for _band_visible_on_channel and _ladder_row_for_blot in render.py.
+Overlay-ladder rendering in render.py.
 
-No Qt or display required — pure logic tests.
+  - _band_visible_on_channel: pure logic.
+  - Tick and label placement, label text and the show_in_final split between
+    the Figure (build_panel_scene) and the Original Image view
+    (build_provenance_scene): asserted on the items of real scenes built from
+    a real asset in a tmp workspace (issue #196).
+  - OverlayLadder.side model behaviour and derive_lane_groups.
 """
 
 from __future__ import annotations
 
+import os
+import sys
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsLineItem,
+    QGraphicsPixmapItem,
+    QGraphicsTextItem,
+)
+
 from pysternblot.models import (
     Blot,
-    BlotChannel,
     CalibrationPoint,
     Crop,
     Ladder,
     LadderBandAssignment,
     MarkerBand,
-    MarkerSet,
     OverlayLadder,
     ProteinLabel,
 )
-import inspect
+from pysternblot.render import (
+    _band_visible_on_channel,
+    build_panel_scene,
+    build_provenance_scene,
+    derive_lane_groups,
+)
 
-from pysternblot.render import _band_visible_on_channel, _ladder_row_for_blot, build_panel_scene, build_provenance_scene, derive_lane_groups
-
-
-def _minimal_ladder() -> Ladder:
-    return Ladder(
-        lane_index=0,
-        marker_set_id="ms1",
-        calibration_points=[
-            CalibrationPoint(y_px=50, kda=55),
-            CalibrationPoint(y_px=120, kda=36),
-        ],
-    )
+# Shared scene helpers: a real uint16 PNG asset writer and a one-blot Project
+# whose marker set labels 100 kDa "100" and 50 kDa "50".
+from test_licor_marker_channels import IMG_H, IMG_W, _project, _write_asset
 
 
-def _ecl_blot() -> Blot:
-    return Blot(
-        id="ecl_blot",
-        asset_sha256="aaa",
-        crop=Crop(x=0, y=0, w=300, h=200),
-        ladder=_minimal_ladder(),
-        protein_label=ProteinLabel(text=""),
-    )
-
-
-def _nir_blot(overlay_ladder=None) -> Blot:
-    """NIR blot with channel_index 0 = 785 nm, channel_index 1 = 685 nm."""
-    return Blot(
-        id="nir_blot",
-        asset_sha256="bbb",
-        crop=Crop(x=0, y=0, w=300, h=200),
-        ladder=_minimal_ladder(),
-        protein_label=ProteinLabel(text=""),
-        modality="nir_fluorescence",
-        channels=[
-            BlotChannel(
-                asset_sha256="ch0",
-                channel_index=0,
-                wavelength_nm=785,
-                antibody_name="Ab-800",
-            ),
-            BlotChannel(
-                asset_sha256="ch1",
-                channel_index=1,
-                wavelength_nm=685,
-                antibody_name="Ab-700",
-            ),
-        ],
-        overlay_ladder=overlay_ladder,
-    )
+@pytest.fixture(scope="session")
+def qapp():
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    return app
 
 
 class TestBandVisibleOnChannel:
@@ -102,117 +86,161 @@ class TestBandVisibleOnChannel:
         assert _band_visible_on_channel(band, 785) is True
 
 
-class TestLadderRowForBlot:
 
-    def test_ladder_row_ecl(self):
-        """ECL blot always returns channel_index 0."""
-        blot = _ecl_blot()
-        assert _ladder_row_for_blot(blot, []) == 0
 
-    def test_ladder_row_nir_no_bands(self):
-        """NIR blot with no overlay ladder returns 0."""
-        blot = _nir_blot(overlay_ladder=None)
-        assert _ladder_row_for_blot(blot, []) == 0
+# ===========================================================================
+# Overlay ladder in real scenes
+# ===========================================================================
 
-    def test_ladder_row_nir_all_blank_channels(self):
-        """NIR blot where all preset bands have channels==[] falls back to 0."""
-        marker_sets = [MarkerSet(id="ms1", name="Test", bands=[
-            MarkerBand(kda=100, channels=[]),
-            MarkerBand(kda=50, channels=[]),
-        ])]
-        overlay = OverlayLadder(
+# Geometry constants of build_provenance_scene's overlay ladder.
+TICK_LENGTH, TICK_GAP, LABEL_GAP = 50.0, 15.0, 4.0
+
+# y_px -> (kDa, expected label). 12.5 kDa has no preset band, so its label
+# falls back to the numeric value.
+BANDS = {
+    40.0: (100.0, "100 kDa"),
+    90.0: (50.0, "50 kDa"),
+    150.0: (12.5, "12.5 kDa"),
+}
+
+
+def _ecl_blot(sha: str, side: str = "left", hidden_kda: float | None = None) -> Blot:
+    return Blot(
+        id="b1",
+        asset_sha256=sha,
+        crop=Crop(x=0, y=0, w=float(IMG_W), h=float(IMG_H)),
+        ladder=Ladder(
+            lane_index=0,
             marker_set_id="ms1",
-            bands=[
-                LadderBandAssignment(y_px=100, kda=100),
-                LadderBandAssignment(y_px=200, kda=50),
+            calibration_points=[
+                CalibrationPoint(y_px=50, kda=55),
+                CalibrationPoint(y_px=120, kda=36),
             ],
-        )
-        blot = _nir_blot(overlay_ladder=overlay)
-        assert _ladder_row_for_blot(blot, marker_sets) == 0
-
-    def test_ladder_row_nir_685_bands(self):
-        """Bands tagged [685]: 685 nm is on channel_index 1, so returns 1."""
-        marker_sets = [MarkerSet(id="ms1", name="Test", bands=[
-            MarkerBand(kda=100, channels=[685]),
-            MarkerBand(kda=50, channels=[685]),
-        ])]
-        overlay = OverlayLadder(
+        ),
+        protein_label=ProteinLabel(text=""),
+        overlay_ladder=OverlayLadder(
             marker_set_id="ms1",
+            side=side,
+            show_labels=True,
             bands=[
-                LadderBandAssignment(y_px=100, kda=100),
-                LadderBandAssignment(y_px=200, kda=50),
+                LadderBandAssignment(y_px=y, kda=kda, show_in_final=(kda != hidden_kda))
+                for y, (kda, _label) in BANDS.items()
             ],
-        )
-        blot = _nir_blot(overlay_ladder=overlay)
-        assert _ladder_row_for_blot(blot, marker_sets) == 1
-
-    def test_ladder_row_nir_785_bands(self):
-        """Bands tagged [785]: 785 nm is on channel_index 0, so returns 0."""
-        marker_sets = [MarkerSet(id="ms1", name="Test", bands=[
-            MarkerBand(kda=100, channels=[785]),
-            MarkerBand(kda=50, channels=[785]),
-        ])]
-        overlay = OverlayLadder(
-            marker_set_id="ms1",
-            bands=[
-                LadderBandAssignment(y_px=100, kda=100),
-                LadderBandAssignment(y_px=200, kda=50),
-            ],
-        )
-        blot = _nir_blot(overlay_ladder=overlay)
-        assert _ladder_row_for_blot(blot, marker_sets) == 0
-
-    def test_ladder_row_nir_mixed_bands(self):
-        """Some bands tagged [685], some blank: first channel matching 685 is index 1."""
-        marker_sets = [MarkerSet(id="ms1", name="Test", bands=[
-            MarkerBand(kda=100, channels=[685]),
-            MarkerBand(kda=50, channels=[]),
-        ])]
-        overlay = OverlayLadder(
-            marker_set_id="ms1",
-            bands=[
-                LadderBandAssignment(y_px=100, kda=100),
-                LadderBandAssignment(y_px=200, kda=50),
-            ],
-        )
-        blot = _nir_blot(overlay_ladder=overlay)
-        assert _ladder_row_for_blot(blot, marker_sets) == 1
+        ),
+    )
 
 
-class TestShowInFinalFlag:
-
-    def test_show_in_final_false_hides_in_panel_scene(self):
-        """build_panel_scene must gate band drawing on show_in_final."""
-        src = inspect.getsource(build_panel_scene)
-        assert "show_in_final" in src, (
-            "build_panel_scene must check show_in_final to hide bands in the final figure"
-        )
-
-    def test_show_in_final_does_not_gate_provenance(self):
-        """build_provenance_scene must not filter bands by show_in_final."""
-        src = inspect.getsource(build_provenance_scene)
-        assert "show_in_final" not in src, (
-            "build_provenance_scene must not filter bands by show_in_final; "
-            "all bands must always be visible in the provenance (Original Image) view"
-        )
+def _image_rect(scene):
+    images = [i for i in scene.items() if isinstance(i, QGraphicsPixmapItem)]
+    assert len(images) == 1, f"expected one image item, got {len(images)}"
+    return images[0].sceneBoundingRect()
 
 
-class TestLabelAlignment:
+def _ticks(scene):
+    """Horizontal line items as (x_left, x_right, y) in scene coordinates."""
+    ticks = []
+    for item in scene.items():
+        if isinstance(item, QGraphicsLineItem):
+            line, pos = item.line(), item.pos()
+            if line.y1() == line.y2():
+                ticks.append((
+                    pos.x() + min(line.x1(), line.x2()),
+                    pos.x() + max(line.x1(), line.x2()),
+                    pos.y() + line.y1(),
+                ))
+    return sorted(ticks, key=lambda t: t[2])
 
-    def test_label_x_tracks_tick_x0(self):
-        """Provenance kDa label must use font-adaptive right-edge alignment, not a fixed offset."""
-        src = inspect.getsource(build_provenance_scene)
-        # Left-side label: right edge of label = outer tick tip - gap
-        assert "tick_x0 - br.width() - LABEL_GAP" in src, (
-            "provenance left-side label x must be tick_x0 - br.width() - LABEL_GAP"
-        )
-        # Right-side label: left edge of label = outer tick tip + gap
-        assert "tick_x1 + LABEL_GAP" in src, (
-            "provenance right-side label x must be tick_x1 + LABEL_GAP"
-        )
-        assert "label_x" not in src, (
-            "old fixed label_x offset must be removed from build_provenance_scene"
-        )
+
+def _kda_labels(scene):
+    """kDa label items by text -> (left, right, vertical centre) in scene coords."""
+    labels = {}
+    for item in scene.items():
+        if isinstance(item, QGraphicsTextItem) and item.toPlainText().endswith(" kDa"):
+            br = item.boundingRect()
+            left = item.pos().x()
+            labels[item.toPlainText()] = (left, left + br.width(), item.pos().y() + br.height() / 2.0)
+    return labels
+
+
+def _provenance(tmp_path, side="left", hidden_kda=None):
+    sha = _write_asset(tmp_path, 30000)
+    project = _project(_ecl_blot(sha, side=side, hidden_kda=hidden_kda))
+    return build_provenance_scene(project, tmp_path, blot_id="b1")
+
+
+class TestProvenanceLadderPlacement:
+
+    def test_left_ticks_span_left_of_image(self, qapp, tmp_path):
+        scene = _provenance(tmp_path, side="left")
+        img = _image_rect(scene)
+        ticks = _ticks(scene)
+
+        assert len(ticks) == len(BANDS)
+        for (x_left, x_right, y), y_px in zip(ticks, sorted(BANDS)):
+            assert x_left == pytest.approx(img.left() - TICK_GAP - TICK_LENGTH)  # x0 - 65
+            assert x_right == pytest.approx(img.left() - TICK_GAP)               # x0 - 15
+            assert y == pytest.approx(img.top() + y_px)
+
+    def test_left_label_right_edge_is_gap_before_tick(self, qapp, tmp_path):
+        scene = _provenance(tmp_path, side="left")
+        tick_x0 = _image_rect(scene).left() - TICK_GAP - TICK_LENGTH
+        labels = _kda_labels(scene)
+
+        assert len(labels) == len(BANDS)
+        for _left, right, _cy in labels.values():
+            assert right == pytest.approx(tick_x0 - LABEL_GAP)
+
+    def test_right_ticks_span_right_of_image(self, qapp, tmp_path):
+        scene = _provenance(tmp_path, side="right")
+        img = _image_rect(scene)
+        ticks = _ticks(scene)
+
+        assert len(ticks) == len(BANDS)
+        for (x_left, x_right, y), y_px in zip(ticks, sorted(BANDS)):
+            assert x_left == pytest.approx(img.right() + TICK_GAP)                # img_right + 15
+            assert x_right == pytest.approx(img.right() + TICK_GAP + TICK_LENGTH) # img_right + 65
+            assert y == pytest.approx(img.top() + y_px)
+
+    def test_right_label_left_edge_is_gap_after_tick(self, qapp, tmp_path):
+        scene = _provenance(tmp_path, side="right")
+        tick_x1 = _image_rect(scene).right() + TICK_GAP + TICK_LENGTH
+        labels = _kda_labels(scene)
+
+        assert len(labels) == len(BANDS)
+        for left, _right, _cy in labels.values():
+            assert left == pytest.approx(tick_x1 + LABEL_GAP)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_label_text_and_vertical_centre(self, qapp, tmp_path, side):
+        scene = _provenance(tmp_path, side=side)
+        img_top = _image_rect(scene).top()
+        labels = _kda_labels(scene)
+
+        assert set(labels) == {label for _kda, label in BANDS.values()}
+        for y_px, (_kda, label) in BANDS.items():
+            assert labels[label][2] == pytest.approx(img_top + y_px)
+
+
+class TestShowInFinal:
+
+    def test_hidden_in_panel_scene(self, qapp, tmp_path):
+        sha = _write_asset(tmp_path, 30000)
+        project = _project(_ecl_blot(sha, hidden_kda=50.0))
+
+        scene = build_panel_scene(project, tmp_path)
+        labels = _kda_labels(scene)
+
+        assert "50 kDa" not in labels
+        assert {"100 kDa", "12.5 kDa"} <= set(labels)
+        assert len(_ticks(scene)) == len(BANDS) - 1
+
+    def test_still_shown_in_provenance_scene(self, qapp, tmp_path):
+        scene = _provenance(tmp_path, hidden_kda=50.0)
+        img_top = _image_rect(scene).top()
+
+        assert "50 kDa" in _kda_labels(scene)
+        assert img_top + 90.0 in [pytest.approx(y) for _l, _r, y in _ticks(scene)]
+        assert len(_ticks(scene)) == len(BANDS)
 
 
 class TestLadderSide:
@@ -230,58 +258,6 @@ class TestLadderSide:
         ladder2 = OverlayLadder.model_validate(data)
         assert ladder2.side == "right"
 
-    def test_tick_geometry_left(self):
-        """Left-side tick must sit to the left of the image."""
-        import pytest
-        TICK_LENGTH = 50.0
-        TICK_GAP    = 15.0
-        x0          = 10.0
-
-        tick_x1 = x0 - TICK_GAP
-        tick_x0 = x0 - TICK_GAP - TICK_LENGTH
-
-        assert tick_x1 == pytest.approx(-5.0)
-        assert tick_x0 == pytest.approx(-55.0)
-        assert tick_x1 < x0
-        assert tick_x0 < tick_x1
-
-    def test_tick_geometry_right(self):
-        """Right-side tick must sit to the right of the image."""
-        import pytest
-        TICK_LENGTH = 50.0
-        TICK_GAP    = 15.0
-        x0          = 10.0
-        img_width   = 300.0
-        img_right   = x0 + img_width
-
-        tick_x0 = img_right + TICK_GAP
-        tick_x1 = img_right + TICK_GAP + TICK_LENGTH
-
-        assert tick_x0 == pytest.approx(325.0)
-        assert tick_x1 == pytest.approx(375.0)
-        assert tick_x0 > img_right
-        assert tick_x1 > tick_x0
-
-    def test_label_position_left(self):
-        """Left-side label right edge must be flush with the outer tick tip."""
-        import pytest
-        LABEL_GAP  =  4.0
-        tick_x0    = -55.0
-        br_width   =  80.0
-
-        label_x = tick_x0 - br_width - LABEL_GAP
-        assert label_x == pytest.approx(-139.0)
-        assert label_x + br_width < tick_x0
-
-    def test_label_position_right(self):
-        """Right-side label left edge must be just past the outer tick tip."""
-        import pytest
-        LABEL_GAP  =  4.0
-        tick_x1    = 375.0
-
-        label_x = tick_x1 + LABEL_GAP
-        assert label_x == pytest.approx(379.0)
-        assert label_x > tick_x1
 
 
 # ===========================================================================

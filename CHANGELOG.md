@@ -44,6 +44,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   unchanged. Nothing is written to the project: a LI-COR channel's wavelength stays unset,
   and other LI-COR channels (e.g. 600) still show every band.
 
+### Fixed
+- **The 8-bit import warning now fails closed** (issue #195). Importing an 8-bit image shows
+  an acknowledgement dialog; the import previously went ahead unless **Cancel** was the button
+  reported, so a dialog that ended with no button clicked, or with any other button, let it
+  through. It now proceeds only on an explicit **I understand, proceed**, exactly like the
+  8-bit export warning. Cancel, Esc and closing the window still cancel; the dialog's text and
+  buttons are unchanged.
+
 CI-only entries below — no functional or version change.
 
 ### Security

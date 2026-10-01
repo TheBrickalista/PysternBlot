@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QGraphicsScene
 from PySide6.QtGui import QFont, QPixmap, QPen, QColor
 from PySide6.QtCore import QRectF, Qt
 
-from .models import Blot, Crop, MarkerBand, Project, LegendRow, LegendZone
+from .models import BlotChannel, Crop, MarkerBand, Project, LegendRow, LegendZone
 from .ui.crop_rect_item import CropRectItem
 
 from .image_utils import (
@@ -26,6 +26,27 @@ from .image_utils import (
 )
 
 
+# LI-COR channel name -> excitation laser (nm), matching the Typhoon band keys.
+_LICOR_CHANNEL_EXCITATION_NM = {"700": 685, "800": 785}
+
+
+def _marker_channel_key(ch: BlotChannel) -> Optional[int]:
+    """Returns the key a channel is matched on against MarkerBand.channels.
+
+    Typhoon channels use their wavelength_nm (the excitation laser). The LI-COR
+    Odyssey CLx excites its 700 and 800 channels with 685 nm and 785 nm lasers,
+    so a channel_label of "700"/"800" maps onto the existing Typhoon band keys
+    685/785. This is for marker visibility only: wavelength_nm is deliberately
+    not set for LI-COR channels because it is not read from the file.
+
+    Anything else (an unknown LI-COR channel such as "600", or no label)
+    returns None, which shows the band on every row.
+    """
+    if ch.wavelength_nm is not None:
+        return ch.wavelength_nm
+    return _LICOR_CHANNEL_EXCITATION_NM.get(ch.channel_label or "")
+
+
 def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> bool:
     """Returns True if the band should be rendered on a channel with the given wavelength.
     Empty channels list means visible everywhere (ECL and all NIR channels)."""
@@ -34,49 +55,6 @@ def _band_visible_on_channel(band: MarkerBand, wavelength_nm: Optional[int]) -> 
     if wavelength_nm is None:
         return True
     return wavelength_nm in band.channels
-
-
-def _ladder_row_for_blot(blot: Blot, marker_sets: list) -> int:
-    """Returns the channel_index of the row that should display the ladder column.
-
-    For ECL blots: always 0 (irrelevant, there is only one row).
-    For NIR blots: the channel_index of the first channel whose wavelength_nm
-    matches at least one assigned band's channels list.
-    Falls back to channel_index 0 if no match is found (e.g. all bands have
-    empty channels list, meaning show on all — in that case first row is correct).
-    """
-    if not blot.is_nir():
-        return 0
-    if blot.overlay_ladder is None or not blot.overlay_ladder.bands:
-        return 0
-
-    marker_set = next(
-        (ms for ms in marker_sets if ms.id == blot.overlay_ladder.marker_set_id),
-        None,
-    )
-
-    # Collect wavelengths that are explicitly restricted via MarkerBand.channels.
-    # Bands with channels==[] are deliberately excluded — they mean "show everywhere".
-    explicit_wavelengths: set[int] = set()
-    if marker_set is not None:
-        for assignment in blot.overlay_ladder.bands:
-            preset_band = next(
-                (b for b in marker_set.bands if abs(float(b.kda) - float(assignment.kda)) < 0.001),
-                None,
-            )
-            if preset_band is not None and preset_band.channels:
-                explicit_wavelengths.update(preset_band.channels)
-
-    # All bands have channels==[] → fall back to first row (backward compatible).
-    if not explicit_wavelengths:
-        return 0
-
-    # Return the channel_index of the first channel (sorted) whose wavelength matches.
-    for ch in sorted(blot.channels, key=lambda c: c.channel_index):
-        if ch.wavelength_nm is not None and ch.wavelength_nm in explicit_wavelengths:
-            return ch.channel_index
-
-    return 0
 
 
 def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
@@ -572,7 +550,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
                 # Per-channel filter: NIR rows only show bands whose channels list includes
                 # this channel's wavelength (empty channels list = visible everywhere).
                 if ch is not None and preset_band is not None:
-                    if not _band_visible_on_channel(preset_band, ch.wavelength_nm):
+                    if not _band_visible_on_channel(preset_band, _marker_channel_key(ch)):
                         continue
 
                 is_highlighted = bool(getattr(preset_band, "highlight", False)) if preset_band else False
@@ -869,7 +847,7 @@ def build_provenance_scene(
                 (c for c in blot.channels if c.channel_index == nir_channel_index), None
             )
             if _active_ch is not None:
-                _active_wavelength = _active_ch.wavelength_nm
+                _active_wavelength = _marker_channel_key(_active_ch)
 
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)

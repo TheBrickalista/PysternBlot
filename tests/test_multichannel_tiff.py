@@ -184,28 +184,10 @@ class TestBackwardCompatSingleChannelEcl:
 
 
 # ---------------------------------------------------------------------------
-# Instrument file tests — skipped until files are committed
+# Instrument file tests — real Cytiva Typhoon channel files committed in tests/
 # ---------------------------------------------------------------------------
 
 class TestInstrumentFiles:
-
-    def test_load_licor_odyssey_multipage(self):
-        """
-        Verify that a real LI-COR Odyssey TIFF export (Image Studio format)
-        loads as exactly 2 channels, each uint16, with correct shape.
-
-        The file is a multi-page TIFF produced by Image Studio software with
-        one 16-bit grayscale page per fluorescence channel.
-        """
-        pytest.skip("awaiting test image: licor_odyssey_sample.tif")
-
-    def test_load_licor_odyssey_channel_independence(self):
-        """
-        Verify that channels 0 and 1 from a real LI-COR Odyssey file are not
-        identical — i.e. they genuinely represent different fluorescence
-        signals (700 nm vs 800 nm) and have not been duplicated or blended.
-        """
-        pytest.skip("awaiting test image: licor_odyssey_sample.tif")
 
     def test_load_typhoon_separate_files(self):
         """

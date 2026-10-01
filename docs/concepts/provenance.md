@@ -46,6 +46,7 @@ Because the log records *parameters* rather than baking changes into pixels, the
 path from raw image to final figure is fully reconstructable. Nothing about how
 the published picture was produced is lost.
 
+(the-operation-log-hash-chain)=
 ## The operation log hash chain
 
 Recording events is not, on its own, tamper-evident: a log that can be edited

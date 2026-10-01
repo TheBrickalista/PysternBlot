@@ -151,7 +151,7 @@ NIR fluorescence platforms (LI-COR Odyssey, Cytiva Typhoon) produce multichannel
 - [x] ✅ `parse_typhoon_tag270` — standalone Tag 270 XML parser for Typhoon wavelength/filter metadata (`storage.py`)
 - [x] ✅ `import_nir_blot_typhoon` on `Workspace` — imports 1 or 2 Typhoon TIFFs, populates `BlotChannel` entries with instrument metadata
 - [x] ✅ `BlotChannel` model and `Blot` extension (`modality`, `channels`) in `models.py`; backward compatible with existing ECL projects
-- [ ] LI-COR Odyssey import — stub exists (`import_nir_blot_odyssey` raises `NotImplementedError`); awaiting `tests/licor_odyssey_sample.tif`
+- [x] ✅ LI-COR Odyssey import — stub exists (`import_nir_blot_odyssey` raises `NotImplementedError`); awaiting `tests/licor_odyssey_sample.tif` (superseded — LI-COR import shipped in 1.2.1 through the regular import paths; stub removed in 1.2.2)
 
 ### 6.2 Channel Merge Documentation
 
@@ -167,10 +167,10 @@ NIR fluorescence platforms (LI-COR Odyssey, Cytiva Typhoon) produce multichannel
 - [x] ✅ NIR blots render as per-channel greyscale rows in `build_panel_scene`; ladder bands respect per-channel wavelength tags
 - [x] ✅ `MarkerBand.channels: list[int]` — per-band channel restriction field; backward compatible (default `[]` = show on all channels)
 - [x] ✅ `_band_visible_on_channel` in `render.py` — gates band rendering by channel wavelength
-- [x] ✅ `_ladder_row_for_blot` — determines which channel row the ladder column renders on based on band wavelength tags
+- [x] ✅ `_ladder_row_for_blot` — determines which channel row the ladder column renders on based on band wavelength tags (removed in 1.2.2; caller dropped in d36d09a)
 - [x] ✅ Bands with `channels == []` render on all NIR channel rows; explicit channel tags render only on the matching wavelength row
 - [x] ✅ Show 685 / Show 785 checkboxes in marker set preset table (replaces free-text Channels column)
-- [x] ✅ `test_render_ladder.py` — test suite for `_band_visible_on_channel` and `_ladder_row_for_blot`
+- [x] ✅ `test_render_ladder.py` — test suite for `_band_visible_on_channel` and `_ladder_row_for_blot` (_ladder_row_for_blot tests removed in 1.2.2)
 - [x] ✅ 90° rotation buttons (↺ ↻) in Original Image toolbar Row 1
 - [x] ✅ Flip buttons (⇔ ↕) in Original Image toolbar Row 1; display-time transforms, cache stores un-flipped image
 

@@ -398,7 +398,7 @@ def detect_tiff_channel_encoding(
     """
     Inspect a TIFF and return how its channels are encoded.
 
-    - "multipage"       — multiple frames, one channel per frame (LI-COR Odyssey style)
+    - "multipage"       — multiple frames, one page per channel
     - "rgb_interleaved" — single-frame RGB/RGBA (some composite exports)
     - "single"          — single-frame grayscale (ECL, single-channel NIR)
     """

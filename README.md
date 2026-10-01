@@ -30,15 +30,15 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 - **True 16-bit pipeline** — images never get silently downsampled to 8-bit at any step
 - **8-bit TIFF support** — legacy 8-bit images (grayscale, palette, and RGB modes) are accepted with a mandatory quality warning on import; bit depth is recorded in the integrity report and flagged at export; JPEG is explicitly rejected (lossy compression alters pixel values, not suitable for quantitative figures)
-- **ECL and NIR fluorescence western blot support** — Typhoon dual-channel (685 nm / 785 nm), per-channel display settings, levels, invert, flip, rotation
+- **ECL and NIR fluorescence western blot support** — Cytiva Typhoon (685 nm / 785 nm) and LI-COR Odyssey (700 / 800 channels), per-channel display settings, levels, invert, flip, rotation
 - **Per-channel greyscale rendering in final figure** — each NIR channel appears as an independent row
-- **Per-band wavelength routing for NIR ladders** — Show 685 / Show 785 per band in ladder presets
+- **Per-band wavelength routing for NIR ladders** — "685 / 700" and "785 / 800" columns per band in ladder presets
 - **Shared crop template with per-channel independent crop for NIR** — resize once and all blots follow; per-channel override available for NIR
 - **Inkscape-style crop handles** — grab a corner to resize width and height simultaneously; grab an edge midpoint to resize one dimension only; hit zones are larger than the visual handle so you don't need to be pixel-perfect
 - **Levels, gamma, invert, 90° rotation, horizontal/vertical flip** — all non-destructive, per channel for NIR; Black and White values are directly editable as well as slider-adjustable
 - **Dynamic levels range** — slider and input fields automatically adapt to the source bit depth (0–255 for 8-bit, 0–65535 for 16-bit)
 - **Editable levels fields** — Black and White values can be typed directly (e.g. type 150 and press Enter) as well as adjusted via slider; both controls stay in sync
-- **Overlay protein ladder with per-band wavelength assignment** — Show 685 / Show 785 checkboxes per preset band; ticks and labels appear automatically in the final figure
+- **Overlay protein ladder with per-band wavelength assignment** — "685 / 700" and "785 / 800" checkboxes per preset band; ticks and labels appear automatically in the final figure
 - **Include / exclude per blot and per NIR channel** — import multiple exposures or channels and choose which appear in the final figure without deleting the others
 - **Flexible legend annotation** — per-lane condition labels with grouped headers: assign cells to groups to draw shared underlines and centred group labels (e.g. one "Total" label spanning two lanes), supporting asymmetric layouts with mixed group sizes and standalone lanes
 - **Library archive** — export and import `.pbarchive` files for lab handover / long-term storage, with SHA256 integrity verification of every asset and (since `format_version` 2) of each project's own state, plus archive path validation and decompression limits against untrusted input
@@ -119,7 +119,7 @@ macOS app: macOS 15 or later, Apple Silicon only. Intel Macs and older macOS: in
 
 ### System requirements (Linux)
 
-"Export Annotated Context TIFF" renders through Qt's TIFF plugin. In PySide6 6.11.1 that plugin linked against the system `libtiff.so.5`, which current distributions (Ubuntu 24.04+) no longer ship. Pystern Blot requires **PySide6 ≥ 6.11.2**, where the plugin no longer depends on a system `libtiff` at all — no package to install. If the plugin still fails to load for any reason, Pystern Blot names the problem when you use that export; every other export, including the byte-exact source file export, is unaffected. macOS and Windows standalone builds ship their own Qt plugins and are not affected. See [System requirements](https://pysternblot.readthedocs.io/en/latest/installation.html#system-requirements) for details.
+"Export Annotated Context TIFF" renders through Qt's TIFF plugin. In PySide6 6.11.1 that plugin linked against the system `libtiff.so.5`, which current distributions (Ubuntu 24.04+) no longer ship. Pystern Blot requires **PySide6 ≥ 6.11.2**, where the plugin no longer depends on a system `libtiff` at all — no package to install. If the plugin still fails to load for any reason, Pystern Blot names the problem when you use that export; every other export, including the byte-exact source file export, is unaffected. macOS and Windows standalone builds ship their own Qt plugins and are not affected. See [System requirements](https://pysternblot.readthedocs.io/en/stable/installation.html#system-requirements) for details.
 
 ---
 
@@ -142,18 +142,18 @@ pysternblot/
 └── ui/
     ├── main_window.py          — Main window, tab layout, display controls; levels sliders adapt to bit depth; Black/White fields are editable QLineEdit; saturation badge
     ├── project_io_mixin.py     — Project create/open/import (with saturation assessment), library archive export/import, project archiving (soft-hide and restore)
-    ├── marker_set_mixin.py     — Protein ladder preset editor (Show 685/785 per band)
+    ├── marker_set_mixin.py     — Protein ladder preset editor ("685 / 700" and "785 / 800" per band)
     ├── overlay_ladder_mixin.py — Ladder assignment and kDa annotation
     ├── export_mixin.py         — PNG/PDF/SVG/TIFF/integrity report export; byte-exact source file export; annotated-context export; pre-export 8-bit warning
-    ├── nir_import_dialog.py    — NIR blot import dialog (1 or 2 channel Typhoon)
+    ├── nir_import_dialog.py    — NIR blot import dialog (1 or 2 channel files, Cytiva Typhoon or LI-COR Odyssey)
     ├── legend_tab.py           — Legend editor tab
     ├── widgets.py              — Shared UI widgets
     ├── zoomable_graphics_view.py — Zoomable/pannable graphics view
     └── crop_rect_item.py       — Interactive crop rectangle with Inkscape-style corner and edge handles; generous hit zones for precise grab
-tests/                      — pytest test suite (436 tests, plus 2 skipped pending LI-COR Odyssey sample file, covering models, rendering, provenance, hash-chained operation log, archive integrity and resource limits, saturation detection, 8-bit pipeline, and crop handle behaviour)
+tests/                      — an extensive pytest suite covering models, rendering, provenance, hash-chained operation log, archive integrity and resource limits, saturation detection, 8-bit pipeline, LI-COR import, and crop handle behaviour
 ```
 
-> The test suite is run on every commit and covers models, rendering, provenance, hash-chained operation log verification, archive integrity and resource limits, saturation detection, 8-bit pipeline, and crop handle behaviour.
+> The test suite is run on every commit and covers models, rendering, provenance, hash-chained operation log verification, archive integrity and resource limits, saturation detection, 8-bit pipeline, LI-COR import, and crop handle behaviour.
 
 ---
 
@@ -163,14 +163,14 @@ tests/                      — pytest test suite (436 tests, plus 2 skipped pen
 |---|---|---|
 | Any ECL imager (ChemiDoc, ImageQuant, etc.) | Single-channel 16-bit TIFF | Import Blot… |
 | Cytiva Typhoon | NIR fluorescence, dual-channel | Import NIR Blot… |
-| LI-COR Odyssey | NIR fluorescence, dual-channel | Planned |
+| LI-COR Odyssey (Image Studio exports) | NIR fluorescence, one TIFF per channel: float16 Image Studio exports and older uint16 exports; channel (700/800), instrument model, software, serial and pixel size read from the TIFF tags | Import NIR Blot… or Import Blot… |
 | Any agarose gel imager | DNA gel (grayscale TIFF) | Coming soon |
 
 ---
 
 ## Roadmap
 
-Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support, library archive, project archiving, 8-bit image support, experimental metadata fields, and provenance/security hardening (hash-chained operation log, archive manifest binding, byte-exact source export, saturation detection, resource limits). Upcoming work includes structured figure composition, LI-COR Odyssey support, DNA gel mode, repository/ELN integration, and macOS DMG packaging. See [Roadmap.md](Roadmap.md) for the full plan.
+Pystern Blot is under active development. Completed phases include the full export system, protein ladder system, NIR fluorescence support (Cytiva Typhoon and LI-COR Odyssey), library archive, project archiving, 8-bit image support, experimental metadata fields, and provenance/security hardening (hash-chained operation log, archive manifest binding, byte-exact source export, saturation detection, resource limits). Upcoming work includes structured figure composition, DNA gel mode, repository/ELN integration, and macOS DMG packaging. See [Roadmap.md](Roadmap.md) for the full plan.
 
 ---
 

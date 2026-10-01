@@ -24,6 +24,7 @@ from ..render import (
     draw_legend_into_scene,
     _load_rotated_display_pixmap,
     _band_visible_on_channel,
+    _marker_channel_key,
 )
 from ..integrity import (
     build_integrity_report,
@@ -694,7 +695,7 @@ class _ExportMixin:
                 (c for c in blot.channels if c.channel_index == self._active_nir_channel), None
             )
             if active_ch is not None:
-                active_wavelength = active_ch.wavelength_nm
+                active_wavelength = _marker_channel_key(active_ch)
 
         marker_font = QFont(style.font_family, int(style.kda_label_font_size_pt))
         marker_font.setBold(False)

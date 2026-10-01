@@ -35,6 +35,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   and older macOS versions can install with pip. The build now fails if any bundled binary
   requires a newer macOS than the declared minimum.
 
+- **LI-COR ladder markers now follow the per-band channel setting.** Marker presets restrict
+  a band by Typhoon excitation wavelength (685/785 nm), which LI-COR channels don't carry, so
+  on LI-COR blots every band appeared on every channel. The LI-COR Odyssey CLx excites its 700
+  and 800 channels with 685 and 785 nm lasers, so the 700 channel now uses 685 nm bands and the
+  800 channel 785 nm bands, in the Figure, the Original Image view and the legend-zone export.
+  The preset table columns are relabelled **685 / 700** and **785 / 800**; stored presets are
+  unchanged. Nothing is written to the project: a LI-COR channel's wavelength stays unset,
+  and other LI-COR channels (e.g. 600) still show every band.
+
 CI-only entries below — no functional or version change.
 
 ### Security

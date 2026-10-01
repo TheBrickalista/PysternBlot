@@ -177,10 +177,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.marker_set_table = QTableWidget()
         self.marker_set_table.setColumnCount(6)
         self.marker_set_table.setHorizontalHeaderLabels([
-            "kDa", "Label", "Visible", "Highlight", "Show 685", "Show 785"
+            "kDa", "Label", "Visible", "Highlight", "685 / 700", "785 / 800"
         ])
         _ch_tip = (
-            "Check to restrict this band to this wavelength channel only. "
+            "Check to restrict this band to this channel only: the Typhoon "
+            "685 / 785 nm laser channel, or the LI-COR 700 / 800 channel. "
             "Leave both unchecked to show on all channels."
         )
         self.marker_set_table.horizontalHeaderItem(4).setToolTip(_ch_tip)

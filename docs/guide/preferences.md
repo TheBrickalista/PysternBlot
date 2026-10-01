@@ -26,11 +26,11 @@ Each preset's bands are edited in a table with these columns:
 | **Label** | Text shown for the band |
 | **Visible** | Whether the band is shown |
 | **Highlight** | Flags the band for the "Only highlighted" overlay option |
-| **Show 685** | Restrict the band to the 685 nm channel only |
-| **Show 785** | Restrict the band to the 785 nm channel only |
+| **685 / 700** | Restrict the band to the Typhoon 685 nm channel or the LI-COR 700 channel |
+| **785 / 800** | Restrict the band to the Typhoon 785 nm channel or the LI-COR 800 channel |
 
-Leaving both **Show 685** and **Show 785** unchecked shows the band on all
-channels. Below the table, **Add band** and **Remove selected band** edit the
+Leaving both **685 / 700** and **785 / 800** unchecked shows the band on all
+channels. LI-COR channels other than 700 and 800 always show every band. Below the table, **Add band** and **Remove selected band** edit the
 list of bands.
 
 ## Saved dropdown entries

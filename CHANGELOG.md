@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.2.2] — 2026-10-01
+
 ### Changed
 - **The macOS app and Windows executable now carry the application version in their OS
   metadata** (issue #187) — Finder's Get Info panel and Windows' Properties → Details tab
@@ -22,29 +26,30 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   bundle identifier — confirmed by inspecting the actual preferences file path) and the app
   requests no privacy-gated (TCC) permissions, so no user data or preferences are affected by
   this change.
-- **Raised minimum dependency versions for pip installs.** `certifi>=2024.7.4` (CVE-2024-39689),
-  `Pillow>=12.3.0` (CVE-2023-50447, CVE-2024-28219, and 17 advisories fixed between 12.1.1 and
-  12.3.0, including CVE-2026-25990, an out-of-bounds write in PSD loading), and
-  `tifffile>=2023.1.23` (the previous floor, 2023.1.0, was never released). A new CI job tests
-  the suite at exactly these floors on Python 3.10. The macOS app, Windows executable and
-  `uv.lock` already used these versions or newer, so they are unaffected.
 - **The macOS app now declares its real minimum: macOS 15 or later, Apple Silicon only**
   (`LSMinimumSystemVersion = 15.0` in `Info.plist`; previously the key was absent). The bundled
   PySide6 6.11.2 binding modules are built for macOS 15.0, so older systems were never a
   supported target; macOS now says so up front instead of the app failing at launch. Intel Macs
   and older macOS versions can install with pip. The build now fails if any bundled binary
   requires a newer macOS than the declared minimum.
-
-- **LI-COR ladder markers now follow the per-band channel setting.** Marker presets restrict
-  a band by Typhoon excitation wavelength (685/785 nm), which LI-COR channels don't carry, so
-  on LI-COR blots every band appeared on every channel. The LI-COR Odyssey CLx excites its 700
-  and 800 channels with 685 and 785 nm lasers, so the 700 channel now uses 685 nm bands and the
-  800 channel 785 nm bands, in the Figure, the Original Image view and the legend-zone export.
-  The preset table columns are relabelled **685 / 700** and **785 / 800**; stored presets are
-  unchanged. Nothing is written to the project: a LI-COR channel's wavelength stays unset,
-  and other LI-COR channels (e.g. 600) still show every band.
+- **Raised minimum dependency versions for pip installs.** `certifi>=2024.7.4` (CVE-2024-39689),
+  `Pillow>=12.3.0` (CVE-2023-50447, CVE-2024-28219, and 17 advisories fixed between 12.1.1 and
+  12.3.0, including CVE-2026-25990, an out-of-bounds write in PSD loading), and
+  `tifffile>=2023.1.23` (the previous floor, 2023.1.0, was never released). A new CI job tests
+  the suite at exactly these floors on Python 3.10. The macOS app, Windows executable and
+  `uv.lock` already used these versions or newer, so they are unaffected.
+- **Ladder preset table: the channel columns are relabelled "685 / 700" and "785 / 800"** (were
+  "Show 685" / "Show 785"), and their tooltip now explains the pairing: the Typhoon 685 / 785 nm
+  laser channel or the LI-COR 700 / 800 channel. Labels only; stored presets are unchanged.
 
 ### Fixed
+- **LI-COR: channel-restricted ladder bands were drawn on every channel.** Marker presets
+  restrict a band by Typhoon excitation wavelength (685/785 nm), which LI-COR channels don't
+  carry, so on LI-COR blots a band restricted to one channel appeared on both. The LI-COR
+  Odyssey CLx excites its 700 and 800 channels with 685 and 785 nm lasers, so the 700 channel
+  now uses 685 nm bands and the 800 channel 785 nm bands, in the Figure, the Original Image view
+  and the legend-zone export. Nothing is written to the project: a LI-COR channel's wavelength
+  stays unset, and other LI-COR channels (e.g. 600) still show every band.
 - **The 8-bit import warning now fails closed** (issue #195). Importing an 8-bit image shows
   an acknowledgement dialog; the import previously went ahead unless **Cancel** was the button
   reported, so a dialog that ended with no button clicked, or with any other button, let it
@@ -52,9 +57,26 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   8-bit export warning. Cancel, Esc and closing the window still cancel; the dialog's text and
   buttons are unchanged.
 
-CI-only entries below — no functional or version change.
+*CI-only — no functional or version change.*
+
+- **`publish.yml`'s "Run tests" job could hang indefinitely** (issue #189). A
+  `pytest.mark.parametrize` case in `tests/test_update_check.py` (an oversized-response test)
+  passed a ~1 MB `bytes` literal with no explicit `id`; pytest fell back to embedding the raw
+  content, producing a test node ID over 1,000,000 characters on a single line. The test itself
+  ran in under a second locally — the hang was GitHub Actions' log processing choking on that
+  one line. The case now has an explicit `id="oversize"`.
+- Added a regression test (`tests/test_node_id_length.py`) that collects the suite and fails if
+  any node ID exceeds 300 characters, so another unlabeled parametrize value can't reintroduce
+  this.
+- Added `pytest-timeout` (`timeout = 120` in `pyproject.toml`) so a genuine hang in any test
+  fails fast with a traceback instead of exhausting the job's time budget silently.
+- Added `timeout-minutes: 15` to the test jobs in `pytest.yml` and `publish.yml`, as a backstop
+  independent of pytest's own timeout.
 
 ### Security
+
+*CI-only — no functional or version change.*
+
 - **CI and release-pipeline hardening; no change to the application.**
   - `publish.yml` now installs only from `uv.lock` (`uv sync --locked`), mirroring `pytest.yml`'s
     test job, and builds with `uv build` against a hash-pinned build backend
@@ -73,31 +95,20 @@ CI-only entries below — no functional or version change.
     entries have a 14-day cooldown.
   - A `minimum` job installs the declared floors on Python 3.10 from a hash-pinned lock
     (`ci/requirements-min.txt`) and runs the suite, then pip-audits that lock from Python 3.10
-    (so 3.10-only dependencies are covered).
-    `tests/test_dependency_floors.py` keeps the floors and the pins equal.
+    (so 3.10-only dependencies are covered). `tests/test_dependency_floors.py` keeps the floors
+    and the pins equal.
   - A `lint` job runs pyflakes; the existing warnings (unused imports and variables) are fixed.
   - Runner images are pinned (`ubuntu-24.04`, `macos-26`; Windows was already
     `windows-2025-vs2026`) so an OS upgrade is a deliberate change; the workflow test rejects
     any `*-latest` label.
 
-### Fixed
-- **`publish.yml`'s "Run tests" job could hang indefinitely.** A `pytest.mark.parametrize` case
-  in `tests/test_update_check.py` (an oversized-response test) passed a ~1 MB `bytes` literal
-  with no explicit `id`; pytest fell back to embedding the raw content, producing a test node ID
-  over 1,000,000 characters on a single line. The test itself ran in under a second locally —
-  the hang was GitHub Actions' log processing choking on that one line. The case now has an
-  explicit `id="oversize"`.
-- Added a regression test (`tests/test_node_id_length.py`) that collects the suite and fails if
-  any node ID exceeds 300 characters, so another unlabeled parametrize value can't reintroduce
-  this.
-- Added `pytest-timeout` (`timeout = 120` in `pyproject.toml`) so a genuine hang in any test
-  fails fast with a traceback instead of exhausting the job's time budget silently.
-- Added `timeout-minutes: 15` to the test jobs in `pytest.yml` and `publish.yml`, as a backstop
-  independent of pytest's own timeout.
+### Compatibility
+No model or schema change: 1.2.1 and 1.2.2 open each other's projects and `.pbarchive` files
+unchanged.
 
 ---
 
-## [1.2.1] — Unreleased (TODO: release date)
+## [1.2.1] — 2026-09-25
 
 ### Added
 - **LI-COR Odyssey CLx / Image Studio float16 TIFF import.** These files (float16 samples, tiled,

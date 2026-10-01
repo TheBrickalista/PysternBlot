@@ -967,16 +967,6 @@ class Workspace:
 
         return channels, sha_to_inf
 
-    def import_nir_blot_odyssey(
-        self,
-        file_path: Path,
-        project: Project,
-    ) -> list[BlotChannel]:
-        raise NotImplementedError(
-            "LI-COR Odyssey import is not yet implemented. "
-            "Awaiting instrument test files. See Phase 6 in CLAUDE.md."
-        )
-
     def export_archive(
         self,
         project_ids: list[str],

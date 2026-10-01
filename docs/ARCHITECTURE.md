@@ -2,7 +2,7 @@
 
 This document describes how Pystern Blot is structured internally, for
 contributors and maintainers. For how to set up a development environment and
-submit changes, see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+submit changes, see the [contributing guide](https://pysternblot.readthedocs.io/en/stable/contributing.html).
 
 ## Overview
 
@@ -177,15 +177,25 @@ one acquisition share a physical crop region and ladder calibration but each
 carries its own antibody, protein label, and display settings.
 
 **`BlotChannel`** holds `asset_sha256`, `channel_index`, `wavelength_nm`,
-`filter_name`, `fluorophore`, `antibody_name`, `protein_label`, `display`, and an
-optional per-channel `crop` (falling back to the blot crop). `Blot` is extended
+`filter_name`, `channel_label` (the instrument's channel name, e.g. LI-COR
+"700"/"800"; not a wavelength), `fluorophore`, `antibody_name`,
+`protein_label`, `display`, `included_in_final` (whether the channel appears in
+the final figure), and an optional per-channel `crop` (falling back to the blot
+crop). `Blot` is extended
 with `modality` (defaults to `"ecl"`) and `channels` (empty for ECL).
 
 **Storage:** `parse_typhoon_tag270()` parses Cytiva Typhoon / Amersham TYPHOON
 TIFF Tag 270 metadata (wavelength, filter, scan number, pixel size, etc.);
 `import_nir_blot_typhoon()` imports one or two channel files and populates
-`BlotChannel` entries. LI-COR Odyssey import is currently a stub
-(`import_nir_blot_odyssey` raises `NotImplementedError`) pending a sample file.
+`BlotChannel` entries. LI-COR Odyssey (Image Studio) TIFFs go through the same
+import paths — NIR import and single-image "Import blot" — for both float16
+Image Studio exports and older uint16 exports. `parse_licor_metadata()`, gated
+on the TIFF Make tag, reads the channel (700/800, stored as
+`BlotChannel.channel_label`; `wavelength_nm` stays unset), instrument model,
+software, serial, date/time and pixel size. `load_tiff_source()` always reads
+the full-resolution page, never a pyramid level, and a float source is shown
+through a disclosed linear mapping to uint16 (`bridge_float_to_uint16()`); the
+stored file and its hash are untouched.
 
 **Image utilities:** `detect_tiff_channel_encoding()` classifies a TIFF as
 `multipage`, `rgb_interleaved`, or `single`; `load_multichannel_tiff()` returns
@@ -193,13 +203,18 @@ one uint16 array per channel accordingly.
 
 **UI / rendering:** `NirImportDialog` handles one- or two-channel import with
 Tag 270 metadata shown on selection. NIR blots render as stacked per-channel
-greyscale rows, with the ladder column on the first row only; there is no
+greyscale rows. Ladder bands are drawn on every row where they are visible —
+all rows for a band with no channel restriction, otherwise only the rows whose
+channel matches (`_band_visible_on_channel`, keyed by `_marker_channel_key`) —
+with no first-row special case. There is no
 false-colour composite in the final figure (greyscale per channel), though a
 composite is available in the Original Image tab for orientation.
 
 ## Test data
 
-Real instrument files live in `tests/` (e.g. the Typhoon channel TIFFs). The
-Odyssey path has tests skipped until a sample file is available. See
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md) for how to contribute sanitised
-instrument output.
+Real instrument files live in `tests/` (e.g. the Typhoon channel TIFFs). LI-COR
+import is covered by synthetic fixtures built in-process with tifffile to match
+a real Odyssey CLx export (float16 tiled pyramid, and a legacy uint16 file, with
+the LI-COR baseline tags): `tests/test_licor_float_import.py` and
+`tests/test_licor_marker_channels.py`. See the [contributing guide](https://pysternblot.readthedocs.io/en/stable/contributing.html) for how to
+contribute sanitised instrument output.

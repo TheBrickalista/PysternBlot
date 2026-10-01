@@ -74,8 +74,8 @@ description if you believe one needs to change:
   continue to load; backward compatibility is maintained through Pydantic
   defaults.
 
-A fuller description of the codebase is in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+A fuller description of the codebase is in the
+[architecture notes](https://pysternblot.readthedocs.io/en/stable/ARCHITECTURE.html) (source: `docs/ARCHITECTURE.md`).
 
 ## Submitting a pull request
 

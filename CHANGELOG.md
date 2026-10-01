@@ -33,8 +33,9 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   and older macOS versions can install with pip. The build now fails if any bundled binary
   requires a newer macOS than the declared minimum.
 - **Raised minimum dependency versions for pip installs.** `certifi>=2024.7.4` (CVE-2024-39689),
-  `Pillow>=12.3.0` (CVE-2023-50447, CVE-2024-28219, and 17 advisories fixed between 12.1.1 and
-  12.3.0, including CVE-2026-25990, an out-of-bounds write in PSD loading), and
+  `Pillow>=12.3.0` (was `>=10.0`; no published advisory affects 12.3.0 at release, whereas
+  earlier versions are affected by advisories including CVE-2023-50447, CVE-2024-28219 and
+  CVE-2026-25990, an out-of-bounds write in PSD loading), and
   `tifffile>=2023.1.23` (the previous floor, 2023.1.0, was never released). A new CI job tests
   the suite at exactly these floors on Python 3.10. The macOS app, Windows executable and
   `uv.lock` already used these versions or newer, so they are unaffected.

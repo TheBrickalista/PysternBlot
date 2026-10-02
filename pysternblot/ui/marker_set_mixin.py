@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QMessageBox, QInputDialog, QTableWidgetItem, QCheckBox
 from PySide6.QtCore import Qt
 
+import math
 import uuid
 
 from ..models import MarkerSet, MarkerBand
@@ -108,6 +109,11 @@ class _MarkerSetMixin:
                 continue
 
             kda = float(txt)
+            # float() also accepts "inf" / "nan"; an infinite kDa passes the
+            # model's gt=0 check but is saved as null and the preset then
+            # fails to load. Reject it like any other invalid entry.
+            if not math.isfinite(kda):
+                raise ValueError(f"Row {row + 1}: kDa must be a finite number, got {txt!r}.")
             label = label_item.text().strip() if label_item else ""
 
             cb_685 = self.marker_set_table.cellWidget(row, 4)

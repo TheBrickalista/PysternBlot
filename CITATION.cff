@@ -10,9 +10,10 @@ authors:
     given-names: Chloé C.
     orcid: "https://orcid.org/0000-0001-9756-2082"
 repository-code: "https://github.com/TheBrickalista/PysternBlot"
-license: GPL-3.0
-version: 1.2.2
-date-released: "2026-10-01"
+license: GPL-3.0-only
+version: 1.2.3
+date-released: "2026-10-02"
+doi: 10.5281/zenodo.20185279
 abstract: >
   PysternBlot is a GPLv3 Python GUI application for building
   publication-ready Western blot panels with hierarchical

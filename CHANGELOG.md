@@ -10,6 +10,38 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.2.3] — 2026-10-02
+
+### Added
+- **README download link** — a third link under Quick Start / Documentation points to the
+  latest release's macOS and Windows apps (no Python needed).
+- **Release-notes template** (`.github/RELEASE_TEMPLATE.md`) — a "⬇ Download" block (macOS zip,
+  Windows exe, `pip install`) with `VERSION` placeholders, to paste at the top of each release's
+  notes.
+
+### Changed
+- **Integrity reports and settings files are written as strict RFC 8259 JSON.** The integrity
+  report JSON, the legend / protein-label / antibody-name suggestion lists and a new project's
+  initial `project.json` never contain `NaN` or `Infinity` tokens (which strict JSON parsers
+  reject); a non-finite float is written as `null`.
+- **`CITATION.cff`:** the license is now `GPL-3.0-only` (was `GPL-3.0`), and the Zenodo concept
+  DOI (`10.5281/zenodo.20185279`, covering all versions) is added.
+
+### Fixed
+- **An operation-log value containing NaN or Infinity broke chain verification after a save and
+  reload.** The value was hashed as `NaN` but saved as `null`, so the reloaded entry no longer
+  matched its hash. Such values are now stored as `null` before hashing. Existing entries are
+  not rewritten: chains that verified before still verify, and an entry already affected by this
+  bug continues to report as broken.
+- **Ladder presets accepted an infinite kDa ("inf"), which then failed to load.** A non-finite
+  kDa is now rejected when the preset is saved, with the usual "Invalid ladder preset" message.
+
+### Compatibility
+No model or schema change: 1.2.2 and 1.2.3 open each other's projects and `.pbarchive` files
+unchanged.
+
+---
+
 ## [1.2.2] — 2026-10-01
 
 ### Changed

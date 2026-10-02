@@ -14,7 +14,8 @@
 [![Documentation Status](https://readthedocs.org/projects/pysternblot/badge/?version=latest)](https://pysternblot.readthedocs.io/en/latest/)
 
 → **[Quick Start](QUICKSTART.md)** — get up and running in 5 minutes  
-→ **[Documentation](https://pysternblot.readthedocs.io)** — full documentation, installation and user guide
+→ **[Documentation](https://pysternblot.readthedocs.io)** — full documentation, installation and user guide  
+→ **[Download](https://github.com/TheBrickalista/PysternBlot/releases/latest)** — macOS and Windows apps, no Python needed
 
 ---
 

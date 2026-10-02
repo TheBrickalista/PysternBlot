@@ -25,6 +25,7 @@ from .models import (
     Project,
 )
 from .logchain import append_log_entry
+from .jsonsafe import dumps_strict
 import datetime, uuid
 from PIL import Image
 import tifffile
@@ -617,7 +618,7 @@ class Workspace:
             if s and s not in seen:
                 out.append(s)
                 seen.add(s)
-        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+        path.write_text(dumps_strict({"items": out}, indent=2) + "\n", encoding="utf-8")
 
     def load_protein_label_suggestions(self) -> list[str]:
         self.ensure()
@@ -649,7 +650,7 @@ class Workspace:
             if s and s not in seen:
                 out.append(s)
                 seen.add(s)
-        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+        path.write_text(dumps_strict({"items": out}, indent=2) + "\n", encoding="utf-8")
 
     def load_antibody_name_suggestions(self) -> list[str]:
         self.ensure()
@@ -681,7 +682,7 @@ class Workspace:
             if s and s not in seen:
                 out.append(s)
                 seen.add(s)
-        path.write_text(json.dumps({"items": out}, indent=2) + "\n", encoding="utf-8")
+        path.write_text(dumps_strict({"items": out}, indent=2) + "\n", encoding="utf-8")
 
     def create_new_project(self, name: str, app_version: str = _pysternblot_version) -> Path:
         """
@@ -734,7 +735,7 @@ class Workspace:
         proj_dir = self.projects_dir / project_id
         proj_dir.mkdir(parents=True, exist_ok=True)
         path = proj_dir / "project.json"
-        path.write_text(json.dumps(project_data, indent=2), encoding="utf-8")
+        path.write_text(dumps_strict(project_data, indent=2), encoding="utf-8")
         return path
     
     def asset_original_file(self, sha256: str) -> Path:

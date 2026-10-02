@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.2.3] — 2026-10-02
+
 ### Added
 - **README download link** — a third link under Quick Start / Documentation points to the
   latest release's macOS and Windows apps (no Python needed).
@@ -31,6 +35,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   bug continues to report as broken.
 - **Ladder presets accepted an infinite kDa ("inf"), which then failed to load.** A non-finite
   kDa is now rejected when the preset is saved, with the usual "Invalid ladder preset" message.
+
+### Compatibility
+No model or schema change: 1.2.2 and 1.2.3 open each other's projects and `.pbarchive` files
+unchanged.
 
 ---
 

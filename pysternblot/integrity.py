@@ -21,6 +21,7 @@ from .image_utils import (
     crop_uint16,
     compute_saturation_stats,
 )
+from .jsonsafe import dumps_strict
 from .logchain import verify_log_chain
 from .models import Project, SaturationStats
 from .storage import Workspace, sha256_file
@@ -351,8 +352,11 @@ def build_integrity_report(
 
 
 def write_integrity_json(report: dict[str, Any], path: str | Path) -> Path:
+    """Write the report as strict RFC 8259 JSON: a non-finite float (e.g. one
+    loaded from a project.json carrying NaN/Infinity tokens) is written as
+    null, never as a NaN/Infinity token."""
     path = Path(path)
-    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(dumps_strict(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
 

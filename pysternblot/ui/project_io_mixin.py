@@ -29,6 +29,7 @@ from ..image_utils import (
     bridge_float_to_uint16,
     compute_saturation_stats,
 )
+from ..jsonsafe import finite_or_none
 from ..logchain import append_log_entry
 from ..storage import parse_licor_metadata
 
@@ -72,12 +73,16 @@ def _assess_asset_on_import(
 
 class _ProjectIOMixin:
     def _plain_log_value(self, value):
+        # Non-finite floats become None here, at the source: the log chain
+        # hashes this value as-is (logchain.canonical_payload), and project.json
+        # stores NaN/Infinity as null, so a NaN logged as NaN would no longer
+        # match its hash after a save and reload.
         if hasattr(value, "model_dump"):
-            return value.model_dump()
+            return finite_or_none(value.model_dump())
 
         try:
             json.dumps(value)
-            return value
+            return finite_or_none(value)
         except TypeError:
             return str(value)
 

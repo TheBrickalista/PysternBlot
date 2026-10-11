@@ -18,6 +18,9 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   Dependabot doesn't break it again; every `setup-uv` step in CI pins exactly `0.12.18`. Local
   development now needs uv 0.12.x (`uv self update 0.12.18`): uv 0.11 refuses to run in this
   project.
+- **setuptools 84.0.0** (was 83.0.0) in `uv.lock` and the hash-pinned `ci/build-constraints.*`;
+  Dependabot now skips setuptools for uv (its lockfile-only job can't update a
+  `[build-system]` requirement), so it is bumped by hand, in both places together.
 
 ---
 

@@ -25,6 +25,11 @@ updates:
     versioning-strategy: "lockfile-only"
     exclude-paths:
       - "ci/**"
+    ignore:
+      # [build-system] requirement: lockfile-only cannot update it
+      # ("No files have changed!"). Bumped by hand together with
+      # ci/build-constraints.in / .txt.
+      - dependency-name: "setuptools"
     schedule:
       interval: "weekly"
       day: "monday"

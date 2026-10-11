@@ -8,6 +8,17 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+*CI-only — no functional or version change.*
+
+- **Move the uv pin to 0.12.18** so Dependabot's bundled uv (0.12.18) can update `uv.lock`; its
+  uv job previously failed on every package with `tool_version_not_supported`. `pyproject.toml`
+  now declares a range, `required-version = ">=0.12.18,<0.13"`, so the next uv patch release in
+  Dependabot doesn't break it again; every `setup-uv` step in CI pins exactly `0.12.18`. Local
+  development now needs uv 0.12.x (`uv self update 0.12.18`): uv 0.11 refuses to run in this
+  project.
+
 ---
 
 ## [1.2.3] — 2026-10-02

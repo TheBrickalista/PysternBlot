@@ -71,7 +71,9 @@ pysternblot = "pysternblot.main:main"
 pysternblot = ["resources/*", "resources/**/*"]
 
 [tool.uv]
-required-version = "==0.11.31"
+# Range, not ==: Dependabot runs its own bundled uv and refuses to lock
+# outside this spec. CI pins the exact version in setup-uv.
+required-version = ">=0.12.18,<0.13"
 constraint-dependencies = [
   "pip>=26.2"
 ]

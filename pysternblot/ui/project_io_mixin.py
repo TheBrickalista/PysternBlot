@@ -31,7 +31,8 @@ from ..image_utils import (
 )
 from ..jsonsafe import finite_or_none
 from ..logchain import append_log_entry
-from ..storage import parse_licor_metadata
+from ..physical_scale import native_crop_size, reconcile_reference_pixel_size
+from ..storage import parse_iq800_metadata, parse_licor_metadata
 
 
 # bit_depth == 32 is this codebase's sentinel for "float source" (see
@@ -193,6 +194,30 @@ class _ProjectIOMixin:
 
         return True
 
+    def _attach_new_blot(self, new_blot: Blot) -> None:
+        """Append a freshly imported blot, update the panel's reference pixel
+        size (which may rescale crop_template, logged), then record the blot's
+        crop size in its own native pixels."""
+        project = self.current_project
+        project.panel.blots.append(new_blot)
+        project.panel.layout.order.append(new_blot.id)
+        reconcile_reference_pixel_size(project)
+        native_w, native_h = native_crop_size(project, new_blot)
+        new_blot.crop.w = native_w
+        new_blot.crop.h = native_h
+
+    def _log_iq800_metadata(self, sha: str, meta: dict) -> None:
+        if meta.get("instrument") == "Amersham ImageQuant 800":
+            self.log_operation(
+                "iq800_metadata_parsed",
+                target_type="asset",
+                target_id=sha,
+                asset_sha256=sha,
+                field="acquisition_metadata",
+                old_value=None,
+                new_value=meta,
+            )
+
     def import_blot(self):
         if not self.current_project:
             QMessageBox.information(
@@ -234,7 +259,7 @@ class _ProjectIOMixin:
                 if levels_white <= levels_black:
                     levels_white = levels_black + 1
 
-            licor_meta = parse_licor_metadata(dest)
+            acquisition_meta = parse_licor_metadata(dest) or parse_iq800_metadata(dest)
 
             self.current_project.assets[digest] = AssetEntry(
                 sha256=digest,
@@ -243,8 +268,9 @@ class _ProjectIOMixin:
                 stored_preview_path=None,
                 saturation=saturation,
                 float_display_scale=float_display_scale,
-                acquisition_metadata=(licor_meta or None),
+                acquisition_metadata=(acquisition_meta or None),
             )
+            self._log_iq800_metadata(digest, acquisition_meta)
             self.log_operation(
                 "saturation_assessed",
                 target_type="asset",
@@ -290,8 +316,7 @@ class _ProjectIOMixin:
 
             new_blot = Blot.model_validate(new_blot_dict)
 
-            self.current_project.panel.blots.append(new_blot)
-            self.current_project.panel.layout.order.append(blot_id)
+            self._attach_new_blot(new_blot)
             self.log_operation(
                 "blot_imported",
                 target_type="blot",
@@ -448,8 +473,7 @@ class _ProjectIOMixin:
                 "included_in_final": True,
             })
 
-            self.current_project.panel.blots.append(new_blot)
-            self.current_project.panel.layout.order.append(blot_id)
+            self._attach_new_blot(new_blot)
 
             self.log_operation(
                 "nir_blot_imported",
@@ -507,6 +531,24 @@ class _ProjectIOMixin:
                 raise RuntimeError("No active blot available.")
             old_overlay = blot.overlay_asset_sha256
             blot.overlay_asset_sha256 = digest
+
+            # Record the overlay's pixel size (ImageQuant 800 only), so a
+            # mismatch with the blot's can be flagged. The overlay itself is
+            # drawn unscaled, assumed aligned with its blot.
+            overlay_meta = parse_iq800_metadata(dest)
+            if overlay_meta:
+                entry = self.current_project.assets.get(digest)
+                if entry is None:
+                    self.current_project.assets[digest] = AssetEntry(
+                        sha256=digest,
+                        stored_original_path=str(dest),
+                        original_source_path=str(path),
+                        acquisition_metadata=overlay_meta,
+                    )
+                    self._log_iq800_metadata(digest, overlay_meta)
+                elif not entry.acquisition_metadata:
+                    entry.acquisition_metadata = overlay_meta
+                    self._log_iq800_metadata(digest, overlay_meta)
             self.log_operation(
                 "overlay_imported",
                 target_type="blot",

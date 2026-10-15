@@ -20,6 +20,7 @@ from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
 from ..render import build_panel_scene, build_provenance_scene
+from ..physical_scale import scale_warnings
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..integrity import SATURATION_SOLID_PIXEL_THRESHOLD
 from ..models import (
@@ -351,6 +352,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         final_top.addStretch(1)
 
         final_l.addLayout(final_top)
+
+        self.scale_warning_label = QLabel()
+        self.scale_warning_label.setWordWrap(True)
+        self.scale_warning_label.setStyleSheet("color: #92400e; font-weight: bold; font-size: 11px;")
+        self.scale_warning_label.setVisible(False)
+        final_l.addWidget(self.scale_warning_label)
 
         self.view = QGraphicsView()
         final_l.addWidget(self.view)
@@ -1510,6 +1517,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
         self.view.setScene(panel_scene)
+        self._update_scale_warnings()
 
         if fit:
             rect = panel_scene.itemsBoundingRect()
@@ -1535,23 +1543,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         # Rebuild cached preview_crop for this blot (all channels for NIR)
-        if blot.is_nir():
-            for ch in blot.channels:
-                try:
-                    self.workspace.ensure_blot_crop_preview(
-                        blot, self.current_project.panel, channel_index=ch.channel_index
-                    )
-                except Exception as e:
-                    print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
-        else:
-            try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+        self._regenerate_crop_previews([blot])
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
+        self._update_scale_warnings()
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     def _on_mw_label_size_changed(self, value: int):
@@ -1593,23 +1590,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.workspace.save_project(self.current_project)
 
-        for blot in self.current_project.panel.blots:
-            if blot.is_nir():
-                for ch in blot.channels:
-                    try:
-                        self.workspace.ensure_blot_crop_preview(
-                            blot, self.current_project.panel, channel_index=ch.channel_index
-                        )
-                    except Exception as e:
-                        print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
-            else:
-                try:
-                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-                except Exception as e:
-                    print(f"[preview] resize regen failed for {getattr(blot, 'id', '?')}: {e}")
+        self._regenerate_crop_previews(self.current_project.panel.blots)
 
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
         self.view.setScene(panel_scene)
+        self._update_scale_warnings()
         self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     # -------------------------
@@ -1842,6 +1827,29 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
         self.refresh_previews()
 
+    def _regenerate_crop_previews(self, blots) -> None:
+        """Rebuild the cached native-pixel crop previews (all channels for NIR).
+        Crop size is the panel template converted to each blot's native
+        pixels (physical_scale), hence project= is always passed."""
+        project = self.current_project
+        for blot in blots:
+            channel_indices = [ch.channel_index for ch in blot.channels] if blot.is_nir() else [-1]
+            for idx in channel_indices:
+                try:
+                    self.workspace.ensure_blot_crop_preview(
+                        blot, project.panel, channel_index=idx, project=project
+                    )
+                except Exception as e:
+                    suffix = f" ch{idx}" if idx >= 0 else ""
+                    print(f"[preview] failed for {getattr(blot, 'id', '?')}{suffix}: {e}")
+
+    def _update_scale_warnings(self) -> None:
+        """Show physical-scale warnings (mixed known/unknown pixel size,
+        overlay pixel-size mismatch) above the figure; non-blocking."""
+        warnings = scale_warnings(self.current_project) if self.current_project else []
+        self.scale_warning_label.setText("\n".join(f"⚠ {w}" for w in warnings))
+        self.scale_warning_label.setVisible(bool(warnings))
+
     def refresh_previews(self):
         if not self.current_project:
             return
@@ -1850,20 +1858,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._update_prov_label()
 
         # Ensure cached crop previews exist before rendering
-        for blot in self.current_project.panel.blots:
-            if blot.is_nir():
-                for ch in blot.channels:
-                    try:
-                        self.workspace.ensure_blot_crop_preview(
-                            blot, self.current_project.panel, channel_index=ch.channel_index
-                        )
-                    except Exception as e:
-                        print(f"[preview] failed for {getattr(blot, 'id', '?')} ch{ch.channel_index}: {e}")
-            else:
-                try:
-                    self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-                except Exception as e:
-                    print(f"[preview] failed for {getattr(blot, 'id', '?')}: {e}")
+        self._regenerate_crop_previews(self.current_project.panel.blots)
 
         try:
             panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -1871,6 +1866,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
             self.view.setScene(panel_scene)
+            self._update_scale_warnings()
             self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = build_provenance_scene(
@@ -1903,19 +1899,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.workspace.save_project(self.current_project)
 
         # regenerate cached preview for this blot (all channels for NIR)
-        if blot.is_nir():
-            for ch in blot.channels:
-                try:
-                    self.workspace.ensure_blot_crop_preview(
-                        blot, self.current_project.panel, channel_index=ch.channel_index
-                    )
-                except Exception as e:
-                    print(f"[preview] failed after crop move for ch{ch.channel_index}: {e}")
-        else:
-            try:
-                self.workspace.ensure_blot_crop_preview(blot, self.current_project.panel)
-            except Exception as e:
-                print(f"[preview] failed after crop move: {e}")
+        self._regenerate_crop_previews([blot])
 
         # refresh both views
         self.refresh_previews()

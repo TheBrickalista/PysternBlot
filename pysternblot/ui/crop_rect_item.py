@@ -14,6 +14,11 @@ class CropRectItem(QGraphicsRectItem):
     - Calls on_change(scene_rect: QRectF) whenever geometry changes
     - Calls on_commit(scene_rect: QRectF) on mouse release (end of interaction)
 
+    scene_rect is the rectangle itself in scene coordinates (crop_scene_rect),
+    not sceneBoundingRect(): the bounding rect includes half the pen width on
+    every side, which made each commit report the crop 1 px up/left and 2 px
+    larger than drawn.
+
     Backward compatibility:
       - callback= behaves like on_change=
     """
@@ -61,13 +66,17 @@ class CropRectItem(QGraphicsRectItem):
 
     # ---------- internal helpers ----------
 
+    def crop_scene_rect(self) -> QRectF:
+        """The crop rectangle in scene coordinates, without pen padding."""
+        return self.mapRectToScene(self.rect())
+
     def _emit_change(self):
         if callable(self._on_change):
-            self._on_change(self.sceneBoundingRect())
+            self._on_change(self.crop_scene_rect())
 
     def _emit_commit(self):
         if callable(self._on_commit):
-            self._on_commit(self.sceneBoundingRect())
+            self._on_commit(self.crop_scene_rect())
 
     # ---------- handle geometry helpers ----------
 
@@ -218,7 +227,7 @@ class CropRectItem(QGraphicsRectItem):
         self._emit_commit()
 
         # dispatch to specific commit callbacks if provided
-        rect = self.sceneBoundingRect()
+        rect = self.crop_scene_rect()
         if was_move:
             if callable(self._on_move_commit):
                 self._on_move_commit(rect)

@@ -32,6 +32,8 @@ from ..integrity import (
     write_integrity_json,
     write_integrity_html,
 )
+from ..models import CropTemplate
+from ..physical_scale import native_crop_size
 from ..storage import sha256_file
 
 
@@ -95,7 +97,8 @@ def _compute_export_geometry(
 
     The legend zone (lz) and the figure crop box (crop.x/crop.y with
     crop_template.w/h) are independent rectangles in the same original-image
-    pixel space. This computes their union — clamped to the pixmap bounds —
+    pixel space. crop_template must already be in this image's native pixels
+    (physical_scale.native_crop_size), not reference pixels. This computes their union — clamped to the pixmap bounds —
     so the exported crop always fully contains the figure crop box, plus the
     crop box's offset within that union (used to align the legend to the
     crop box rather than to the raw zone width).
@@ -802,7 +805,10 @@ class _ExportMixin:
             return
 
         crop = blot.get_channel_crop(self._active_nir_channel)
-        crop_template = self.current_project.panel.crop_template
+        # The zone export draws this one image at its native resolution, so
+        # the crop box is the template converted to its native pixels.
+        native_w, native_h = native_crop_size(self.current_project, blot)
+        crop_template = CropTemplate(w=native_w, h=native_h)
 
         ex, ey, ew, eh, crop_off_x, crop_off_y = _compute_export_geometry(
             lz, crop, crop_template, float(pm_full.width()), float(pm_full.height())

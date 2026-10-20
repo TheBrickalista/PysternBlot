@@ -23,6 +23,7 @@ from .image_utils import (
 )
 from .jsonsafe import dumps_strict
 from .logchain import verify_log_chain
+from .physical_scale import blot_scale_record, native_crop_size, scale_warnings
 from .models import Project, SaturationStats
 from .storage import Workspace, sha256_file
 
@@ -103,8 +104,9 @@ def _asset_info(
 ) -> dict[str, Any]:
     """
     crop_rect, if given, is (x, y, w, h) in source-image pixel space — the
-    effective crop for the blot this asset belongs to (panel.crop_template
-    supplies w/h; blot.crop supplies x/y). When present, crop-region
+    effective crop for the blot this asset belongs to (panel.crop_template,
+    converted to the blot's native pixels, supplies w/h; blot.crop supplies
+    x/y). When present, crop-region
     saturation is additionally computed at report time from the current
     crop, since only whole-image saturation is a fixed fact recorded at
     import — crop-region saturation changes as the user re-crops.
@@ -211,6 +213,7 @@ def _marker_set_name(project: Project, marker_set_id: str | None) -> str | None:
 def _blot_record(workspace: Workspace, project: Project, blot) -> dict[str, Any]:
     display = blot.display
     crop = blot.crop
+    native_w, native_h = native_crop_size(project, blot)
 
     _gamma = float(display.levels_gamma)
     gamma_warning = (
@@ -247,8 +250,9 @@ def _blot_record(workspace: Workspace, project: Project, blot) -> dict[str, Any]
         "gamma_warning": gamma_warning,
         "source_image": _asset_info(
             workspace, project, blot.asset_sha256,
-            crop_rect=(crop.x, crop.y, project.panel.crop_template.w, project.panel.crop_template.h),
+            crop_rect=(crop.x, crop.y, native_w, native_h),
         ),
+        "physical_scale": blot_scale_record(project, blot),
         "operations": {
             "crop": {
                 "x": crop.x,
@@ -334,6 +338,9 @@ def build_integrity_report(
             "style": project.panel.style.model_dump(),
             "lane_layout": project.panel.lane_layout.model_dump(),
             "legend": project.panel.legend.model_dump(),
+            "crop_template": project.panel.crop_template.model_dump(),
+            "reference_pixel_size_um": project.panel.reference_pixel_size_um,
+            "physical_scale_warnings": scale_warnings(project),
         },
         "blots": [
             _blot_record(workspace, project, blot)
@@ -427,6 +434,17 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
                 acq_parts.append(f"Instrument: {acq['model']}")
             if acq.get("instrument_serial"):
                 acq_parts.append(f"Serial: {acq['instrument_serial']}")
+            if acq.get("serial_number"):
+                acq_parts.append(f"Serial: {acq['serial_number']}")
+            if acq.get("imaging_mode"):
+                acq_parts.append(f"Mode: {acq['imaging_mode']}")
+            if acq.get("exposure_s") is not None:
+                acq_parts.append(f"Exposure: {acq['exposure_s']:g} s")
+            if acq.get("binning"):
+                acq_parts.append(f"Binning: {acq['binning']}")
+            if acq.get("image_area_mm"):
+                area = acq["image_area_mm"]
+                acq_parts.append(f"Image area: {area[0]} × {area[1]} mm")
             if acq.get("software"):
                 acq_parts.append(f"Software: {acq['software']}")
             if acq.get("datetime"):
@@ -455,6 +473,36 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
         else:
             acq_cell = "<td></td>"
 
+        scale = blot.get("physical_scale") or {}
+        scale_parts = []
+        if scale.get("pixel_size_um") is not None:
+            scale_parts.append(
+                f"Pixel size: {float(scale['pixel_size_um']):.1f} µm ({scale.get('pixel_size_source')})"
+            )
+        else:
+            scale_parts.append("Pixel size: unknown (not scaled)")
+        if scale.get("reference_pixel_size_um") is not None:
+            scale_parts.append(f"Reference: {float(scale['reference_pixel_size_um']):.1f} µm")
+        if scale:
+            scale_parts.append(
+                f"f = {float(scale.get('scale_factor_f', 1.0)):.4f} "
+                f"(display scale {float(scale.get('display_scale', 1.0)):.4f})"
+            )
+            scale_parts.append(f"Interpolation: {scale.get('display_interpolation', '')}")
+        for note in scale.get("notes") or []:
+            scale_parts.append(f"Note: {note}")
+        for warning in scale.get("warnings") or []:
+            scale_parts.append(f"⚠ {warning}")
+        scale_style = (
+            "background:#fef3c7;color:#92400e;font-weight:bold;" if scale.get("warnings") else ""
+        )
+        scale_cell = f'<td style="font-size:11px;{scale_style}">{"<br>".join(scale_parts)}</td>'
+        native = scale.get("native_crop_px") or {}
+        crop_size = (
+            f'w={native["w"]}, h={native["h"]}' if native
+            else f'w={ops["crop"]["w"]}, h={ops["crop"]["h"]}'
+        )
+
         rows.append(f"""
         <tr>
           <td>{blot["blot_id"]}</td>
@@ -466,7 +514,8 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
           {saturation_cell}
           {acq_cell}
           <td>{src["width_px"]} × {src["height_px"]}</td>
-          <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, w={ops["crop"]["w"]}, h={ops["crop"]["h"]}</td>
+          {scale_cell}
+          <td>x={ops["crop"]["x"]}, y={ops["crop"]["y"]}, {crop_size}</td>
           <td>{ops["rotation_deg"]}</td>
           <td>{ops["levels"]["black"]}–{ops["levels"]["white"]}, γ={ops["levels"]["gamma"]}</td>
           <td>{overlay["present"]}</td>
@@ -525,6 +574,12 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
 </table>
 """
 
+    panel_scale_warnings = (report.get("panel") or {}).get("physical_scale_warnings") or []
+    scale_warnings_html = "".join(
+        f'<p style="background:#fef3c7;color:#92400e;font-weight:bold;padding:6px;">⚠ {w}</p>'
+        for w in panel_scale_warnings
+    )
+
     html = f"""<!doctype html>
 <html>
 <head>
@@ -550,6 +605,7 @@ code {{ font-size: 11px; word-break: break-all; }}
 <p><strong>Pystern Blot version:</strong> {report["pysternblot_version"]}</p>
 <p><strong>Schema:</strong> {report["schema"]}</p>
 </div>
+{scale_warnings_html}
 
 <h2>Blot provenance</h2>
 <table>
@@ -564,7 +620,8 @@ code {{ font-size: 11px; word-break: break-all; }}
 <th>Saturation</th>
 <th>Acquisition</th>
 <th>Source size</th>
-<th>Crop</th>
+<th>Physical scale</th>
+<th>Crop (native px)</th>
 <th>Rotation</th>
 <th>Levels</th>
 <th>Overlay</th>

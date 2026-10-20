@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 from .models import (
+    AssetEntry,
     BlotChannel,
     CropTemplate,
     MarkerBand,
@@ -26,6 +27,7 @@ from .models import (
 )
 from .logchain import append_log_entry
 from .jsonsafe import dumps_strict
+from .physical_scale import native_crop_size, reconcile_reference_pixel_size
 import datetime, uuid
 from PIL import Image
 import tifffile
@@ -271,32 +273,165 @@ def parse_licor_metadata(path: str | Path) -> dict:
             if dt is not None:
                 result["datetime"] = str(dt.value)
 
-            xres_tag = tags.get(282)
-            unit_tag = tags.get(296)
-            if xres_tag is not None and unit_tag is not None:
-                px_per_unit = None
-                xres_value = xres_tag.value
-                try:
-                    if isinstance(xres_value, (tuple, list)) and len(xres_value) == 2:
-                        num, den = xres_value
-                        px_per_unit = (num / den) if den else None
-                    elif isinstance(xres_value, (int, float)):
-                        px_per_unit = float(xres_value)
-                except (TypeError, ValueError, ZeroDivisionError):
-                    px_per_unit = None
+            pixel_size_um = _tiff_pixel_size_um(tags)
+            if pixel_size_um is not None:
+                result["pixel_size_um"] = pixel_size_um
 
-                if px_per_unit:
-                    # tifffile represents ResolutionUnit as a RESUNIT enum
-                    # member whose str() is just the bare numeric code in
-                    # some tifffile versions (e.g. "3", not "CENTIMETER") --
-                    # read .name when present, and also accept the raw TIFF
-                    # spec codes (2 = INCH, 3 = CENTIMETER) as a fallback.
-                    unit_value = unit_tag.value
-                    unit_name = str(getattr(unit_value, "name", unit_value)).upper()
-                    if "CENTIMETER" in unit_name or unit_value == 3:
-                        result["pixel_size_um"] = 10000.0 / px_per_unit
-                    elif "INCH" in unit_name or unit_value == 2:
-                        result["pixel_size_um"] = 25400.0 / px_per_unit
+            return result
+    except Exception:
+        return {}
+
+
+def _tiff_pixel_size_um(tags) -> float | None:
+    """Pixel size in µm from a tifffile page's XResolution + ResolutionUnit
+    tags (CENTIMETER or INCH), or None if either is missing or unusable."""
+    xres_tag = tags.get(282)
+    unit_tag = tags.get(296)
+    if xres_tag is None or unit_tag is None:
+        return None
+
+    px_per_unit = None
+    xres_value = xres_tag.value
+    try:
+        if isinstance(xres_value, (tuple, list)) and len(xres_value) == 2:
+            num, den = xres_value
+            px_per_unit = (num / den) if den else None
+        elif isinstance(xres_value, (int, float)):
+            px_per_unit = float(xres_value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        px_per_unit = None
+
+    if not px_per_unit:
+        return None
+
+    # tifffile represents ResolutionUnit as a RESUNIT enum
+    # member whose str() is just the bare numeric code in
+    # some tifffile versions (e.g. "3", not "CENTIMETER") --
+    # read .name when present, and also accept the raw TIFF
+    # spec codes (2 = INCH, 3 = CENTIMETER) as a fallback.
+    unit_value = unit_tag.value
+    unit_name = str(getattr(unit_value, "name", unit_value)).upper()
+    if "CENTIMETER" in unit_name or unit_value == 3:
+        return 10000.0 / px_per_unit
+    if "INCH" in unit_name or unit_value == 2:
+        return 25400.0 / px_per_unit
+    return None
+
+
+# The ImageQuant 800 cross-check: the recorded "Image Area" (mm) must agree
+# with pixel count x pixel size. Real files agree within ~2.5%; beyond this
+# the pixel size is kept as metadata but never drives display scaling.
+_IQ800_AREA_TOLERANCE = 0.10
+_IQ800_NAME = "imagequant 800"
+
+
+def _parse_key_value_description(text: str) -> dict[str, str]:
+    """CRLF-separated `Key = Value` lines (ImageQuant 800 ImageDescription).
+    Lines without '=' are skipped; never raises."""
+    out: dict[str, str] = {}
+    for line in re.split(r"\r\n|\r|\n", text or ""):
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key:
+            out[key] = value
+    return out
+
+
+def _parse_area_mm(value: str) -> list[float] | None:
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*(?:mm)?\s*", value or "")
+    if not m:
+        return None
+    nums = [float(m.group(1)), float(m.group(2))]
+    return [int(n) if n.is_integer() else n for n in nums]
+
+
+def _parse_seconds(value: str) -> float | None:
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|min)?\s*", value or "", re.IGNORECASE)
+    if not m:
+        return None
+    n = float(m.group(1))
+    unit = (m.group(2) or "s").lower()
+    return n / 1000.0 if unit == "ms" else n * 60.0 if unit == "min" else n
+
+
+def parse_iq800_metadata(path: str | Path) -> dict:
+    """
+    Parse Amersham ImageQuant 800 acquisition metadata from a TIFF.
+
+    Identified by the Model tag (272) or the ImageDescription "Instrument"
+    line containing "ImageQuant 800"; returns {} for any other, unreadable or
+    non-TIFF file, and never raises.
+
+    The IQ800 always exports a fixed 2400 x 3296 px grid whatever "Image
+    Area" was imaged, so the physical pixel size (XResolution) varies per
+    file. It is cross-checked against Image Area: if they disagree by more
+    than 10% on either axis, pixel_size_trusted is False and the size never
+    drives display scaling (see physical_scale.scaling_pixel_size_um).
+    Binning is only recorded: the instrument software re-interpolates binned
+    images back onto the same grid with unchanged XResolution.
+
+    Keys (each only when present and parseable): instrument, model,
+    software, serial_number, datetime, binning, image_area_mm ([w, h]),
+    exposure_s, imaging_mode, pixel_size_um, pixel_size_source
+    ("iq800_xresolution"), pixel_size_trusted, image_area_check.
+    """
+    try:
+        with tifffile.TiffFile(str(path)) as tif:
+            page = tif.pages[0]
+            tags = page.tags
+
+            model_tag = tags.get(272)
+            model = str(model_tag.value).strip() if model_tag is not None else ""
+            desc_tag = tags.get(270)
+            desc = desc_tag.value if desc_tag is not None else ""
+            if isinstance(desc, bytes):
+                desc = desc.decode("utf-8", "replace")
+            fields = _parse_key_value_description(str(desc))
+            instrument = fields.get("Instrument", "")
+
+            if _IQ800_NAME not in model.lower() and _IQ800_NAME not in instrument.lower():
+                return {}
+
+            result: dict = {"instrument": "Amersham ImageQuant 800"}
+            result["model"] = model or instrument
+
+            software = fields.get("Software")
+            if not software and tags.get(305) is not None:
+                software = str(tags.get(305).value)
+            if software:
+                result["software"] = software
+            if fields.get("Serial number"):
+                result["serial_number"] = fields["Serial number"]
+            if tags.get(306) is not None:
+                result["datetime"] = str(tags.get(306).value)
+            if fields.get("Binning"):
+                result["binning"] = fields["Binning"]
+            area = _parse_area_mm(fields.get("Image Area", ""))
+            if area is not None:
+                result["image_area_mm"] = area
+            exposure = _parse_seconds(fields.get("Exposure time", ""))
+            if exposure is not None:
+                result["exposure_s"] = exposure
+            if fields.get("Imaging mode"):
+                result["imaging_mode"] = fields["Imaging mode"]
+
+            pixel_size_um = _tiff_pixel_size_um(tags)
+            if pixel_size_um is not None:
+                result["pixel_size_um"] = pixel_size_um
+                result["pixel_size_source"] = "iq800_xresolution"
+                trusted = True
+                if area is not None:
+                    width_px, height_px = int(page.imagewidth), int(page.imagelength)
+                    computed = [width_px * pixel_size_um / 1000.0, height_px * pixel_size_um / 1000.0]
+                    rel = max(abs(c - float(n)) / float(n) for c, n in zip(computed, area))
+                    trusted = rel <= _IQ800_AREA_TOLERANCE
+                    result["image_area_check"] = {
+                        "computed_mm": [round(c, 2) for c in computed],
+                        "max_relative_difference": round(rel, 4),
+                    }
+                result["pixel_size_trusted"] = trusted
 
             return result
     except Exception:
@@ -585,7 +720,67 @@ class Workspace:
         if "crop_template" not in data.get("panel", {}) and project.panel.blots:
             first = project.panel.blots[0]
             project.panel.crop_template = CropTemplate(w=first.crop.w, h=first.crop.h)
+        # Migrate projects that pre-date physical scaling: read ImageQuant 800
+        # metadata from the stored originals, then set the reference pixel
+        # size. Every change is logged; for a project whose images share one
+        # pixel size the scale factor is 1 everywhere and nothing renders
+        # differently.
+        self._backfill_iq800_metadata(project)
+        reconcile_reference_pixel_size(project)
         return project
+
+    def _backfill_iq800_metadata(self, project: Project) -> None:
+        """Fill in ImageQuant 800 acquisition metadata for blot and overlay
+        assets that have none, by re-parsing the stored original. Overlay
+        assets without an AssetEntry get one, but only when they are IQ800
+        files (so other projects are left untouched)."""
+        now = (
+            datetime.datetime.now(datetime.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+        )
+
+        def _log(sha: str, meta: dict) -> None:
+            append_log_entry(
+                project,
+                OperationLogEntry(
+                    timestamp_utc=now,
+                    operation="iq800_metadata_backfilled",
+                    target_type="asset",
+                    target_id=sha,
+                    asset_sha256=sha,
+                    field="acquisition_metadata",
+                    old_value=None,
+                    new_value=meta,
+                    note="ImageQuant 800 metadata read from the stored original on project load.",
+                ),
+            )
+
+        for sha, asset in project.assets.items():
+            if asset.acquisition_metadata:
+                continue
+            try:
+                meta = parse_iq800_metadata(self.asset_original_file(sha))
+            except FileNotFoundError:
+                continue
+            if meta:
+                asset.acquisition_metadata = meta
+                _log(sha, meta)
+
+        for blot in project.panel.blots:
+            sha = blot.overlay_asset_sha256
+            if not sha or sha in project.assets:
+                continue
+            try:
+                path = self.asset_original_file(sha)
+            except FileNotFoundError:
+                continue
+            meta = parse_iq800_metadata(path)
+            if meta:
+                project.assets[sha] = AssetEntry(
+                    sha256=sha, stored_original_path=str(path), acquisition_metadata=meta,
+                )
+                _log(sha, meta)
     
     def load_legend_suggestions(self) -> list[str]:
         self.ensure()
@@ -773,7 +968,7 @@ class Workspace:
         save_uint16_tiff(cropped, out_path)
         return out_path
     
-    def ensure_blot_crop_preview(self, blot, panel, channel_index: int = -1) -> Path:
+    def ensure_blot_crop_preview(self, blot, panel, channel_index: int = -1, *, project=None) -> Path:
         """
         Generate/update a 16-bit crop preview TIFF from blot settings.
 
@@ -782,7 +977,10 @@ class Workspace:
         channel_index >= 0: NIR path — uses blot.channels[channel_index].asset_sha256 and .display.
             Cache: assets/<channel.asset_sha256>/preview_crop_<blot.id>_ch<channel_index>.tif
 
-        Crop position comes from blot.crop.x/y; size from panel.crop_template.
+        Crop position comes from blot.crop.x/y; size from panel.crop_template,
+        converted to this blot's native pixels (template x f, see
+        physical_scale) when `project` is given. The cached TIFF is always in
+        native pixels: source data is never resampled.
         Rotation → levels → crop, all in 16-bit.
         """
         self.ensure()
@@ -826,9 +1024,14 @@ class Workspace:
         if bool(getattr(display, "flip_vertical", False)):
             img = np.flipud(img)
 
-        # w/h come from the shared crop template, not the per-blot crop
-        w = int(round(float(panel.crop_template.w)))
-        h = int(round(float(panel.crop_template.h)))
+        # w/h come from the shared crop template (in this blot's native
+        # pixels), not the per-blot crop
+        if project is not None:
+            native_w, native_h = native_crop_size(project, blot)
+        else:
+            native_w, native_h = float(panel.crop_template.w), float(panel.crop_template.h)
+        w = int(round(native_w))
+        h = int(round(native_h))
 
         if channel_index >= 0:
             c = blot.get_channel_crop(channel_index)

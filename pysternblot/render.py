@@ -17,6 +17,7 @@ from PySide6.QtCore import QRectF, Qt
 
 from .models import BlotChannel, Crop, MarkerBand, Project, LegendRow, LegendZone
 from .ui.crop_rect_item import CropRectItem
+from .physical_scale import blot_display_scale, native_crop_size, template_size_from_native
 
 from .image_utils import (
     load_image_as_uint16,
@@ -413,8 +414,13 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         scene.addText("No blots in this project.", font)
         return scene
 
-    max_w = max((pm.width() for pm in pixmaps if not pm.isNull()), default=0)
-    max_h = max((pm.height() for pm in pixmaps if not pm.isNull()), default=0)
+    # Display scale per row (physical_scale): crops are cut in native pixels
+    # (template x f) and drawn at 1 / f, so every blot shows the same physical
+    # size. 1.0 whenever all images share one pixel size (no transform is set).
+    scales = [blot_display_scale(project, blot) for blot, _ch in render_rows]
+
+    max_w = max((pm.width() * k for pm, k in zip(pixmaps, scales) if not pm.isNull()), default=0)
+    max_h = max((pm.height() * k for pm, k in zip(pixmaps, scales) if not pm.isNull()), default=0)
     if max_w <= 0 or max_h <= 0:
         scene.addText("Could not load blot previews.", font).setPos(x0, y0)
         return scene
@@ -478,7 +484,7 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
         y += 10.0  # gap before first blot
 
     # ---- render rows ----
-    for (blot, ch), pm in zip(render_rows, pixmaps):
+    for (blot, ch), pm, display_scale in zip(render_rows, pixmaps, scales):
         if pm.isNull():
             t = scene.addText(f"Could not load image for blot: {blot.id}", font)
             t.setPos(x0, y)
@@ -487,11 +493,16 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
 
         img_item = scene.addPixmap(pm)
         img_item.setPos(img_col_x, y)
+        if display_scale != 1.0:
+            img_item.setTransformationMode(Qt.SmoothTransformation)
+            img_item.setScale(display_scale)
+        disp_w = pm.width() * display_scale
+        disp_h = pm.height() * display_scale
 
         if getattr(s, "border_enabled", True):
             pen = QPen(Qt.black, float(getattr(s, "border_width_px", 1)))
             pen.setCosmetic(True)
-            scene.addRect(img_col_x, y, pm.width(), pm.height(), pen)
+            scene.addRect(img_col_x, y, disp_w, disp_h, pen)
 
         # --- MW marker annotations — per-band filter controls which rows each band appears on ---
         ladder = getattr(blot, "overlay_ladder", None)
@@ -523,11 +534,11 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             for assignment in ladder.bands:
                 if not bool(getattr(assignment, "show_in_final", True)):
                     continue
-                
-                crop_h_model = float(project.panel.crop_template.h)
-                scale_y = float(pm.height()) / crop_h_model if crop_h_model > 0 else 1.0
 
-                marker_y_in_crop = (float(assignment.y_px) - crop_y) * scale_y
+                # y_px and crop_y are native pixels of this blot; the crop is
+                # drawn at display_scale (1 / f), so a native offset maps to
+                # offset * display_scale.
+                marker_y_in_crop = (float(assignment.y_px) - crop_y) * display_scale
 
                 # Do not skip: show MW marker position relative to crop,
                 # even if it falls slightly outside the cropped image.
@@ -589,9 +600,9 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
             t = scene.addText(label, protein_font)
             t.setDefaultTextColor(Qt.black)
             br = t.boundingRect()
-            t.setPos(right_col_x, y + pm.height() / 2.0 - br.height() / 2.0)
+            t.setPos(right_col_x, y + disp_h / 2.0 - br.height() / 2.0)
 
-        y += pm.height() + gap_between_blots
+        y += disp_h + gap_between_blots
 
     # ---- lower legend ----
     if legend and getattr(legend, "lower_rows", None):
@@ -716,11 +727,14 @@ def build_provenance_scene(
             scene.addLine(x0, gy, x0 + pm.width(), gy, grid_pen)
             gy += grid_step
             
-    # Crop box overlay (crop coords are in image pixel space)
+    # Crop box overlay (crop coords are in image pixel space). The shared
+    # template is in reference pixels; this image shows it at its own native
+    # size (template x f, see physical_scale), i.e. the region actually cut.
     c = blot.get_channel_crop(nir_channel_index)
     ct = project.panel.crop_template
+    native_w, native_h = native_crop_size(project, blot)
 
-    def _apply_from_scene_rect(scene_rect: QRectF) -> None:
+    def _clamped_image_rect(scene_rect: QRectF) -> tuple[float, float, float, float]:
         # Convert scene coords -> image pixel coords
         x = float(scene_rect.x() - x0)
         y = float(scene_rect.y() - y0)
@@ -733,38 +747,45 @@ def build_provenance_scene(
         if y < 0: y = 0
         if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
         if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
+        return x, y, w, h
 
+    def _apply_position(scene_rect: QRectF) -> tuple[float, float]:
         # Per-channel crop position: each NIR channel stores its own x/y.
-        # ECL blots always update blot.crop directly.
+        # ECL blots always update blot.crop directly. Never touches the
+        # template: a move must not rewrite crop_template (with f != 1 the
+        # native -> template round trip would drift).
+        x, y, w, h = _clamped_image_rect(scene_rect)
         _cur = blot.get_channel_crop(nir_channel_index)
         blot.set_channel_crop(
             nir_channel_index,
             Crop(x=x, y=y, w=_cur.w, h=_cur.h, mode=_cur.mode),
         )
-        # w/h go to the shared template so all blots resize together
-        ct.w = w
-        ct.h = h
+        return w, h
 
     def _on_move_commit(scene_rect: QRectF) -> None:
-        _apply_from_scene_rect(scene_rect)
+        _apply_position(scene_rect)
         if callable(on_crop_commit):
             on_crop_commit(blot)
 
     def _on_resize_commit(scene_rect: QRectF) -> None:
-        _apply_from_scene_rect(scene_rect)
+        w, h = _apply_position(scene_rect)
+        # w/h (native pixels of this image) go to the shared template, in
+        # reference pixels, so all blots resize together to the same
+        # physical size.
+        ct.w, ct.h = template_size_from_native(project, blot, w, h)
         if callable(on_crop_resize_commit):
             on_crop_resize_commit()
 
     crop_rect = QRectF(
         x0 + float(c.x),
         y0 + float(c.y),
-        float(ct.w),
-        float(ct.h),
+        native_w,
+        native_h,
     )
 
     rect_item = CropRectItem(
         crop_rect,
-        on_change=_apply_from_scene_rect,
+        on_change=_apply_position,
         on_move_commit=_on_move_commit,
         on_resize_commit=_on_resize_commit,
     )

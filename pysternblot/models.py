@@ -240,7 +240,12 @@ class Panel(BaseModel):
     blots: List[Blot]
     layout: Layout
     legend: LegendSettings = Field(default_factory=LegendSettings)
+    # crop_template.w/h are in *reference* pixels: pixels of size
+    # reference_pixel_size_um (the finest scaling pixel size among all blots,
+    # see physical_scale.py). None when no blot has a known scaling pixel size;
+    # then every blot is drawn 1:1 and the template is in native pixels.
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
+    reference_pixel_size_um: Optional[float] = None
 
 class SaturationStats(BaseModel):
     # Union (not float): uint sources must keep serializing as an int, exactly

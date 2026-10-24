@@ -14,7 +14,7 @@ pydantic==2.6
 numpy==1.24
 Pillow==12.3.0
 tifffile==2023.1.23
-certifi==2024.7.4
+certifi==2026.10.19
 
 # --- Test tooling ---
 pytest==9.0.3

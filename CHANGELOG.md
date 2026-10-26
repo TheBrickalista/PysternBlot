@@ -8,6 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **Require Python ≥ 3.11** (was 3.10) to take security fixes that no longer support 3.10:
+  **Pillow ≥ 13.0.0** (was 12.3.0; ~38 advisories) and, dev-only, **filelock 4.2.4** (3 CVEs).
+  **certifi ≥ 2026.10.19** (was 2024.7.4) drops the distrusted emSign ECC G3 root
+  (PYSEC-2026-4320). The `minimum` CI job now runs on Python 3.11; `ci/requirements-min.*`
+  no longer carry the 3.10-only tomli/exceptiongroup entries.
+- **setuptools 84.1.0** (was 84.0.0) in `uv.lock` and `ci/build-constraints.*`. Supersedes #209.
+
 ### Changed
 
 *CI-only — no functional or version change.*

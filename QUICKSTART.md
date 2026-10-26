@@ -33,7 +33,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 ### For Python users
 
-If you already have Python 3.10 or later installed:
+If you already have Python 3.11 or later installed:
 
 ```bash
 pip install pysternblot

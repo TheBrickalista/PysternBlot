@@ -7,8 +7,8 @@ yourself.
 | Method | Best for | Python needed? |
 |---|---|---|
 | **Standalone app** | Most users — bench scientists who just want to run it | No |
-| **PyPI (`pip install`)** | Python users who want it in their environment | Yes (≥ 3.10) |
-| **From source** | Contributors and people who want the development version | Yes (≥ 3.10) |
+| **PyPI (`pip install`)** | Python users who want it in their environment | Yes (≥ 3.11) |
+| **From source** | Contributors and people who want the development version | Yes (≥ 3.11) |
 
 If you are not sure, choose the **standalone app** — it bundles everything and
 requires no setup.
@@ -42,7 +42,7 @@ Windows code signing is planned for a future release.
 
 ## Option 2 — PyPI
 
-If you already have Python 3.10 or later, install the published package:
+If you already have Python 3.11 or later, install the published package:
 
 ```bash
 pip install pysternblot
@@ -92,7 +92,7 @@ picked up the next time you launch.
 The requirements below apply only to the PyPI and from-source methods. The
 standalone builds bundle everything, including Python itself.
 
-- Python ≥ 3.10
+- Python ≥ 3.11
 - PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
@@ -148,7 +148,7 @@ reports are kept.
 location may not be on your `PATH`. Try launching with `python -m pysternblot`,
 or ensure your Python scripts directory is on your `PATH`.
 
-**`pip install` fails on the Python version.** Confirm you are on Python 3.10 or
+**`pip install` fails on the Python version.** Confirm you are on Python 3.11 or
 later with `python --version`. On systems with both Python 2 and 3, you may need
 `python3` and `pip3`.
 

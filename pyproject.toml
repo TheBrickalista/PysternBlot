@@ -7,7 +7,7 @@ name = "pysternblot"
 version = "1.2.3"
 description = "Western blot panel builder with hierarchical lane annotations (GPLv3)."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "GPL-3.0-only" }
 authors = [
   { name = "Etienne Boulter" },
@@ -29,7 +29,6 @@ classifiers = [
   "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
@@ -41,9 +40,9 @@ dependencies = [
   "PySide6>=6.11.2",
   "pydantic>=2.6",
   "numpy>=1.24",
-  "Pillow>=12.3.0",
+  "Pillow>=13.0.0",
   "tifffile>=2023.1.23",
-  "certifi>=2024.7.4",
+  "certifi>=2026.10.19",
 ]
 
 [project.optional-dependencies]

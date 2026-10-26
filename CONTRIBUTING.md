@@ -17,7 +17,7 @@ before starting work, so we can agree on the approach.
 
 ## Development setup
 
-Pystern Blot requires **Python ≥ 3.10**. Clone the repository and install in
+Pystern Blot requires **Python ≥ 3.11**. Clone the repository and install in
 editable mode with the development extras:
 
 ```bash

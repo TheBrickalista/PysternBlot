@@ -11,7 +11,7 @@ Not read by any workflow.
 |---|---|---|
 | **macOS** | [PysternBlot-vVERSION-macOS.zip](https://github.com/TheBrickalista/PysternBlot/releases/download/vVERSION/PysternBlot-vVERSION-macOS.zip) | macOS 15 or later, Apple Silicon. Signed and notarized: unzip and open. |
 | **Windows** | [PysternBlot-vVERSION-Windows.exe](https://github.com/TheBrickalista/PysternBlot/releases/download/vVERSION/PysternBlot-vVERSION-Windows.exe) | Not yet code-signed: on first run, **More info → Run anyway**. |
-| **Python (any OS)** | `pip install pysternblot==VERSION` | Python 3.10 or later; also for Intel Macs and older macOS. |
+| **Python (any OS)** | `pip install pysternblot==VERSION` | Python 3.11 or later; also for Intel Macs and older macOS. |
 
 Full documentation: https://pysternblot.readthedocs.io
 

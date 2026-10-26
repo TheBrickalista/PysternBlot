@@ -7,17 +7,13 @@ than the ones pip users can actually get.
 """
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10 has no stdlib tomllib
-    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 MIN_IN = ROOT / "ci" / "requirements-min.in"

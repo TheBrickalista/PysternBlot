@@ -8,7 +8,7 @@
 
 [![DOI](https://zenodo.org/badge/1157163053.svg)](https://doi.org/10.5281/zenodo.20185279)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)]()
 [![PyPI](https://img.shields.io/pypi/v/pysternblot)](https://pypi.org/project/pysternblot/)
 [![Documentation Status](https://readthedocs.org/projects/pysternblot/badge/?version=latest)](https://pysternblot.readthedocs.io/en/latest/)
@@ -76,7 +76,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 
 ## Requirements
 
-- Python ≥ 3.10
+- Python ≥ 3.11
 - PySide6 ≥ 6.11.2
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24

@@ -22,12 +22,8 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10 has no stdlib tomllib
-    import tomli as tomllib  # type: ignore[no-redef]
 
 # Strictly x.y.z, integers only -- no pre-release/build suffix (e.g. "1.3.0rc1"
 # or "1.3.0+build.1"), and no 2- or 4-part forms. The OS-level version fields

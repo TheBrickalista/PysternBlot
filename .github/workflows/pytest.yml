@@ -59,7 +59,7 @@ jobs:
   # constraint-dependencies (pip>=26.2) is not a == pin and would be
   # rejected under --require-hashes.
   minimum:
-    name: Tests (minimum versions, Python 3.10)
+    name: Tests (minimum versions, Python 3.11)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -74,7 +74,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install Qt system dependencies
         run: |
@@ -88,22 +88,23 @@ jobs:
 
       - name: Install minimum versions
         run: |
-          uv venv --python 3.10
+          uv venv --python 3.11
           uv pip install --no-config --require-hashes -r ci/requirements-min.txt
           uv pip install --no-config --no-deps -e .
 
       - name: Run tests
         run: .venv/bin/python -m pytest tests/ -v
 
-      # Audited from Python 3.10 so the lock's `python_full_version < '3.11'`
-      # entries (tomli, exceptiongroup) are included. pip-audit itself comes
+      # Audited from Python 3.11, the lowest supported Python, so any
+      # version-gated entries in the lock resolve as they were installed
+      # above. pip-audit itself comes
       # from uv.lock (dev extra), in its own environment so it cannot touch
       # the minimum-versions .venv. colorama (Windows-only, via pytest) is
       # not audited on this Linux runner.
       - name: Run pip-audit on the minimum-versions lock
         env:
           UV_PROJECT_ENVIRONMENT: .venv-audit
-        run: uv run --locked --extra dev --python 3.10 pip-audit -r ci/requirements-min.txt --require-hashes --disable-pip
+        run: uv run --locked --extra dev --python 3.11 pip-audit -r ci/requirements-min.txt --require-hashes --disable-pip
 
   lint:
     runs-on: ubuntu-24.04

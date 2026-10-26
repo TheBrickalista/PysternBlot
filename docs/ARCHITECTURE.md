@@ -6,7 +6,7 @@ submit changes, see the [contributing guide](https://pysternblot.readthedocs.io/
 
 ## Overview
 
-Pystern Blot is a cross-platform desktop application (Python ≥ 3.10,
+Pystern Blot is a cross-platform desktop application (Python ≥ 3.11,
 PySide6 / Qt 6) that treats a Western blot image as an informatic object with a
 documented origin and processing history. All domain state is held in Pydantic
 v2 models and persisted as JSON; source images are stored content-addressed by

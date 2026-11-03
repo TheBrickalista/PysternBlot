@@ -16,17 +16,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   (PYSEC-2026-4320). The `minimum` CI job now runs on Python 3.11; `ci/requirements-min.*`
   no longer carry the 3.10-only tomli/exceptiongroup entries.
 - **setuptools 84.1.0** (was 84.0.0) in `uv.lock` and `ci/build-constraints.*`. Supersedes #209.
+- **msgpack 1.2.4** (was 1.2.1) in `uv.lock`, dev-only (pulled in by pip-audit's HTTP cache):
+  CVE-2026-114613 / GHSA-j586-36cw-2gc2, a memory leak / use-after-free in the C extension on
+  malformed input. Not shipped to users.
 
 ### Changed
 
 *CI-only — no functional or version change.*
 
-- **Move the uv pin to 0.12.18** so Dependabot's bundled uv (0.12.18) can update `uv.lock`; its
-  uv job previously failed on every package with `tool_version_not_supported`. `pyproject.toml`
-  now declares a range, `required-version = ">=0.12.18,<0.13"`, so the next uv patch release in
-  Dependabot doesn't break it again; every `setup-uv` step in CI pins exactly `0.12.18`. Local
-  development now needs uv 0.12.x (`uv self update 0.12.18`): uv 0.11 refuses to run in this
-  project.
+- **uv pin is now a floor: `required-version = ">=0.13.5"`.** Dependabot's bundled uv moved to
+  0.13.5, outside the previous `">=0.12.18,<0.13"` range, so its uv job failed every `uv.lock`
+  update with `tool_version_not_supported` and security alerts on `uv.lock` got no fix PR. With
+  no upper bound this no longer recurs on each uv release. Every `setup-uv` step in CI pins
+  exactly `0.13.5`, enforced by `tests/test_workflows_hardening.py` (one exact version across all
+  steps, at or above the floor). Local lock regeneration needs uv ≥ 0.13.5
+  (`uv self update 0.13.5`). A plain regeneration under 0.13.5 leaves the locks byte for byte
+  identical; the first content change written by uv 0.13 (here the msgpack upgrade) moves
+  `uv.lock` from `revision = 3` to `revision = 5`. uv < 0.13 still reads it, but writes
+  `revision = 3` back on its next change; the `>=0.13.5` floor rules that out.
+- **Dependabot no longer touches the hashed `ci/` locks.** `uv` and `pip` entries for `/ci`
+  exclude `ci/requirements-min.*` and `ci/build-constraints.*`, so security updates can't
+  recompile them from inside `ci/` (which breaks the `# via -r ci/…` paths).
 - **setuptools 84.0.0** (was 83.0.0) in `uv.lock` and the hash-pinned `ci/build-constraints.*`;
   Dependabot now skips setuptools for uv (its lockfile-only job can't update a
   `[build-system]` requirement), so it is bumped by hand, in both places together.

@@ -128,3 +128,43 @@ def test_no_event_expressions_in_run_blocks(workflow):
                 f"{workflow.name}:{job_id} step {step.get('name')!r} expands "
                 f"github.event.* inside run:; pass it through env instead"
             )
+
+
+EXACT_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def _uv_floor():
+    """The floor in [tool.uv] required-version, which must be a bare >=x.y.z.
+
+    An == pin or an upper bound makes Dependabot's bundled uv fail every
+    uv.lock update with tool_version_not_supported once it moves past it.
+    """
+    import tomllib
+
+    spec = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "tool"]["uv"]["required-version"]
+    m = re.fullmatch(r">=\s*(\d+\.\d+\.\d+)", spec.strip())
+    assert m, f"required-version {spec!r} must be a floor only (>=x.y.z)"
+    return tuple(int(x) for x in m.group(1).split("."))
+
+
+def _setup_uv_versions():
+    for wf in WORKFLOWS:
+        for job_id, step in _steps(wf):
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                yield wf.name, job_id, (step.get("with") or {}).get("version")
+
+
+def test_setup_uv_pins_one_exact_version_at_or_above_floor():
+    """CI never derives uv from pyproject.toml: every setup-uv step pins the
+    same exact version, at or above the required-version floor."""
+    found = list(_setup_uv_versions())
+    assert found, "no setup-uv steps found"
+    for name, job_id, version in found:
+        assert version is not None and EXACT_VERSION.match(str(version)), (
+            f"{name}:{job_id} setup-uv needs an exact version: x.y.z (got {version!r})"
+        )
+    versions = {str(v) for _, _, v in found}
+    assert len(versions) == 1, f"setup-uv steps pin different uv versions: {sorted(versions)}"
+    pinned = tuple(int(x) for x in versions.pop().split("."))
+    assert pinned >= _uv_floor(), "CI uv pin is below [tool.uv] required-version"

@@ -26,6 +26,8 @@ cd PysternBlot
 pip install -e ".[dev]"
 ```
 
+If you change dependencies, regenerate `uv.lock` (and the hashed locks in `ci/`, using the command in each `.in` file's header) with **uv 0.13.5 or newer**; CI pins exactly 0.13.5.
+
 Run the application:
 
 ```bash

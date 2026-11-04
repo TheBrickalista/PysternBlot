@@ -8,6 +8,20 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Exported files carry their SHA-256** (issue #203). Exported figures (PNG/PDF/SVG,
+  legend-zone PNG, annotated context TIFF) record the SHA-256 of the written file in the
+  operation log; integrity reports list every export and re-verify it against the file on disk
+  (ok / changed / missing / superseded / not recorded). Closes #203. The report schema is now
+  `pysternblot.integrity_report.v3` / `pysternblot.detailed_integrity_report.v3`: `exports` is
+  derived from the operation log and `exports_summary` counts each status.
+
+### Fixed
+- **PDF/SVG export no longer logs an export when the output file could not be opened** (e.g. an
+  unwritable folder); the error is shown and nothing is recorded.
+- **Legend-zone export on NIR blots records the active channel's asset hash**, i.e. the image
+  actually drawn, instead of the blot's first channel.
+
 ### Security
 
 - **Require Python ≥ 3.11** (was 3.10) to take security fixes that no longer support 3.10:

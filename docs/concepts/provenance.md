@@ -39,7 +39,8 @@ events include:
 - Crop coordinates, in pixels relative to the original image
 - Rotations and flips
 - Band and molecular-weight marker placements, with antibody and target names
-- Export events, with format, timestamp, and output path
+- Export events, with format, timestamp, and output path, and the SHA-256 of the
+  written file, re-verified in each integrity report
 - Archive and restore events
 
 Because the log records *parameters* rather than baking changes into pixels, the

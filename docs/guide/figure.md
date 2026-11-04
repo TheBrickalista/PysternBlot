@@ -37,6 +37,16 @@ See [Provenance and integrity](../concepts/provenance.md) for what these reports
 contain and why, and the [About tab](about.md) for version and citation
 information to accompany a submission.
 
+Both reports include an **Exported files** table. Each figure, legend-zone PNG,
+annotated context TIFF and source file you exported is listed with the SHA-256
+recorded when it was written, re-checked against the file at that path:
+**ok** (unchanged), **changed** (the file was edited after export), **missing**
+(moved, renamed, or the report was made on another computer; verify by hash),
+**superseded** (a later export overwrote the same path) or **not recorded**
+(exported by an earlier version, before hashes were kept). A file re-encoded
+downstream, for example by a journal's submission system, will not match its
+recorded hash.
+
 ```{note}
 If any blot in the project was imported from an 8-bit source, a warning is shown
 before export, reminding you to disclose the bit depth in any journal submission.

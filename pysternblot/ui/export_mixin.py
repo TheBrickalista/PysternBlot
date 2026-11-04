@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 
@@ -177,6 +178,29 @@ class _ExportMixin:
 
         return scene, rect
 
+    def _log_export(self, path: str, *, fmt: str, field: str,
+                    target_id: str | None, asset_sha256: str | None = None) -> str:
+        """Hash the file just written to *path*, log export_generated with
+        new_value={"path", "format", "sha256", "size_bytes"}, return the sha256.
+
+        Raises OSError (FileNotFoundError if the file is not there) without
+        logging anything: an export is never recorded without its hash.
+        """
+        if not Path(path).is_file():
+            raise FileNotFoundError(f"Exported file not found after writing:\n{path}")
+        sha = sha256_file(str(path))
+        size_bytes = os.path.getsize(path)
+        self.log_operation(
+            "export_generated",
+            target_type="export",
+            target_id=target_id,
+            asset_sha256=asset_sha256,
+            field=field,
+            old_value=None,
+            new_value={"path": str(path), "format": fmt, "sha256": sha, "size_bytes": size_bytes},
+        )
+        return sha
+
     def export_final_png(self):
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -226,18 +250,18 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", "Could not save PNG.")
             return
 
-        self.log_operation(
-            "export_generated",
-            target_type="export",
-            target_id=self.current_project.project.id if self.current_project else None,
-            field="final_png",
-            old_value=None,
-            new_value=str(path),
-        )
+        try:
+            sha = self._log_export(
+                path, fmt="png", field="final_png",
+                target_id=self.current_project.project.id if self.current_project else None,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "Export error", f"Could not verify the exported PNG:\n{e}")
+            return
 
         self.workspace.save_project(self.current_project)
 
-        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
+        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_pdf(self):
         scene, rect = self._final_scene_and_rect()
@@ -266,6 +290,9 @@ class _ExportMixin:
         writer.setResolution(300)
 
         painter = QPainter(writer)
+        if not painter.isActive():
+            QMessageBox.critical(self, "Export error", f"Could not write PDF:\n{path}")
+            return
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
 
@@ -285,19 +312,19 @@ class _ExportMixin:
         )
 
         scene.render(painter, target, rect)
-        painter.end()
+        painter.end()  # the file is complete on disk once end() returns
 
-        self.log_operation(
-            "export_generated",
-            target_type="export",
-            target_id=self.current_project.project.id if self.current_project else None,
-            field="final_pdf",
-            old_value=None,
-            new_value=str(path),
-        )
+        try:
+            sha = self._log_export(
+                path, fmt="pdf", field="final_pdf",
+                target_id=self.current_project.project.id if self.current_project else None,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "Export error", f"Could not verify the exported PDF:\n{e}")
+            return
         self.workspace.save_project(self.current_project)
 
-        QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}")
+        QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_svg(self):
         scene, rect = self._final_scene_and_rect()
@@ -341,6 +368,9 @@ class _ExportMixin:
         generator.setDescription("Exported from Pystern Blot")
 
         painter = QPainter(generator)
+        if not painter.isActive():
+            QMessageBox.critical(self, "Export error", f"Could not write SVG:\n{path}")
+            return
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
 
@@ -352,19 +382,19 @@ class _ExportMixin:
         )
 
         scene.render(painter, target, rect)
-        painter.end()
+        painter.end()  # the file is complete on disk once end() returns
 
-        self.log_operation(
-            "export_generated",
-            target_type="export",
-            target_id=self.current_project.project.id if self.current_project else None,
-            field="final_svg",
-            old_value=None,
-            new_value=str(path),
-        )
+        try:
+            sha = self._log_export(
+                path, fmt="svg", field="final_svg",
+                target_id=self.current_project.project.id if self.current_project else None,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "Export error", f"Could not verify the exported SVG:\n{e}")
+            return
         self.workspace.save_project(self.current_project)
 
-        QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}")
+        QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}\nSHA-256: {sha[:12]}…")
 
     def _export_provenance_scene_to_tiff(self, blot_id: str, path: str, nir_channel_index: int = 0):
         if b"tiff" not in QImageWriter.supportedImageFormats():
@@ -447,31 +477,21 @@ class _ExportMixin:
                 for ch in sorted(blot.channels, key=lambda c: c.channel_index):
                     ch_path = _nir_channel_path(path, ch.channel_index, ch.wavelength_nm)
                     self._export_provenance_scene_to_tiff(blot.id, ch_path, nir_channel_index=ch.channel_index)
-                    self.log_operation(
-                        "export_generated",
-                        target_type="export",
-                        target_id=blot.id,
-                        asset_sha256=ch.asset_sha256,
-                        field="original_annotated_tiff",
-                        old_value=None,
-                        new_value=ch_path,
+                    sha = self._log_export(
+                        ch_path, fmt="tiff", field="original_annotated_tiff",
+                        target_id=blot.id, asset_sha256=ch.asset_sha256,
                     )
-                    written.append(ch_path)
+                    written.append(f"{ch_path}\nSHA-256: {sha[:12]}…")
                 self.workspace.save_project(self.current_project)
                 QMessageBox.information(self, "Exported", "Saved TIFFs:\n" + "\n".join(written))
             else:
                 self._export_provenance_scene_to_tiff(blot.id, path)
-                self.log_operation(
-                    "export_generated",
-                    target_type="export",
-                    target_id=blot.id,
-                    asset_sha256=blot.asset_sha256,
-                    field="original_annotated_tiff",
-                    old_value=None,
-                    new_value=str(path),
+                sha = self._log_export(
+                    path, fmt="tiff", field="original_annotated_tiff",
+                    target_id=blot.id, asset_sha256=blot.asset_sha256,
                 )
                 self.workspace.save_project(self.current_project)
-                QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}")
+                QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}\nSHA-256: {sha[:12]}…")
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
 
@@ -489,36 +509,31 @@ class _ExportMixin:
             return
 
         try:
+            written: list[str] = []
             for blot in self.current_project.panel.blots:
                 if blot.is_nir():
                     for ch in sorted(blot.channels, key=lambda c: c.channel_index):
                         base = str(Path(folder) / f"{blot.id}_original_annotated.tif")
                         path = _nir_channel_path(base, ch.channel_index, ch.wavelength_nm)
                         self._export_provenance_scene_to_tiff(blot.id, path, nir_channel_index=ch.channel_index)
-                        self.log_operation(
-                            "export_generated",
-                            target_type="export",
-                            target_id=blot.id,
-                            asset_sha256=ch.asset_sha256,
-                            field="original_annotated_tiff",
-                            old_value=None,
-                            new_value=path,
+                        sha = self._log_export(
+                            path, fmt="tiff", field="original_annotated_tiff",
+                            target_id=blot.id, asset_sha256=ch.asset_sha256,
                         )
+                        written.append(f"{Path(path).name}  SHA-256: {sha[:12]}…")
                 else:
                     path = str(Path(folder) / f"{blot.id}_original_annotated.tif")
                     self._export_provenance_scene_to_tiff(blot.id, path)
-                    self.log_operation(
-                        "export_generated",
-                        target_type="export",
-                        target_id=blot.id,
-                        asset_sha256=blot.asset_sha256,
-                        field="original_annotated_tiff",
-                        old_value=None,
-                        new_value=path,
+                    sha = self._log_export(
+                        path, fmt="tiff", field="original_annotated_tiff",
+                        target_id=blot.id, asset_sha256=blot.asset_sha256,
                     )
+                    written.append(f"{Path(path).name}  SHA-256: {sha[:12]}…")
             self.workspace.save_project(self.current_project)
 
-            QMessageBox.information(self, "Exported", f"Saved TIFFs to:\n{folder}")
+            QMessageBox.information(
+                self, "Exported", f"Saved TIFFs to:\n{folder}\n\n" + "\n".join(written)
+            )
 
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
@@ -876,18 +891,19 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", "Could not save PNG.")
             return
 
-        self.log_operation(
-            "export_generated",
-            target_type="export",
-            target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
-            field="legend_zone_png",
-            old_value=None,
-            new_value=str(path),
-        )
+        try:
+            # sha256 is the image actually drawn: for an NIR blot, the active
+            # channel's asset (get_display_channel above), not blot.asset_sha256.
+            out_sha = self._log_export(
+                path, fmt="png", field="legend_zone_png",
+                target_id=blot.id, asset_sha256=sha256,
+            )
+        except OSError as e:
+            QMessageBox.critical(self, "Export error", f"Could not verify the exported PNG:\n{e}")
+            return
         self.workspace.save_project(self.current_project)
 
-        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}")
+        QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {out_sha[:12]}…")
 
     def _current_project_json_path(self) -> Path | None:
         if not self.current_project:
@@ -923,7 +939,6 @@ class _ExportMixin:
                 self.current_project,
                 self.workspace,
                 project_json_path=project_json_path,
-                exported_files=[],
             )
 
             write_integrity_json(report, json_path)
@@ -991,7 +1006,6 @@ class _ExportMixin:
                 self.current_project,
                 self.workspace,
                 project_json_path=project_json_path,
-                exported_files=[],
             )
 
             write_integrity_json(report, json_path)

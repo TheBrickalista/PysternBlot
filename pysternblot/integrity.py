@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import html
 import json
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
@@ -302,6 +303,131 @@ def _blot_record(workspace: Workspace, project: Project, blot) -> dict[str, Any]
     return record
 
 
+# Operations that record a file written by Pystern Blot, and the format to
+# assume for entries logged before export_generated carried {"format": ...}.
+_EXPORT_OPERATIONS = ("export_generated", "source_asset_exported")
+_LEGACY_EXPORT_FORMATS = {
+    "final_png": "png",
+    "legend_zone_png": "png",
+    "final_pdf": "pdf",
+    "final_svg": "svg",
+    "original_annotated_tiff": "tiff",
+    "source_asset": "source",
+}
+EXPORT_STATUSES = ("ok", "changed", "missing", "unreadable", "not_recorded", "superseded", "listed")
+
+
+def _resolved_path_key(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return str(path)
+
+
+def _current_file_hash(path: str, cache: dict) -> tuple[Optional[str], str]:
+    """(sha256 or None, "present" | "missing" | "unreadable"); each distinct
+    resolved path is hashed at most once per report."""
+    key = _resolved_path_key(path)
+    if key not in cache:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            cache[key] = (None, "missing")
+        else:
+            try:
+                cache[key] = (sha256_file(str(p)), "present")
+            except OSError:
+                cache[key] = (None, "unreadable")
+    return cache[key]
+
+
+def collect_exports(project: Project) -> list[dict[str, Any]]:
+    """One record per export_generated / source_asset_exported log entry, in
+    log order, each re-verified against the file currently at its path.
+
+    status:
+      - "superseded": a later entry wrote the same (resolved) path; only the
+        latest entry for a path is checked against the disk.
+      - "not_recorded": no hash was recorded (exported by an earlier
+        version); current_sha256 is still reported if the file exists.
+      - "missing" / "unreadable": the file is not at the path / cannot be read.
+      - "ok" / "changed": the file's current hash matches / differs.
+
+    Malformed entries are skipped; this never raises.
+    """
+    candidates: list[dict[str, Any]] = []
+    for index, entry in enumerate(getattr(project, "operation_log", []) or []):
+        if entry.operation not in _EXPORT_OPERATIONS:
+            continue
+        value = entry.new_value
+        if isinstance(value, dict):
+            path = value.get("path")
+            if not isinstance(path, str) or not path:
+                continue
+            fmt = value.get("format") if isinstance(value.get("format"), str) else None
+            recorded = value.get("sha256") if isinstance(value.get("sha256"), str) else None
+        elif isinstance(value, str) and value:
+            path, fmt, recorded = value, None, None
+        else:
+            continue
+        if fmt is None:
+            fmt = _LEGACY_EXPORT_FORMATS.get(entry.field or "")
+        if entry.operation == "source_asset_exported":
+            # The source export copies the asset byte for byte and verifies
+            # the copy, so the asset hash is the hash of the written file.
+            recorded = entry.asset_sha256 if isinstance(entry.asset_sha256, str) else None
+        candidates.append({
+            "log_index": index,
+            "operation": entry.operation,
+            "field": entry.field,
+            "format": fmt,
+            "path": path,
+            "timestamp_utc": entry.timestamp_utc,
+            "target_id": entry.target_id,
+            "asset_sha256": entry.asset_sha256,
+            "recorded_sha256": recorded,
+            "current_sha256": None,
+            "status": None,
+        })
+
+    latest_for_path: dict[str, int] = {}
+    for i, rec in enumerate(candidates):
+        latest_for_path[_resolved_path_key(rec["path"])] = i
+
+    cache: dict = {}
+    for i, rec in enumerate(candidates):
+        if latest_for_path[_resolved_path_key(rec["path"])] != i:
+            rec["status"] = "superseded"
+            continue
+        current, state = _current_file_hash(rec["path"], cache)
+        rec["current_sha256"] = current
+        if rec["recorded_sha256"] is None:
+            rec["status"] = "not_recorded"
+        elif state != "present":
+            rec["status"] = state
+        else:
+            rec["status"] = "ok" if current == rec["recorded_sha256"] else "changed"
+    return candidates
+
+
+def _listed_export(path: str | Path, cache: dict) -> dict[str, Any]:
+    """A row for a path passed via exported_files (kept for API
+    compatibility): no log entry and no recorded hash."""
+    current, state = _current_file_hash(str(path), cache)
+    return {
+        "log_index": None,
+        "operation": None,
+        "field": None,
+        "format": None,
+        "path": str(path),
+        "timestamp_utc": None,
+        "target_id": None,
+        "asset_sha256": None,
+        "recorded_sha256": None,
+        "current_sha256": current,
+        "status": "listed" if state == "present" else state,
+    }
+
+
 def build_integrity_report(
     project: Project,
     workspace: Workspace,
@@ -311,7 +437,7 @@ def build_integrity_report(
     exported_files = exported_files or []
 
     report = {
-        "schema": "pysternblot.integrity_report.v2",
+        "schema": "pysternblot.integrity_report.v3",
         "created_utc": _utc_now(),
         "pysternblot_version": __version__,
         "operation_log_chain": verify_log_chain(project).model_dump(),
@@ -346,14 +472,19 @@ def build_integrity_report(
             _blot_record(workspace, project, blot)
             for blot in project.panel.blots
         ],
-        "exports": [
-            {
-                "path": str(path),
-                "sha256": sha256_file(str(path)) if Path(path).exists() else None,
-            }
-            for path in exported_files
-        ],
     }
+
+    # Exports are derived from the operation log (each export_generated /
+    # source_asset_exported entry, re-verified against the file on disk),
+    # plus any paths passed explicitly via exported_files.
+    listed_cache: dict = {}
+    exports = collect_exports(project) + [_listed_export(path, listed_cache) for path in exported_files]
+    report["exports"] = exports
+    summary = {status: 0 for status in EXPORT_STATUSES}
+    for rec in exports:
+        summary[rec["status"]] = summary.get(rec["status"], 0) + 1
+    summary["total"] = len(exports)
+    report["exports_summary"] = summary
 
     return report
 
@@ -365,6 +496,70 @@ def write_integrity_json(report: dict[str, Any], path: str | Path) -> Path:
     path = Path(path)
     path.write_text(dumps_strict(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
+
+_EXPORT_STATUS_STYLE = {
+    "ok": "background:#dcfce7;color:#166534;font-weight:bold;",
+    "changed": "background:#fee2e2;color:#991b1b;font-weight:bold;",
+    "unreadable": "background:#fef3c7;color:#92400e;font-weight:bold;",
+    "missing": "background:#f3f4f6;color:#4b5563;",
+    "not_recorded": "background:#f3f4f6;color:#4b5563;",
+    "superseded": "background:#f3f4f6;color:#4b5563;",
+    "listed": "background:#f3f4f6;color:#4b5563;",
+}
+_EXPORT_STATUS_TEXT = {
+    "ok": "Matches the file on disk.",
+    "changed": (
+        "File at this path differs from the exported bytes (expected if edited in "
+        "another application after export)."
+    ),
+    "missing": (
+        "Not found at the recorded path (moved, renamed, or report generated on "
+        "another machine). Verify by hash."
+    ),
+    "unreadable": "The file exists but could not be read.",
+    "not_recorded": "Hash not recorded (exported by an earlier version).",
+    "superseded": "Overwritten by a later export to the same path.",
+    "listed": "Listed for this report; no hash recorded at export time.",
+}
+
+
+def _exports_html(exports: list[dict[str, Any]]) -> str:
+    """The "Exported files" table. Every interpolated value is escaped:
+    paths are chosen by the user."""
+    esc = lambda v: html.escape("" if v is None else str(v))  # noqa: E731
+    intro = (
+        "<p>The recorded SHA-256 identifies each file as written by Pystern Blot. "
+        "Files re-encoded downstream (e.g. by a journal's submission system) will not match.</p>"
+    )
+    if not exports:
+        return (
+            "<h2>Exported files</h2>\n" + intro +
+            "\n<p>No exports recorded in this project's operation log.</p>"
+        )
+    rows = []
+    for rec in exports:
+        status = rec.get("status") or ""
+        kind = " / ".join(esc(v) for v in (rec.get("format"), rec.get("field")) if v)
+        status_html = f"<b>{esc(status)}</b><br>{esc(_EXPORT_STATUS_TEXT.get(status, ''))}"
+        if status == "changed" and rec.get("current_sha256"):
+            status_html += f"<br>Current: <code>{esc(rec['current_sha256'])}</code>"
+        rows.append(
+            "<tr>"
+            f"<td>{esc(rec.get('timestamp_utc'))}</td>"
+            f"<td>{kind}</td>"
+            f"<td>{esc(rec.get('target_id'))}</td>"
+            f"<td><code>{esc(rec.get('path'))}</code></td>"
+            f"<td><code>{esc(rec.get('recorded_sha256'))}</code></td>"
+            f'<td style="{_EXPORT_STATUS_STYLE.get(status, "")}">{status_html}</td>'
+            "</tr>"
+        )
+    return (
+        "<h2>Exported files</h2>\n" + intro + "\n<table>\n<thead>\n<tr>"
+        "<th>Time UTC</th><th>Kind</th><th>Target</th><th>Path</th>"
+        "<th>Recorded SHA-256</th><th>Status</th>"
+        "</tr>\n</thead>\n<tbody>\n" + "\n".join(rows) + "\n</tbody>\n</table>"
+    )
 
 
 def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
@@ -574,6 +769,8 @@ def write_integrity_html(report: dict[str, Any], path: str | Path) -> Path:
 </table>
 """
 
+    exports_section = _exports_html(report.get("exports") or [])
+
     panel_scale_warnings = (report.get("panel") or {}).get("physical_scale_warnings") or []
     scale_warnings_html = "".join(
         f'<p style="background:#fef3c7;color:#92400e;font-weight:bold;padding:6px;">⚠ {w}</p>'
@@ -632,6 +829,8 @@ code {{ font-size: 11px; word-break: break-all; }}
 </tbody>
 </table>
 
+{exports_section}
+
 {operation_section}
 
 <h2>Machine-readable report</h2>
@@ -658,7 +857,7 @@ def build_detailed_integrity_report(
         exported_files=exported_files,
     )
 
-    report["schema"] = "pysternblot.detailed_integrity_report.v2"
+    report["schema"] = "pysternblot.detailed_integrity_report.v3"
     report["operation_log"] = [
         entry.model_dump()
         for entry in getattr(project, "operation_log", [])

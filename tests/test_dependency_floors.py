@@ -31,10 +31,14 @@ def _floors():
     for spec in data["project"]["dependencies"]:
         req = Requirement(spec)
         specs = list(req.specifier)
-        assert len(specs) == 1 and specs[0].operator == ">=", (
-            f"{spec!r}: runtime dependencies must have a single >= floor"
+        lower = [sp for sp in specs if sp.operator == ">="]
+        # An upper bound (< or <=) may cap a dependency (e.g. PySide6 <6.12);
+        # the floor is still the single >= specifier.
+        assert len(lower) == 1 and all(sp.operator in (">=", "<", "<=") for sp in specs), (
+            f"{spec!r}: runtime dependencies must have a single >= floor "
+            f"(optionally capped with < or <=)"
         )
-        floors[canonicalize_name(req.name)] = Version(specs[0].version)
+        floors[canonicalize_name(req.name)] = Version(lower[0].version)
     return floors
 
 

@@ -37,7 +37,12 @@ classifiers = [
 # Floors are raised by hand only and must equal the == pins in
 # ci/requirements-min.in (enforced by tests/test_dependency_floors.py).
 dependencies = [
-  "PySide6>=6.11.2",
+  # <6.12: PySide6 6.12.0's binding modules (QtCore/QtGui/QtWidgets/QtSvg/
+  # QtNetwork .abi3.so, libpyside6, libshiboken6) are built for macOS 26.0
+  # (minos), but the macOS app declares LSMinimumSystemVersion 15.0, so the
+  # release build fails; the wheels are tagged macosx_14_0, so pip would also
+  # install them on macOS 14/15. 6.11.2's binding modules are built for 15.0.
+  "PySide6>=6.11.2,<6.12",
   "pydantic>=2.6",
   "numpy>=1.24",
   "Pillow>=13.0.0",

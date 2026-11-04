@@ -93,7 +93,7 @@ The requirements below apply only to the PyPI and from-source methods. The
 standalone builds bundle everything, including Python itself.
 
 - Python ≥ 3.11
-- PySide6 ≥ 6.11.2
+- PySide6 6.11.x (≥ 6.11.2, < 6.12; 6.12 is not yet supported because its binding modules require macOS 26)
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
 - Pillow ≥ 12.3.0

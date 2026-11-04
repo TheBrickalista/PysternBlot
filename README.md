@@ -77,7 +77,7 @@ All processing stays in 16-bit throughout, so no dynamic range is lost when you 
 ## Requirements
 
 - Python ≥ 3.11
-- PySide6 ≥ 6.11.2
+- PySide6 6.11.x (≥ 6.11.2, < 6.12; 6.12 is not yet supported because its binding modules require macOS 26)
 - Pydantic ≥ 2.6
 - NumPy ≥ 1.24
 - Pillow ≥ 12.3.0

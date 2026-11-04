@@ -20,6 +20,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   derived from the operation log and `exports_summary` counts each status.
 
 ### Changed
+- **PySide6 is held below 6.12** (`PySide6>=6.11.2,<6.12` in `pyproject.toml`); `uv.lock` now has
+  **PySide6 6.11.3** (was 6.12.0, from Dependabot). PySide6 6.12.0's binding modules (QtCore, QtGui,
+  QtWidgets, QtSvg, QtNetwork, libpyside6, libshiboken6) require macOS 26.0, while the macOS app
+  declares a minimum of macOS 15, so the app build would fail; its wheels are tagged macOS 14, so
+  pip would also install it on macOS 14/15. 6.11.3's binding modules require macOS 15.0. 6.12.0
+  was never shipped in a release.
 
 *CI-only — no functional or version change.*
 

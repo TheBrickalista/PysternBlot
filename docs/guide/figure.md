@@ -18,6 +18,22 @@ controls panel order across the figure. Whether a given blot appears in the
 figure at all is controlled by its **Include in final figure** checkbox, also on
 the Original Image tab.
 
+(physical-scale-imagequant-800)=
+### Physical scale (ImageQuant 800)
+
+Amersham ImageQuant 800 images always have the same pixel grid whatever Image
+Area was chosen at acquisition, so their pixel size differs (e.g. 68.3 µm at
+160 × 220 mm, 45.5 µm at 107 × 147 mm). Pystern Blot reads the pixel size from
+each file and draws every panel at the same physical scale: the same membrane
+width appears at the same width in the figure. Coarser images are enlarged for
+display only (bilinear interpolation); the source pixels are never resampled.
+Projects whose images all share one pixel size are unaffected.
+
+A warning appears above the figure when the panel mixes images with and without
+a known pixel size (those without one are shown 1:1 and may not match), or when
+a membrane overlay's pixel size differs from its blot's. These warnings are also
+listed in the integrity reports, with each blot's pixel size and scale factor.
+
 ## Publication exports
 
 | Button | Output |

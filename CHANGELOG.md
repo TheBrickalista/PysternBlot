@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.2.4] — 2026-11-04
+
 ### Added
 - **Legend: three-level (and deeper) headers.** A top-row cell can span several middle-row
   cells via a new per-cell Parent # on intermediate rows, centred on their combined lanes, with an
@@ -26,8 +30,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   declares a minimum of macOS 15, so the app build would fail; its wheels are tagged macOS 14, so
   pip would also install it on macOS 14/15. 6.11.3's binding modules require macOS 15.0. 6.12.0
   was never shipped in a release.
+- **Packaged apps are built with PyInstaller 6.22.3** (was 6.21.0) **and pydantic 2.14** (2.14.1,
+  was 2.13.4).
 
-*CI-only — no functional or version change.*
+*The entries below change only CI and build tooling, not the application.*
 
 - **uv pin is now a floor: `required-version = ">=0.13.5"`.** Dependabot's bundled uv moved to
   0.13.5, outside the previous `">=0.12.18,<0.13"` range, so its uv job failed every `uv.lock`
@@ -47,6 +53,21 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   `[build-system]` requirement), so it is bumped by hand, in both places together.
 
 ### Fixed
+- **ImageQuant 800 images taken at different Image Area settings now show at the same physical
+  scale.** The ImageQuant 800 always exports 2400 × 3296 px whatever area was imaged, so a pixel
+  is 68.3 µm at 160 × 220 mm but 45.5 µm at 107 × 147 mm. With one shared crop size in pixels, a
+  finer image covered less membrane and looked magnified (e.g. 6 lanes instead of 9). The crop
+  size is now kept in the finest image's pixels: each image is cut to the same physical size in
+  its own pixels (never resampled) and drawn at the same width in the figure (bilinear
+  interpolation, display only). Pixel size comes from the TIFF's XResolution, cross-checked
+  against the recorded Image Area; binning is recorded, not scaled. Projects whose images share
+  one pixel size render exactly as before. The Figure tab warns when a panel mixes images with and
+  without a known pixel size, or when a membrane overlay's pixel size differs from its blot's.
+  Integrity reports record, per blot, the pixel size and its source, binning, image area, scale
+  factor and display interpolation. Typhoon and LI-COR pixel sizes stay informational.
+- **The crop rectangle no longer creeps.** Each move or resize stored the crop 1 px up and to the
+  left and 2 px larger than drawn (the frame's pen width was included). Moving a crop also no
+  longer rewrites the shared crop size.
 - **PDF/SVG export no longer logs an export when the output file could not be opened** (e.g. an
   unwritable folder); the error is shown and nothing is recorded.
 - **Legend-zone export on NIR blots records the active channel's asset hash**, i.e. the image
@@ -63,6 +84,27 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **msgpack 1.2.4** (was 1.2.1) in `uv.lock`, dev-only (pulled in by pip-audit's HTTP cache):
   CVE-2026-114613 / GHSA-j586-36cw-2gc2, a memory leak / use-after-free in the C extension on
   malformed input. Not shipped to users.
+
+### Compatibility
+- **Python ≥ 3.11 is required** for pip installs; Python 3.10 is no longer supported. The macOS and
+  Windows apps bundle their own Python.
+- **macOS app: macOS 15 or later, unchanged.**
+- pip installs on macOS also need macOS 15 or later (PySide6 6.11's binding modules require it);
+  earlier documentation said older macOS was supported through pip.
+- **1.2.3 projects open unchanged on disk.** On load, ImageQuant 800 originals are read for their
+  pixel size and the reference pixel size is set; each step is logged and saved with the project at
+  its next save. Projects whose images share one pixel size render identically. Projects that
+  already mix ImageQuant 800 pixel sizes now render at one physical scale (the existing crop size
+  is read in the finest image's pixels, and a warning entry is logged): check them before
+  re-exporting.
+- **1.2.4 projects and `.pbarchive` files (format_version 2, unchanged) open in 1.2.3**, and their
+  operation-log chains verify. 1.2.3 ignores, and drops on save, the legend Parent # values
+  (top-row labels fall back to the two-level layout) and `panel.reference_pixel_size_um`, and
+  renders mixed-pixel-size ImageQuant 800 panels without physical scaling. Reopening such a project
+  in 1.2.4 restores the scaling, but Parent # values must be re-entered.
+- **Integrity report schema** is now `pysternblot.integrity_report.v3` /
+  `pysternblot.detailed_integrity_report.v3`: `exports` is derived from the operation log and
+  re-verified, `exports_summary` is new, and each blot gains a `physical_scale` record.
 
 ---
 

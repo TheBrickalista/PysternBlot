@@ -1182,7 +1182,7 @@ wheels = [
 
 [[package]]
 name = "pysternblot"
-version = "1.2.3"
+version = "1.2.4"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

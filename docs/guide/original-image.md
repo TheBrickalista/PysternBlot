@@ -48,6 +48,18 @@ summarised in a tooltip: **scroll to pan**, **Shift+scroll to zoom**,
 A draggable splitter separates the control rows above from the image canvas
 below — drag it to trade control-row space for canvas space, or vice versa.
 
+## Crop rectangle
+
+The dashed rectangle on the image is the region cut for the figure. Drag inside
+it to move it (this blot only); drag a corner or an edge to resize it — the size
+is shared by every blot in the panel.
+
+With Amersham ImageQuant 800 images taken at different Image Area settings, the
+rectangle is drawn at a different size on each image: it always covers the same
+membrane area, so it spans more pixels on a finer image (e.g. about 1.5× more
+at 45.5 µm than at 68.3 µm per pixel). See
+[Physical scale](#physical-scale-imagequant-800) on the Figure tab.
+
 ## Annotation
 
 This part of the third control row sets the blot's identifying information:

@@ -25,7 +25,8 @@ All domain state is Pydantic v2 models. The hierarchy is:
 Project
 └── Panel
     ├── style (Style)
-    ├── crop_template (CropTemplate: w, h) — shared crop size for all blots
+    ├── crop_template (CropTemplate: w, h) — shared crop size, in reference pixels
+    ├── reference_pixel_size_um (Optional[float]) — finest scaling pixel size
     ├── blots: list[Blot]
     │   ├── crop (Crop: x, y — position only; w/h kept for backward compat)
     │   ├── display (DisplaySettings: levels, invert, rotation, flips, overlay)
@@ -36,7 +37,7 @@ Project
     │   ├── modality: "ecl" | "nir_fluorescence"
     │   └── channels: list[BlotChannel]   # NIR only; empty for ECL blots
     ├── layout (order: list[blot_id])
-    ├── legend
+    ├── legend (upper_rows / lower_rows: LegendRow — cells, cell_groups, parent_groups)
     └── lane_layout (header_block, groups)
 ```
 
@@ -49,8 +50,10 @@ the library while leaving it on disk.
 
 - `Crop.w` / `Crop.h` are retained on the model for backward compatibility but
   are **ignored** at render and storage time — the authoritative crop size is
-  `Panel.crop_template`. Each blot contributes only its own position
-  (`Crop.x`, `Crop.y`).
+  `Panel.crop_template`, expressed in **reference pixels** (see *Physical scale*
+  below). Each blot contributes only its own position (`Crop.x`, `Crop.y`), in
+  its own native pixels; its crop size in native pixels is
+  `physical_scale.native_crop_size(project, blot)`.
 - `Blot.included_in_final` controls whether a blot appears in the rendered
   panel. Excluded blots remain fully stored, editable, and visible in the blot
   selector — this is how alternative exposures are documented rather than
@@ -69,11 +72,23 @@ the library while leaving it on disk.
 - `presets/` — marker sets and suggestion lists
 
 `import_asset()` hashes the source file and copies it into the asset store
-unchanged. `ensure_blot_crop_preview(blot, panel)` applies rotation → levels →
-crop and caches the result as a per-blot TIFF; crop position comes from
-`blot.crop.x/y`, crop size from `panel.crop_template.w/h`. **Render code reads
-this cache** — callers must call `ensure_blot_crop_preview` for each blot before
+unchanged. `ensure_blot_crop_preview(blot, panel, project=project)` applies
+rotation → levels → crop and caches the result as a per-blot TIFF in native
+pixels (never resampled); crop position comes from `blot.crop.x/y`, crop size
+from `panel.crop_template` converted to the blot's native pixels (without
+`project=` it falls back to the template as-is). **Render code reads this
+cache** — callers must call `ensure_blot_crop_preview` for each blot before
 rendering.
+
+`load_project()` migrates older projects: it seeds `crop_template` for projects
+that predate it, re-reads ImageQuant 800 metadata from stored originals that
+have none (`parse_iq800_metadata`, logged as `iq800_metadata_backfilled`), and
+reconciles `reference_pixel_size_um`. Changes are made in memory and logged;
+nothing is written until the project is saved.
+
+Every JSON file Pystern Blot writes with `json.dumps` goes through
+`jsonsafe.dumps_strict()`: strict RFC 8259 output, non-finite floats written as
+`null` (`project.json` itself is written by Pydantic, which does the same).
 
 The portable `.pbarchive` format is a ZIP containing a manifest, the project
 JSON(s), and all referenced assets. Import is two-pass: every asset is
@@ -121,15 +136,49 @@ sources display.
 
 `build_panel_scene` stacks only blots where `included_in_final` is `True`, in a
 fixed column layout: ladder column (left) → image column → protein label column
-(right). `build_provenance_scene` overlays an interactive `CropRectItem` on the
-full original image: moving it updates `blot.crop.x/y`; resizing it updates
-`panel.crop_template.w/h` (affecting all blots).
+(right). Each crop is drawn at its blot's display scale (`1 / f`, see *Physical
+scale*), so the image column width and row heights come from the displayed
+size; overlay-ladder markers are placed at `(y_px − crop_y) × display scale`.
+`build_provenance_scene` overlays an interactive `CropRectItem` on the full
+original image, sized to the blot's native crop: moving it updates only
+`blot.crop.x/y`; resizing it writes `panel.crop_template` back in reference
+pixels (affecting all blots).
+
+Upper legend rows are laid out by the pure function
+`compute_upper_legend_layout()` and drawn by `_draw_upper_legend_block()`, the
+single path used by both the Figure tab and the legend export zone
+(`draw_legend_into_scene`). Each upper cell's id is resolved bottom-up: a run of
+the same `parent_groups` id in the row below (multi-level headers), else a lane
+group of the lane-reference row, else the cell's even slot. With empty
+`parent_groups` this is exactly the two-level layout. Lower rows use
+`_draw_legend_row_core`.
+
+## Physical scale (`physical_scale.py`)
+
+Some instruments export a fixed pixel grid whatever area was imaged (ImageQuant
+800: always 2400 × 3296 px), so pixel size varies per file. Only instruments
+opted in by `scaling_pixel_size_um(asset)` drive scaling — today ImageQuant 800
+metadata whose XResolution passed the Image Area cross-check; Typhoon and LI-COR
+pixel sizes are informational.
+
+- `Panel.reference_pixel_size_um` = the finest scaling pixel size among **all**
+  blots (included or not), kept in step by `reconcile_reference_pixel_size()`.
+  When it changes between two known values, `crop_template` is rescaled by
+  `old / new` to keep its physical size; every change is logged.
+- Per blot, `f = reference / pixel size` (≤ 1 for coarser images; 1 when either
+  is unknown). Native crop = template × f; the crop is drawn at `1 / f`
+  (bilinear, display only).
+- `scale_warnings()` reports panels that mix known and unknown pixel sizes and
+  membrane overlays whose pixel size differs from their blot's; they are shown
+  above the figure and in the integrity reports (`physical_scale` per blot).
 
 ## Crop handles (`ui/crop_rect_item.py`)
 
 `CropRectItem` implements Inkscape-style resize handles: 4 corners (resize both
 axes) and 4 edge midpoints (resize one axis), each with a small visual square and
-a larger invisible hit zone, and cursor changes per zone.
+a larger invisible hit zone, and cursor changes per zone. Its callbacks receive
+`crop_scene_rect()`, the rectangle itself in scene coordinates, not
+`sceneBoundingRect()` (which includes half the pen width on each side).
 
 ## UI (`pysternblot/ui/`)
 
@@ -158,15 +207,28 @@ MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportMixin, 
 per-blot provenance record. For each blot, `_asset_info()` opens the stored
 original, re-verifies its SHA-256, and records bit depth, dimensions, and mode;
 8-bit assets get a `bit_depth_warning`, highlighted amber in the HTML report.
-A detailed variant embeds the full chronological operation log.
+A detailed variant embeds the full chronological operation log. The schema is
+`pysternblot.integrity_report.v3` (`…detailed_integrity_report.v3`).
+
+`collect_exports()` derives the report's `exports` from the operation log:
+every `export_generated` entry (which records `path`, `format`, `sha256` and
+`size_bytes` of the written file) and every `source_asset_exported` entry is
+re-hashed against the file now at its path and given a status (`ok`,
+`changed`, `missing`, `unreadable`, `not_recorded`, `superseded`);
+`exports_summary` counts them, and the HTML report lists them in an "Exported
+files" table.
 
 ## Operation logging
 
 Every mutation that should appear in an integrity report calls
 `log_operation(operation, *, target_type, target_id, field, old_value,
 new_value, ...)`, appending an `OperationLogEntry` to `project.operation_log`.
-Old/new values are serialised via `_plain_log_value()` (JSON-serialise Pydantic
-models, else `str()`). The log is persisted as part of `project.json`.
+Old/new values pass through `_plain_log_value()`: Pydantic models are stored as
+their `model_dump()` dict, JSON-serialisable values as-is, anything else as
+`str()`; non-finite floats (NaN, ±Infinity) become `None` before the entry is
+hashed, so the stored value is exactly what the chain hashed. The log is
+persisted as part of `project.json`; each entry is hash-chained to the previous
+one (`logchain.py`).
 
 ## NIR multichannel fluorescence
 

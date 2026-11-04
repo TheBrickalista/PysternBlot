@@ -11,7 +11,7 @@ from PySide6.QtCore import Signal, Qt
 
 from .widgets import EditableHistoryCombo
 from ..models import LegendRow
-from ..render import derive_lane_groups
+from ..render import _contiguous_runs, derive_lane_groups
 
 class LegendTab(QWidget):
     """
@@ -134,6 +134,12 @@ class LegendTab(QWidget):
 
         if leg.upper_rows:
             self.inner_layout.addWidget(self._section_label("Upper rows"))
+            n_upper = len(leg.upper_rows)
+            # Parent # applies to upper rows that have an upper row above them
+            # and are not the lane reference: rows 2..n-1 in upper-only mode
+            # (row n is the lane reference), rows 2..n in mixed mode (the lane
+            # reference is the first lower row).
+            last_parent_row = n_upper if leg.lower_rows else n_upper - 1
             for i, row in enumerate(leg.upper_rows):
                 w = LegendRowEditor(
                     title=f"Row {i+1}",
@@ -141,6 +147,7 @@ class LegendTab(QWidget):
                     get_suggestions=self._get_suggestions,
                     add_suggestion=self._add_suggestion,
                     on_row_changed=lambda: self._commit_and_emit(),
+                    show_parent=(1 <= i < last_parent_row),
                 )
                 self._upper_row_widgets.append(w)
                 self.inner_layout.addWidget(w)
@@ -203,8 +210,10 @@ class LegendTab(QWidget):
 
 
 class LegendRowEditor(QFrame):
-    def __init__(self, title: str, row: LegendRow, get_suggestions, add_suggestion, on_row_changed):
+    def __init__(self, title: str, row: LegendRow, get_suggestions, add_suggestion, on_row_changed,
+                 show_parent: bool = False):
         super().__init__()
+        self.show_parent = bool(show_parent)
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
 
@@ -264,10 +273,16 @@ class LegendRowEditor(QFrame):
         self.row_layout.addWidget(QLabel("Right"))
         self.row_layout.addWidget(self.right_combo, 1)
 
-        hint = QLabel(
+        hint_text = (
             "Group #: 0 = ungrouped. Same # on adjacent cells forms a group "
             "(≥2 cells get an underline). An upper-row cell with that # labels the group."
         )
+        if self.show_parent:
+            hint_text += (
+                "\nParent #: same # on adjacent cells groups them under the cell with "
+                "that Group # in the row above. Numbering is per level."
+            )
+        hint = QLabel(hint_text)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #6b7280; font-size: 10px;")
         outer.addWidget(hint)
@@ -320,6 +335,8 @@ class LegendRowEditor(QFrame):
         self.row.cells = cells
 
         self.row.cell_groups = [int(s.value()) for s in self._cell_group_spins]
+        if self.show_parent:
+            self.row.parent_groups = [int(s.value()) for s in self._parent_group_spins]
         self._update_group_warnings()
 
     def _on_n_cells_changed(self, n: int):
@@ -333,6 +350,14 @@ class LegendRowEditor(QFrame):
             self.row.cell_groups.append(0)
         while len(self.row.cell_groups) > n:
             self.row.cell_groups.pop()
+
+        # Same for parent_groups (a row keeps its stored parent ids even when
+        # it is not in a parent-capable position; the renderer ignores them there)
+        if self.show_parent or self.row.parent_groups:
+            while len(self.row.parent_groups) < n:
+                self.row.parent_groups.append(0)
+            while len(self.row.parent_groups) > n:
+                self.row.parent_groups.pop()
 
         self._rebuild_cells()
         self._sync_from_widgets()
@@ -349,8 +374,10 @@ class LegendRowEditor(QFrame):
         self._clear_cells_container()
         self._cell_combos = []
         self._cell_group_spins = []
+        self._parent_group_spins = []
 
         _cg = list(getattr(self.row, "cell_groups", []) or [])
+        _pg = list(getattr(self.row, "parent_groups", []) or [])
 
         for i in range(len(self.row.cells)):
             # Each cell slot: vertical widget holding combo (top) + group spinbox (bottom)
@@ -386,6 +413,19 @@ class LegendRowEditor(QFrame):
             spin.valueChanged.connect(self._on_group_spin_changed)
             self._cell_group_spins.append(spin)
             cell_vbox.addWidget(spin, 0, Qt.AlignHCenter)
+
+            # --- parent # spinbox (rows with a labelling row above) ---
+            if self.show_parent:
+                pspin = QSpinBox()
+                pspin.setRange(0, 20)
+                pspin.setFixedWidth(54)
+                pspin.setAlignment(Qt.AlignCenter)
+                pspin.setPrefix("P ")
+                pspin.setAccessibleName("Parent #")
+                pspin.setValue(_pg[i] if i < len(_pg) else 0)
+                pspin.valueChanged.connect(self._on_group_spin_changed)
+                self._parent_group_spins.append(pspin)
+                cell_vbox.addWidget(pspin, 0, Qt.AlignHCenter)
 
             self.cells_container.addWidget(cell_widget, 1)
 
@@ -424,3 +464,20 @@ class LegendRowEditor(QFrame):
             else:
                 spin.setStyleSheet("")
                 spin.setToolTip("")
+
+        pg = list(getattr(self.row, "parent_groups", []) or [])
+        _, parent_errors = _contiguous_runs(pg)
+        for pspin in getattr(self, "_parent_group_spins", []):
+            pid = pspin.value()
+            if pid != 0 and pid in parent_errors:
+                pspin.setStyleSheet("background-color: #fef3c7; color: #92400e;")
+                pspin.setToolTip(
+                    "Parent #: this number is non-contiguous — these cells are not "
+                    "grouped. Parent numbers must be on adjacent cells."
+                )
+            else:
+                pspin.setStyleSheet("")
+                pspin.setToolTip(
+                    "Parent #: same # on adjacent cells groups them under the cell "
+                    "with that Group # in the row above."
+                )

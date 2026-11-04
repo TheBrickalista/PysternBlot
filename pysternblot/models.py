@@ -123,6 +123,11 @@ class LegendRow(BaseModel):
     underline: bool = False  # deprecated — kept for backward compat (existing project.json files); renderer uses cell_groups instead
     font_size_pt: float | None = None
     cell_groups: List[int] = Field(default_factory=list)
+    # Upper rows that have a labelling row above them (and are not the lane
+    # reference): the same non-zero id on adjacent cells groups those cells
+    # under the cell carrying that id (in cell_groups) in the row directly
+    # above. Lets a top-row cell span several middle-row cells (#202).
+    parent_groups: List[int] = Field(default_factory=list)
 
 class LegendSettings(BaseModel):
     mode: Literal["protein", "dna"] = "protein"

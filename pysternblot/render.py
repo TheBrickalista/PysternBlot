@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import numpy as np
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -153,6 +154,82 @@ def derive_lane_groups(
     return spans, errors
 
 
+def _legend_row_font(style, row: LegendRow) -> QFont:
+    size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(style.font_size_pt)
+    return QFont(style.font_family, int(size))
+
+
+def _measure_text_h(scene: QGraphicsScene, font: QFont) -> float:
+    tmp = scene.addText("Ag", font)
+    text_h = tmp.boundingRect().height()
+    scene.removeItem(tmp)
+    return text_h
+
+
+def _lane_geometry(lane_row: LegendRow, img_col_w: float):
+    """(n_lanes, lane_w, spans, errors) of the lane-reference row."""
+    n_lanes = max(1, len(lane_row.cells)) if lane_row.cells else 1
+    lane_w = img_col_w / float(n_lanes)
+    raw = list(getattr(lane_row, "cell_groups", []) or [])
+    spans, errors = derive_lane_groups((raw + [0] * n_lanes)[:n_lanes])
+    return n_lanes, lane_w, spans, errors
+
+
+def _padded(ids, n: int) -> list[int]:
+    return (list(ids or []) + [0] * n)[:n]
+
+
+def _draw_legend_row_texts(
+    scene: QGraphicsScene,
+    row: LegendRow,
+    font: QFont,
+    y: float,
+    centers: list[float],
+    left_col_x: float,
+    ladder_w: float,
+    right_col_x: float,
+) -> None:
+    """Left label (centred in the ladder column), cell texts (centred on
+    `centers`), right label (left-aligned in the protein column)."""
+
+    def _centered(text: str, cx: float) -> None:
+        t = scene.addText(text, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(cx - br.width() / 2.0, y)
+
+    if row.left:
+        t = scene.addText(row.left, font)
+        t.setDefaultTextColor(Qt.black)
+        br = t.boundingRect()
+        t.setPos(left_col_x + (ladder_w - br.width()) / 2.0, y)
+
+    for cx, txt in zip(centers, list(row.cells or [])):
+        txt = (txt or "").strip()
+        if txt:
+            _centered(txt, cx)
+
+    if row.right:
+        t = scene.addText(row.right, font)
+        t.setDefaultTextColor(Qt.black)
+        t.setPos(right_col_x, y)
+
+
+def _underline_segments(extents, runs, pad: float) -> list[tuple[float, float]]:
+    """One (x1, x2) per run (a, b) spanning extents[a][0]..extents[b][1],
+    shortened by `pad` on each side; skipped if too short to draw."""
+    segments = []
+    for a, b in runs:
+        x1 = extents[a][0] + pad
+        x2 = extents[b][1] - pad
+        if x2 > x1 + 1.0:
+            segments.append((x1, x2))
+    return segments
+
+
+_UNDERLINE_GAP_PX = 40.0
+
+
 def _draw_legend_row_core(
     scene: QGraphicsScene,
     style,
@@ -169,16 +246,13 @@ def _draw_legend_row_core(
     """
     Draws a single legend row into `scene`. Returns next y.
 
-    Extracted from build_panel_scene's Figure-tab legend rendering so it can be
-    reused by draw_legend_into_scene() (legend export zone) without duplicating
-    the alignment/underline math. Behaviour is unchanged from the original
-    nested implementation — only closure variables became explicit parameters.
+    Used for lower rows (lane_row is row) and, through the same text and
+    underline helpers, by _draw_upper_legend_block for upper rows; behaviour
+    is unchanged from the original nested implementation.
 
     lane_row: the row that provides lane geometry (cell count, cell_groups).
-      - Upper-only block: pass lane_row=upper[-1] for every upper row; the last
-        upper row is the per-lane reference, all rows above it group over it.
-      - Mixed (upper + lower): pass lane_row=lower_rows[0] for upper rows.
       - Lower rows: pass lane_row=row (self-referential).
+      - A single row grouped over another row's lanes: pass that row.
 
     underline_above: when True the underline sits above this row's text (y - 6),
       placing it between group-label rows above and per-lane labels below.
@@ -186,53 +260,16 @@ def _draw_legend_row_core(
 
     Underlines fire only when lane_row is row (i.e. this IS the lane_ref row).
     """
-    s = style
-    row_font_size = float(row.font_size_pt) if getattr(row, "font_size_pt", None) is not None else float(s.font_size_pt)
-    row_font = QFont(s.font_family, int(row_font_size))
+    font = _legend_row_font(style, row)
+    text_h = _measure_text_h(scene, font)
 
-    # helper: accurate text centering using boundingRect (not QFontMetrics)
-    def _add_text_centered(text: str, cx: float, y0: float) -> None:
-        t = scene.addText(text, row_font)
-        t.setDefaultTextColor(Qt.black)
-        br = t.boundingRect()
-        t.setPos(cx - br.width() / 2.0, y0)
-
-    def _add_text_left(text: str, x: float, y0: float) -> None:
-        t = scene.addText(text, row_font)
-        t.setDefaultTextColor(Qt.black)
-        t.setPos(x, y0)
-
-    def _add_text_centered_in_col(text: str, col_x: float, col_w: float, y0: float) -> None:
-        t = scene.addText(text, row_font)
-        t.setDefaultTextColor(Qt.black)
-        br = t.boundingRect()
-        t.setPos(col_x + (col_w - br.width()) / 2.0, y0)
-
-    # --- measure text height once ---
-    tmp = scene.addText("Ag", row_font)
-    text_h = tmp.boundingRect().height()
-    scene.removeItem(tmp)
-
-    # ----- lane geometry from the lane reference row -----
     _lr = lane_row if lane_row is not None else row
-    n_lanes = max(1, len(_lr.cells)) if _lr.cells else 1
-    lane_w = img_col_w / float(n_lanes)
+    _n_lanes, lane_w, spans, _errors = _lane_geometry(_lr, img_col_w)
 
-    _raw_lg = list(getattr(_lr, "cell_groups", []) or [])
-    _lane_cell_groups = (_raw_lg + [0] * n_lanes)[:n_lanes]
-    spans, _errors = derive_lane_groups(_lane_cell_groups)
-
-    # ----- this row's cells and per-cell group ids -----
     cells = list(row.cells or [])
     n_cells = len(cells)
-    _raw_cg = list(getattr(row, "cell_groups", []) or [])
-    cell_group_ids = (_raw_cg + [0] * n_cells)[:n_cells]
+    cell_group_ids = _padded(getattr(row, "cell_groups", []), n_cells)
 
-    # Left label (centered in ladder column)
-    if row.left:
-        _add_text_centered_in_col(row.left, left_col_x, ladder_w, y)
-
-    # ----- compute per-cell centers -----
     # Lane-reference row: every cell sits at its own per-lane position so that
     # per-lane labels (e.g. "Control"/"PNGase F") do not collapse to the group
     # center and overprint.  Group ids on this row drive the underline only.
@@ -246,47 +283,188 @@ def _draw_legend_row_core(
             a, b = spans[gid]
             cx = img_col_x + (a + b + 1) / 2.0 * lane_w
         else:
-            # Lane-ref: per-lane center (lane_w = img_col_w/n_lanes = own_step here).
-            # Non-lane-ref ungrouped: per-cell even distribution.
             cx = img_col_x + (i + 0.5) * (lane_w if is_lane_ref_row else own_step)
         centers.append(cx)
 
-    for cx, txt in zip(centers, cells):
-        txt = (txt or "").strip()
-        if not txt:
-            continue
-        _add_text_centered(txt, cx, y)
-
-    # Right label (left aligned in protein column)
-    if row.right:
-        _add_text_left(row.right, right_col_x, y)
+    _draw_legend_row_texts(scene, row, font, y, centers, left_col_x, ladder_w, right_col_x)
 
     # ----- underlines: lane-reference row only -----
     underline_drawn = False
     if lane_row is row and spans:
-        # Option (a): when we are the last row of an upper block that has rows
-        # above it, draw the line ABOVE our text so it sits in the gap between
-        # group labels and per-lane labels.  For lower-rows (underline_above=False)
-        # keep the original below-text position.
         underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
-        pen = QPen(Qt.black, 2)
-        pen.setCapStyle(Qt.FlatCap)
-        gap_px = 40.0
-        pad = gap_px / 2.0
-        for gid, (a, b) in spans.items():
-            x_start = img_col_x + a * lane_w
-            x_end = img_col_x + (b + 1) * lane_w
-            x1 = x_start + pad
-            x2 = x_end - pad
-            if x2 > x1 + 1.0:
-                scene.addLine(x1, underline_y, x2, underline_y, pen)
-                underline_drawn = True
+        lane_extents = [(img_col_x + i * lane_w, img_col_x + (i + 1) * lane_w) for i in range(_n_lanes)]
+        for x1, x2 in _underline_segments(lane_extents, spans.values(), _UNDERLINE_GAP_PX / 2.0):
+            _add_underline(scene, x1, x2, underline_y)
+            underline_drawn = True
 
     # When the underline is above our text it is already in the preceding gap,
     # so no extra trailing space is needed.  Only inflate spacing for the
     # original below-text case.
     extra = 14.0 if (underline_drawn and not underline_above) else 8.0
     return y + text_h + extra
+
+
+def _add_underline(scene: QGraphicsScene, x1: float, x2: float, y: float) -> None:
+    pen = QPen(Qt.black, 2)
+    pen.setCapStyle(Qt.FlatCap)
+    scene.addLine(x1, y, x2, y, pen)
+
+
+# ---------------------------------------------------------------------------
+# Upper legend block: multi-level headers (#202)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class UpperRowLayout:
+    centers: list[float]
+    extents: list[tuple[float, float]]
+    lane_underlines: list[tuple[float, float]] = field(default_factory=list)
+    parent_underlines: list[tuple[float, float]] = field(default_factory=list)
+    parent_errors: set[int] = field(default_factory=set)
+
+
+@dataclass
+class UpperLegendLayout:
+    rows: list[UpperRowLayout]
+    lane_w: float
+
+
+def _contiguous_runs(ids: list[int]) -> tuple[dict[int, tuple[int, int]], set[int]]:
+    """Like derive_lane_groups, but single-cell runs count too: {id: (a, b)}
+    for every non-zero id whose cells are contiguous, plus the ids that are not."""
+    runs: dict[int, tuple[int, int]] = {}
+    errors: set[int] = set()
+    for gid in {g for g in ids if g != 0}:
+        positions = [i for i, g in enumerate(ids) if g == gid]
+        if positions[-1] - positions[0] == len(positions) - 1:
+            runs[gid] = (positions[0], positions[-1])
+        else:
+            errors.add(gid)
+    return runs, errors
+
+
+def compute_upper_legend_layout(
+    upper_rows: list[LegendRow],
+    lane_ref: LegendRow,
+    img_col_x: float,
+    img_col_w: float,
+) -> UpperLegendLayout:
+    """Horizontal layout of the upper legend rows (pure, no Qt).
+
+    upper_rows is the chain top -> bottom. In upper-only mode the lane
+    reference is upper_rows[-1] (part of the chain); in mixed mode it is
+    lower_rows[0] (below the chain). Every cell gets an x-extent: a lane for
+    lane-reference cells; otherwise, resolved bottom-up for id g in row k:
+      1. row k+1 is a non-lane-ref row whose parent_groups has a contiguous
+         run of g -> the union of those cells' extents;
+      2. g is a lane group of the lane reference -> that lane span;
+      3. otherwise the cell's even slot (own_step).
+    With every parent_groups empty, step 1 never matches and the layout is
+    exactly the two-level one.
+
+    Underlines: lane-group underlines on the lane-reference row (unchanged),
+    plus, for each non-lane-ref row with a row above, one underline per
+    contiguous run of >= 2 cells sharing a parent id that the row above uses.
+    """
+    n_lanes, lane_w, spans, _lane_errors = _lane_geometry(lane_ref, img_col_w)
+    lane_extents = [(img_col_x + i * lane_w, img_col_x + (i + 1) * lane_w) for i in range(n_lanes)]
+    pad = _UNDERLINE_GAP_PX / 2.0
+    n_rows = len(upper_rows)
+    rows: list[UpperRowLayout | None] = [None] * n_rows
+
+    def is_lane_ref(k: int) -> bool:
+        return upper_rows[k] is lane_ref
+
+    def parent_runs(k: int):
+        row = upper_rows[k]
+        return _contiguous_runs(_padded(getattr(row, "parent_groups", []), len(row.cells or [])))
+
+    for k in range(n_rows - 1, -1, -1):
+        row = upper_rows[k]
+        n_cells = len(row.cells or [])
+        if is_lane_ref(k):
+            centers = [img_col_x + (i + 0.5) * lane_w for i in range(n_cells)]
+            extents = [(img_col_x + i * lane_w, img_col_x + (i + 1) * lane_w) for i in range(n_cells)]
+            rows[k] = UpperRowLayout(
+                centers, extents,
+                lane_underlines=_underline_segments(lane_extents, spans.values(), pad) if spans else [],
+            )
+            continue
+
+        below_runs: dict[int, tuple[int, int]] = {}
+        if k + 1 < n_rows and not is_lane_ref(k + 1):
+            below_runs, _ = parent_runs(k + 1)
+        below = rows[k + 1] if k + 1 < n_rows else None
+
+        ids = _padded(getattr(row, "cell_groups", []), n_cells)
+        own_step = img_col_w / float(n_cells) if n_cells > 0 else img_col_w
+        centers, extents = [], []
+        for i in range(n_cells):
+            gid = ids[i]
+            if gid != 0 and gid in below_runs and below is not None:
+                a, b = below_runs[gid]
+                x0 = min(e[0] for e in below.extents[a:b + 1])
+                x1 = max(e[1] for e in below.extents[a:b + 1])
+                centers.append((x0 + x1) / 2.0)
+                extents.append((x0, x1))
+            elif gid != 0 and gid in spans:
+                a, b = spans[gid]
+                centers.append(img_col_x + (a + b + 1) / 2.0 * lane_w)
+                extents.append((img_col_x + a * lane_w, img_col_x + (b + 1) * lane_w))
+            else:
+                centers.append(img_col_x + (i + 0.5) * own_step)
+                extents.append((img_col_x + i * own_step, img_col_x + (i + 1) * own_step))
+        rows[k] = UpperRowLayout(centers, extents)
+
+    # Parent-level underlines and non-contiguous parent ids, now that every
+    # row's extents are known.
+    for k in range(1, n_rows):
+        if is_lane_ref(k):
+            continue
+        runs, errors = parent_runs(k)
+        rows[k].parent_errors = errors
+        above = upper_rows[k - 1]
+        used_above = {g for g in _padded(getattr(above, "cell_groups", []), len(above.cells or [])) if g != 0}
+        multi = [run for gid, run in sorted(runs.items()) if run[1] > run[0] and gid in used_above]
+        rows[k].parent_underlines = _underline_segments(rows[k].extents, multi, pad)
+
+    return UpperLegendLayout(rows=rows, lane_w=lane_w)
+
+
+def _draw_upper_legend_block(
+    scene: QGraphicsScene,
+    style,
+    legend_upper: list[LegendRow],
+    lane_ref: LegendRow,
+    y: float,
+    left_col_x: float,
+    ladder_w: float,
+    img_col_x: float,
+    img_col_w: float,
+    right_col_x: float,
+    underline_above: bool,
+) -> float:
+    """Draws the upper legend rows; the single path used by the Figure tab
+    (build_panel_scene) and the Legend export zone (draw_legend_into_scene).
+    Returns the y below the last row."""
+    layout = compute_upper_legend_layout(legend_upper, lane_ref, img_col_x, img_col_w)
+    for row, row_layout in zip(legend_upper, layout.rows):
+        font = _legend_row_font(style, row)
+        text_h = _measure_text_h(scene, font)
+        _draw_legend_row_texts(scene, row, font, y, row_layout.centers, left_col_x, ladder_w, right_col_x)
+
+        underline_drawn = False
+        if row_layout.lane_underlines:
+            underline_y = (y - 6.0) if underline_above else (y + text_h + 4.0)
+            for x1, x2 in row_layout.lane_underlines:
+                _add_underline(scene, x1, x2, underline_y)
+            underline_drawn = True
+        for x1, x2 in row_layout.parent_underlines:
+            _add_underline(scene, x1, x2, y - 6.0)
+
+        extra = 14.0 if (underline_drawn and not underline_above) else 8.0
+        y = y + text_h + extra
+    return y
 
 
 def draw_legend_into_scene(
@@ -329,15 +507,11 @@ def draw_legend_into_scene(
 
     if has_upper:
         upper = legend.upper_rows
-        if has_lower:
-            _lane_ref = legend.lower_rows[0]
-            for row in upper:
-                y = _row(row, y, lane_row=_lane_ref)
-        else:
-            _lane_ref = upper[-1]
-            _ul_above = len(upper) > 1
-            for row in upper:
-                y = _row(row, y, lane_row=_lane_ref, underline_above=_ul_above)
+        _lane_ref = legend.lower_rows[0] if has_lower else upper[-1]
+        y = _draw_upper_legend_block(
+            scene, s, upper, _lane_ref, y, left_col_x, ladder_w, img_col_x, img_col_w, right_col_x,
+            underline_above=(not has_lower and len(upper) > 1),
+        )
 
     if has_lower:
         if has_upper:
@@ -467,20 +641,16 @@ def build_panel_scene(project: Project, workspace_root: Path) -> QGraphicsScene:
     legend = getattr(project.panel, "legend", None)
     if legend and getattr(legend, "upper_rows", None):
         upper = legend.upper_rows
-        if getattr(legend, "lower_rows", None):
-            # Mixed: upper rows reference the first lower row for lane geometry.
-            # Underline guard (lane_row is row) never fires here — lower rows draw theirs.
-            _lane_ref = legend.lower_rows[0]
-            for row in upper:
-                y = _draw_legend_row(row, y, lane_row=_lane_ref)
-        else:
-            # Upper-only (common case): the last upper row is the per-lane reference.
-            # Every row above it groups over it.  Underline draws above the lane_ref
-            # text only when there are group-label rows above it.
-            _lane_ref = upper[-1]
-            _ul_above = len(upper) > 1
-            for row in upper:
-                y = _draw_legend_row(row, y, lane_row=_lane_ref, underline_above=_ul_above)
+        has_lower = bool(getattr(legend, "lower_rows", None))
+        # Mixed: upper rows reference the first lower row for lane geometry.
+        # Upper-only (common case): the last upper row is the per-lane
+        # reference; its underline draws above its text only when there are
+        # group-label rows above it. Same helper as the legend export zone.
+        _lane_ref = legend.lower_rows[0] if has_lower else upper[-1]
+        y = _draw_upper_legend_block(
+            scene, s, upper, _lane_ref, y, left_col_x, ladder_w, img_col_x, img_col_w, right_col_x,
+            underline_above=(not has_lower and len(upper) > 1),
+        )
         y += 10.0  # gap before first blot
 
     # ---- render rows ----

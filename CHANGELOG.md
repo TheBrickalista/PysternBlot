@@ -9,30 +9,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Legend: three-level (and deeper) headers.** A top-row cell can span several middle-row
+  cells via a new per-cell Parent # on intermediate rows, centred on their combined lanes, with an
+  underline at that level. Existing legends render identically. Closes #202.
 - **Exported files carry their SHA-256** (issue #203). Exported figures (PNG/PDF/SVG,
   legend-zone PNG, annotated context TIFF) record the SHA-256 of the written file in the
   operation log; integrity reports list every export and re-verify it against the file on disk
   (ok / changed / missing / superseded / not recorded). Closes #203. The report schema is now
   `pysternblot.integrity_report.v3` / `pysternblot.detailed_integrity_report.v3`: `exports` is
   derived from the operation log and `exports_summary` counts each status.
-
-### Fixed
-- **PDF/SVG export no longer logs an export when the output file could not be opened** (e.g. an
-  unwritable folder); the error is shown and nothing is recorded.
-- **Legend-zone export on NIR blots records the active channel's asset hash**, i.e. the image
-  actually drawn, instead of the blot's first channel.
-
-### Security
-
-- **Require Python ≥ 3.11** (was 3.10) to take security fixes that no longer support 3.10:
-  **Pillow ≥ 13.0.0** (was 12.3.0; ~38 advisories) and, dev-only, **filelock 4.2.4** (3 CVEs).
-  **certifi ≥ 2026.10.19** (was 2024.7.4) drops the distrusted emSign ECC G3 root
-  (PYSEC-2026-4320). The `minimum` CI job now runs on Python 3.11; `ci/requirements-min.*`
-  no longer carry the 3.10-only tomli/exceptiongroup entries.
-- **setuptools 84.1.0** (was 84.0.0) in `uv.lock` and `ci/build-constraints.*`. Supersedes #209.
-- **msgpack 1.2.4** (was 1.2.1) in `uv.lock`, dev-only (pulled in by pip-audit's HTTP cache):
-  CVE-2026-114613 / GHSA-j586-36cw-2gc2, a memory leak / use-after-free in the C extension on
-  malformed input. Not shipped to users.
 
 ### Changed
 
@@ -54,6 +39,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **setuptools 84.0.0** (was 83.0.0) in `uv.lock` and the hash-pinned `ci/build-constraints.*`;
   Dependabot now skips setuptools for uv (its lockfile-only job can't update a
   `[build-system]` requirement), so it is bumped by hand, in both places together.
+
+### Fixed
+- **PDF/SVG export no longer logs an export when the output file could not be opened** (e.g. an
+  unwritable folder); the error is shown and nothing is recorded.
+- **Legend-zone export on NIR blots records the active channel's asset hash**, i.e. the image
+  actually drawn, instead of the blot's first channel.
+
+### Security
+
+- **Require Python ≥ 3.11** (was 3.10) to take security fixes that no longer support 3.10:
+  **Pillow ≥ 13.0.0** (was 12.3.0; ~38 advisories) and, dev-only, **filelock 4.2.4** (3 CVEs).
+  **certifi ≥ 2026.10.19** (was 2024.7.4) drops the distrusted emSign ECC G3 root
+  (PYSEC-2026-4320). The `minimum` CI job now runs on Python 3.11; `ci/requirements-min.*`
+  no longer carry the 3.10-only tomli/exceptiongroup entries.
+- **setuptools 84.1.0** (was 84.0.0) in `uv.lock` and `ci/build-constraints.*`. Supersedes #209.
+- **msgpack 1.2.4** (was 1.2.1) in `uv.lock`, dev-only (pulled in by pip-audit's HTTP cache):
+  CVE-2026-114613 / GHSA-j586-36cw-2gc2, a memory leak / use-after-free in the C extension on
+  malformed input. Not shipped to users.
 
 ---
 

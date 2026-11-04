@@ -59,3 +59,28 @@ Beneath each center cell is a small **group #** spinbox (0–20). The grouping r
 Leaving a single lane ungrouped (group 0) draws no underline, which supports
 asymmetric layouts — for example, a lone marker lane beside grouped conditions.
 ```
+
+## Three-level headers
+
+With three or more upper rows, a top-row cell can label several middle-row
+cells. Middle rows (any upper row with a row above it that is not the lane
+reference) show a second spinbox under each cell, **Parent #** (shown as
+`P 0`). Adjacent cells with the same non-zero Parent # are grouped under the
+cell that carries that number as its **Group #** in the row directly above;
+that label is centred on all their lanes, and a group of two or more cells
+gets an underline at that level. Numbering is per level: a Parent # only
+refers to the row directly above.
+
+**Worked example — Serum starved / Growing over two treatments over 9 lanes:**
+
+1. Set **# Upper rows** to 3 (and **# Lower rows** to 0).
+2. **Row 3** (lane reference, 9 cells): `0 10 0 10 0 10 0 10 Pos. control`,
+   group numbers `2 2 3 3 4 4 5 5 0`.
+3. **Row 2** (4 cells): `Control`, `JPH203 1uM`, `Control`, `JPH203 1uM`, group
+   numbers `2 3 4 5` (each centred on its lane pair) and Parent # `1 1 2 2`.
+4. **Row 1** (2 cells): `Serum starved`, `Growing`, group numbers `1` and `2`.
+
+`Serum starved` is centred over lanes 1–4 and `Growing` over lanes 5–8, each
+with an underline above its two treatments. A Parent # used on non-adjacent
+cells is tinted amber and does not group them. Legends without Parent #
+numbers render exactly as before.

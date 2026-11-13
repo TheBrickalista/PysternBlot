@@ -28,6 +28,7 @@ from ..models import (
     LegendZone,
 )
 from .legend_tab import LegendTab
+from .gesture_commit import GestureCommitter
 from .zoomable_graphics_view import ZoomableGraphicsView
 
 from .levels_histogram import LevelsHistogramWidget
@@ -64,7 +65,16 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.overlay_ladder_assignment_table = None
         self._histogram_cache: dict = {}    # sha256 → (counts, edges, max_val)
         self._dragging_histogram: bool = False
+        self._committing_histogram: bool = False
         self._drag_start_levels: dict | None = None
+
+        # Continuous controls (sliders, dial, spinboxes) commit one log entry
+        # per gesture instead of one per tick; see gesture_commit.py.
+        self._gesture_committer = GestureCommitter(
+            commit=self._commit_gesture,
+            project_getter=lambda: self.current_project,
+            parent=self,
+        )
 
         self._update_banner = None
         self._update_pool = QThreadPool.globalInstance()
@@ -323,10 +333,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.border_width_spin.setRange(1, 10)
         self.border_width_spin.setValue(1)
         self.border_width_spin.valueChanged.connect(self._on_border_width_changed)
+        self.border_width_spin.editingFinished.connect(self._flush_gesture)
         final_top.addWidget(self.border_width_spin)
 
         self.final_refresh_btn = QPushButton("Refresh")
-        self.final_refresh_btn.clicked.connect(self.refresh_previews)
+        # lambda: clicked(bool) must not reach refresh_previews' regenerate parameter
+        self.final_refresh_btn.clicked.connect(lambda: self.refresh_previews())
         final_top.addWidget(self.final_refresh_btn)
 
         self.export_png_btn = QPushButton("Export PNG")
@@ -502,6 +514,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setSingleStep(1)
         self.prov_rotate_dial.setNotchesVisible(True)
         self.prov_rotate_dial.valueChanged.connect(self._on_rotation_changed)
+        self.prov_rotate_dial.sliderReleased.connect(self._flush_gesture)
         prov_row3.addWidget(self.prov_rotate_dial)
 
         self.prov_rotate_label = QLineEdit("0.0")
@@ -580,6 +593,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.protein_font_size_spin.setRange(4, 48)
         self.protein_font_size_spin.setValue(9)
         self.protein_font_size_spin.valueChanged.connect(self._on_protein_font_size_changed)
+        self.protein_font_size_spin.editingFinished.connect(self._flush_gesture)
         prov_row3.addWidget(self.protein_font_size_spin)
 
         self.include_in_final_cb = QCheckBox("Include in final figure")
@@ -670,6 +684,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.alpha_slider.setValue(35)
         self.alpha_slider.setFixedWidth(160)
         self.alpha_slider.valueChanged.connect(self.change_overlay_alpha)
+        self.alpha_slider.sliderReleased.connect(self._flush_gesture)
         row1.addWidget(self.alpha_slider)
 
         self.alpha_value_lbl = QLabel("35")
@@ -696,6 +711,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_gamma_slider.setValue(100)
         self.levels_gamma_slider.setFixedWidth(160)
         self.levels_gamma_slider.valueChanged.connect(self._on_levels_changed)
+        self.levels_gamma_slider.sliderReleased.connect(self._flush_gesture)
         row2.addWidget(self.levels_gamma_slider)
 
         self.gamma_value_lbl = QLabel("1.00")
@@ -728,6 +744,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_black_slider.setValue(0)
         self.levels_black_slider.setFixedWidth(180)
         self.levels_black_slider.valueChanged.connect(self._on_levels_changed)
+        self.levels_black_slider.sliderReleased.connect(self._flush_gesture)
         row3.addWidget(self.levels_black_slider)
 
         self.black_value_edit = QLineEdit("0")
@@ -748,6 +765,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.levels_white_slider.setValue(65535)
         self.levels_white_slider.setFixedWidth(180)
         self.levels_white_slider.valueChanged.connect(self._on_levels_changed)
+        self.levels_white_slider.sliderReleased.connect(self._flush_gesture)
         row3.addWidget(self.levels_white_slider)
 
         self.white_value_edit = QLineEdit("65535")
@@ -828,6 +846,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.mw_label_size_spin.setValue(24)
         self.mw_label_size_spin.setSuffix(" pt")
         self.mw_label_size_spin.valueChanged.connect(self._on_mw_label_size_changed)
+        self.mw_label_size_spin.editingFinished.connect(self._flush_gesture)
         overlay_ladder_l.addWidget(self.mw_label_size_spin)
 
         overlay_ladder_l.addStretch(1)
@@ -1505,7 +1524,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def _on_legend_changed(self):
         if not self.current_project:
             return
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self._refresh_final_only(fit=True)
 
     def _refresh_final_only(self, fit: bool = True):
@@ -1540,7 +1559,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         # Persist the updated crop coordinates
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         # Rebuild cached preview_crop for this blot (all channels for NIR)
         self._regenerate_crop_previews([blot])
@@ -1560,17 +1579,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.current_project.panel.style.kda_label_font_size_pt = new
 
-        self.log_operation(
-            "kda_label_font_size_changed",
-            target_type="project",
-            target_id=self.current_project.project.id,
-            field="panel.style.kda_label_font_size_pt",
-            old_value=old,
-            new_value=new,
+        self._gesture_committer.update(
+            ("kda_label_font_size_changed", "project", self.current_project.project.id,
+             "panel.style.kda_label_font_size_pt", None),
+            old, new,
         )
-
-        self.workspace.save_project(self.current_project)
-        self._refresh_final_only(fit=False)
+        self._gesture_committer.request_redraw(lambda: self._refresh_final_only(fit=False))
 
     def _on_crop_resize_commit(self):
         """Called when the crop rectangle is resized (affects all blots via crop_template)."""
@@ -1588,7 +1602,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             note="Crop template resized; all blot previews regenerated.",
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         self._regenerate_crop_previews(self.current_project.panel.blots)
 
@@ -1776,6 +1790,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._nir_ch_btn_group = btn_group
 
     def _on_nir_channel_changed(self, channel_index: int) -> None:
+        self._flush_gesture()
         self._active_nir_channel = channel_index
         self._sync_controls_from_project()
         self.refresh_previews()
@@ -1800,7 +1815,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def change_overlay_alpha(self, value: int):
@@ -1814,18 +1829,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         blot.display.overlay_alpha = new
         self.alpha_value_lbl.setText(str(value))
 
-        self.log_operation(
-            "overlay_alpha_changed",
-            target_type="blot",
-            target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
-            field="display.overlay_alpha",
-            old_value=old,
-            new_value=new,
+        self._gesture_committer.update(
+            ("overlay_alpha_changed", "blot", blot.id, "display.overlay_alpha", None),
+            old, new, asset_sha256=blot.asset_sha256,
+            source=self.alpha_slider,
         )
-
-        self.workspace.save_project(self.current_project)
-        self.refresh_previews()
+        # Only the Original Image view draws the overlay (render.py, setOpacity).
+        self._gesture_committer.request_redraw(self._refresh_provenance_only)
 
     def _regenerate_crop_previews(self, blots) -> None:
         """Rebuild the cached native-pixel crop previews (all channels for NIR).
@@ -1850,7 +1860,43 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.scale_warning_label.setText("\n".join(f"⚠ {w}" for w in warnings))
         self.scale_warning_label.setVisible(bool(warnings))
 
-    def refresh_previews(self):
+    def _build_provenance_scene_for_view(self):
+        return build_provenance_scene(
+            self.current_project,
+            self.workspace.root,
+            blot_id=self.active_blot_id,
+            on_crop_commit=self._on_crop_commit,
+            on_crop_resize_commit=self._on_crop_resize_commit,
+            show_grid=self.prov_grid_visible,
+            nir_channel_index=self._active_nir_channel,
+            show_legend_zone=self._legend_zone_visible,
+            on_legend_zone_commit=self._on_legend_zone_commit,
+        )
+
+    def _refresh_provenance_only(self):
+        """Rebuild only the Original Image scene (e.g. overlay alpha): no crop
+        previews are regenerated and the figure scene is left as it is."""
+        if not self.current_project:
+            return
+        try:
+            prov_scene = self._build_provenance_scene_for_view()
+            if prov_scene is None:
+                raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
+            self.prov_view.setScene(prov_scene)
+            self.prov_view.fit_scene()
+        except Exception as e:
+            QMessageBox.critical(self, "Render error", str(e))
+
+    def refresh_previews(self, regenerate: str = "all"):
+        """Rebuild the figure and Original Image scenes.
+
+        regenerate: which cached crop previews to rebuild first —
+          "all"    every blot (default; anything that can change a crop, the
+                   crop template, assets, the blot set or physical scale);
+          "active" only the active blot (all its channels if NIR), for display
+                   changes that affect that blot alone (levels, rotation dial);
+          "none"   none: rebuild the scenes from the existing preview files.
+        """
         if not self.current_project:
             return
 
@@ -1858,7 +1904,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._update_prov_label()
 
         # Ensure cached crop previews exist before rendering
-        self._regenerate_crop_previews(self.current_project.panel.blots)
+        if regenerate == "all":
+            self._regenerate_crop_previews(self.current_project.panel.blots)
+        elif regenerate == "active":
+            active = self._get_active_blot()
+            if active is not None:
+                self._regenerate_crop_previews([active])
+        elif regenerate != "none":
+            raise ValueError(f"refresh_previews: unknown regenerate scope {regenerate!r}")
 
         try:
             panel_scene = build_panel_scene(self.current_project, self.workspace.root)
@@ -1869,17 +1922,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self._update_scale_warnings()
             self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
-            prov_scene = build_provenance_scene(
-                self.current_project,
-                self.workspace.root,
-                blot_id=self.active_blot_id,
-                on_crop_commit=self._on_crop_commit,
-                on_crop_resize_commit=self._on_crop_resize_commit,
-                show_grid=self.prov_grid_visible,
-                nir_channel_index=self._active_nir_channel,
-                show_legend_zone=self._legend_zone_visible,
-                on_legend_zone_commit=self._on_legend_zone_commit,
-            )
+            prov_scene = self._build_provenance_scene_for_view()
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
@@ -1896,7 +1939,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
         # persist crop
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         # regenerate cached preview for this blot (all channels for NIR)
         self._regenerate_crop_previews([blot])
@@ -1925,7 +1968,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new_value,
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
     def _populate_prov_blot_combo(self):
         self.prov_blot_combo.blockSignals(True)
@@ -1995,6 +2038,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def _on_active_blot_changed(self, _idx: int):
         if not self.current_project:
             return
+        self._flush_gesture()   # commit a change to the previous blot first
 
         blot_id = self.prov_blot_combo.currentData()
         self.active_blot_id = blot_id
@@ -2097,7 +2141,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
         self._populate_prov_blot_combo()
         self._update_prov_label()
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
     def _move_active_blot_up(self):
         if not self.current_project or not self.active_blot_id:
@@ -2125,7 +2169,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             note=f"Moved {self.active_blot_id} up",
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _move_active_blot_down(self):
@@ -2154,10 +2198,40 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             note=f"Moved {self.active_blot_id} down",
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
+    def _active_channel_key(self, blot):
+        """NIR channel index for gesture keys (display settings are per
+        channel on NIR blots), None for ECL blots."""
+        return self._active_nir_channel if blot.is_nir() and blot.channels else None
+
     def _on_rotation_changed(self, value: int):
+        """Rotation dial: a continuous gesture (one log entry per gesture)."""
+        blot = self._get_active_blot()
+        if blot is None or not self.current_project:
+            return
+
+        _display = self._active_display()
+        if _display is None:
+            return
+
+        old = float(_display.rotation_deg)
+        new = float(value) / 10.0
+
+        _display.rotation_deg = new
+        self.prov_rotate_label.setText(f"{new:.1f}")
+
+        self._gesture_committer.update(
+            ("rotation_changed", "blot", blot.id, "display.rotation_deg", self._active_channel_key(blot)),
+            old, new, asset_sha256=blot.asset_sha256,
+            source=self.prov_rotate_dial,
+        )
+        self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
+
+    def _apply_rotation_immediately(self, value: int):
+        """Typed rotation (prov_rotate_label): one discrete action, logged,
+        saved and refreshed at once, as before."""
         blot = self._get_active_blot()
         if blot is None or not self.current_project:
             return
@@ -2182,7 +2256,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self.prov_rotate_label.setText(f"{new:.1f}")
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_rotate_ccw(self):
@@ -2208,7 +2282,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_rotate_cw(self):
@@ -2234,7 +2308,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_rotate_label_edited(self):
@@ -2247,7 +2321,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.blockSignals(True)
         self.prov_rotate_dial.setValue(int(round(value * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
-        self._on_rotation_changed(int(round(value * 10.0)))
+        self._apply_rotation_immediately(int(round(value * 10.0)))
 
     def _on_flip_horizontal(self):
         blot = self._get_active_blot()
@@ -2268,7 +2342,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_flip_vertical(self):
@@ -2290,7 +2364,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_prov_grid_toggled(self, checked: bool):
@@ -2325,7 +2399,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
     def _on_legend_zone_side_changed(self, _index: int):
         if not self.current_project:
@@ -2354,7 +2428,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             old_value=old,
             new_value=new,
         )
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
     def _on_levels_changed(self):
         blot = self._get_active_blot()
@@ -2403,7 +2477,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _display.levels_white = white
         _display.levels_gamma = gamma
 
-        if not _is_drag:
+        # Three paths: histogram drag (no log, no save, no refresh); slider
+        # moves and the histogram drag commit go through the gesture committer
+        # (one entry per gesture); typed black/white values stay one discrete
+        # entry each, logged at once.
+        _levels_key = ("levels_changed", "blot", blot.id, "display.levels", self._active_channel_key(blot))
+        _is_histogram_commit = self._committing_histogram
+        _is_slider_gesture = (not _is_drag and not _is_histogram_commit and sender in (
+            self.levels_black_slider, self.levels_white_slider, self.levels_gamma_slider))
+
+        if _is_slider_gesture or _is_histogram_commit:
+            self._gesture_committer.update(
+                _levels_key, old_levels, new_levels, asset_sha256=blot.asset_sha256,
+                source=sender if _is_slider_gesture else None,
+            )
+        elif not _is_drag:
             self.log_operation(
                 "levels_changed",
                 target_type="blot",
@@ -2421,8 +2509,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.levels_histogram.set_gates(black, white)
 
-        if not _is_drag:
-            self.workspace.save_project(self.current_project)
+        if _is_slider_gesture or _is_histogram_commit:
+            self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
+        elif not _is_drag:
+            self._save_project()
             self.refresh_previews()
 
     def _on_histogram_gate_changed(self, which: str, value: int):
@@ -2463,8 +2553,15 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _drag_start_levels as the old_value for a meaningful log entry.
         """
         self._dragging_histogram = False
-        self._on_levels_changed()      # one log entry: drag_start → drag_end
+        # One log entry, drag start -> drag end, through the gesture committer,
+        # committed immediately (the drag itself was never logged or saved).
+        self._committing_histogram = True
+        try:
+            self._on_levels_changed()
+        finally:
+            self._committing_histogram = False
         self._drag_start_levels = None
+        self._gesture_committer.flush()
 
     def _on_invert_toggled(self, checked: bool):
         blot = self._get_active_blot()
@@ -2490,7 +2587,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_display_section_toggled(self, checked: bool):
@@ -2535,7 +2632,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self._populate_prov_blot_combo()
         self._refresh_final_only(fit=True)
 
@@ -2557,7 +2654,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self._refresh_final_only(fit=True)
 
     def _on_border_width_changed(self, value: int):
@@ -2569,17 +2666,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.current_project.panel.style.border_width_px = new
 
-        self.log_operation(
-            "border_width_changed",
-            target_type="project",
-            target_id=self.current_project.project.id,
-            field="panel.style.border_width_px",
-            old_value=old,
-            new_value=new,
+        self._gesture_committer.update(
+            ("border_width_changed", "project", self.current_project.project.id,
+             "panel.style.border_width_px", None),
+            old, new,
         )
+        self._gesture_committer.request_redraw(lambda: self._refresh_final_only(fit=True))
 
-        self.workspace.save_project(self.current_project)
-        self._refresh_final_only(fit=True)
+    def closeEvent(self, event):
+        # Quitting right after a change: commit the pending gesture first.
+        self._flush_gesture()
+        super().closeEvent(event)
 
     def refresh_library(self):
         self.library_table.setRowCount(0)
@@ -2640,6 +2737,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not path:
             return
 
+        self._flush_gesture()
         try:
             self.current_project = self.workspace.load_project(path)
             self._sync_controls_from_project()

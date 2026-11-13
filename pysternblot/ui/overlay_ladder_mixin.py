@@ -98,7 +98,7 @@ class _OverlayLadderMixin:
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _open_overlay_ladder_dialog(self):
@@ -202,7 +202,7 @@ class _OverlayLadderMixin:
 
             self.current_project.marker_sets = list(self.marker_set_library.items)
 
-            self.workspace.save_project(self.current_project)
+            self._save_project()
             self.refresh_previews()
             self._populate_overlay_ladder_assignment_table()
 
@@ -250,7 +250,7 @@ class _OverlayLadderMixin:
 
         self._add_protein_label_suggestion(new)
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
 
     def _on_antibody_name_changed(self, *_args):
@@ -279,7 +279,7 @@ class _OverlayLadderMixin:
 
         self._add_antibody_name_suggestion(new)
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
     def _on_protein_font_size_changed(self, value: int):
         blot = self._get_active_blot()
@@ -295,18 +295,14 @@ class _OverlayLadderMixin:
 
         target.protein_label.font_size_pt = new
 
-        self.log_operation(
-            "protein_font_size_changed",
-            target_type="blot",
-            target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
-            field="protein_label.font_size_pt",
-            old_value=old,
-            new_value=new,
+        channel = self._active_nir_channel if blot.is_nir() and blot.channels else None
+        self._gesture_committer.update(
+            ("protein_font_size_changed", "blot", blot.id, "protein_label.font_size_pt", channel),
+            old, new, asset_sha256=blot.asset_sha256,
         )
-
-        self.workspace.save_project(self.current_project)
-        self.refresh_previews()
+        # The protein label is drawn only in the figure (build_panel_scene),
+        # never in the Original Image view: no crop preview depends on it.
+        self._gesture_committer.request_redraw(lambda: self._refresh_final_only(fit=False))
 
     def eventFilter(self, obj, event):
         if obj is self.prov_view.viewport() and event.type() == QEvent.MouseButtonPress:
@@ -384,7 +380,7 @@ class _OverlayLadderMixin:
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()
         self._refresh_overlay_ladder_ui()
 
@@ -495,5 +491,5 @@ class _OverlayLadderMixin:
         )
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
-        self.workspace.save_project(self.current_project)
+        self._save_project()
         self.refresh_previews()

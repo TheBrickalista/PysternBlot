@@ -202,6 +202,7 @@ class _ExportMixin:
         return sha
 
     def export_final_png(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
             return
@@ -259,11 +260,12 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", f"Could not verify the exported PNG:\n{e}")
             return
 
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_pdf(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
             return
@@ -322,11 +324,12 @@ class _ExportMixin:
         except OSError as e:
             QMessageBox.critical(self, "Export error", f"Could not verify the exported PDF:\n{e}")
             return
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_svg(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
             return
@@ -392,7 +395,7 @@ class _ExportMixin:
         except OSError as e:
             QMessageBox.critical(self, "Export error", f"Could not verify the exported SVG:\n{e}")
             return
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         QMessageBox.information(self, "Exported", f"Saved SVG:\n{path}\nSHA-256: {sha[:12]}…")
 
@@ -449,6 +452,7 @@ class _ExportMixin:
             raise RuntimeError(f"Could not save TIFF:\n{path}")
 
     def export_current_original_tiff(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -482,7 +486,7 @@ class _ExportMixin:
                         target_id=blot.id, asset_sha256=ch.asset_sha256,
                     )
                     written.append(f"{ch_path}\nSHA-256: {sha[:12]}…")
-                self.workspace.save_project(self.current_project)
+                self._save_project()
                 QMessageBox.information(self, "Exported", "Saved TIFFs:\n" + "\n".join(written))
             else:
                 self._export_provenance_scene_to_tiff(blot.id, path)
@@ -490,12 +494,13 @@ class _ExportMixin:
                     path, fmt="tiff", field="original_annotated_tiff",
                     target_id=blot.id, asset_sha256=blot.asset_sha256,
                 )
-                self.workspace.save_project(self.current_project)
+                self._save_project()
                 QMessageBox.information(self, "Exported", f"Saved TIFF:\n{path}\nSHA-256: {sha[:12]}…")
         except Exception as e:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_original_tiffs(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -529,7 +534,7 @@ class _ExportMixin:
                         target_id=blot.id, asset_sha256=blot.asset_sha256,
                     )
                     written.append(f"{Path(path).name}  SHA-256: {sha[:12]}…")
-            self.workspace.save_project(self.current_project)
+            self._save_project()
 
             QMessageBox.information(
                 self, "Exported", f"Saved TIFFs to:\n{folder}\n\n" + "\n".join(written)
@@ -539,6 +544,7 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_current_source_asset(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -587,7 +593,7 @@ class _ExportMixin:
                         new_value=ch_path,
                     )
                     written.append(ch_path)
-                self.workspace.save_project(self.current_project)
+                self._save_project()
                 QMessageBox.information(
                     self, "Exported",
                     "Saved source files (SHA-256 verified):\n" + "\n".join(written),
@@ -603,7 +609,7 @@ class _ExportMixin:
                     old_value=None,
                     new_value=str(path),
                 )
-                self.workspace.save_project(self.current_project)
+                self._save_project()
                 QMessageBox.information(
                     self, "Exported",
                     f"Source file exported (SHA-256 verified: {verified_hash[:8]}…).",
@@ -612,6 +618,7 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_source_assets(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -672,7 +679,7 @@ class _ExportMixin:
                         old_value=None,
                         new_value=dest_path,
                     )
-            self.workspace.save_project(self.current_project)
+            self._save_project()
 
             QMessageBox.information(self, "Exported", f"Saved source files to:\n{folder}")
 
@@ -780,6 +787,7 @@ class _ExportMixin:
         return drawn_count
 
     def export_legend_zone_png(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -901,7 +909,7 @@ class _ExportMixin:
         except OSError as e:
             QMessageBox.critical(self, "Export error", f"Could not verify the exported PNG:\n{e}")
             return
-        self.workspace.save_project(self.current_project)
+        self._save_project()
 
         QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {out_sha[:12]}…")
 
@@ -912,6 +920,7 @@ class _ExportMixin:
         return path if path.exists() else None
 
     def export_integrity_report(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -926,7 +935,7 @@ class _ExportMixin:
 
         try:
             # Save current project state first, so the project hash matches the report.
-            project_json_path = self.workspace.save_project(self.current_project)
+            project_json_path = self._save_project()
 
             out_dir = Path(folder)
             base = self.current_project.project.name.strip() or self.current_project.project.id
@@ -955,7 +964,7 @@ class _ExportMixin:
                     "html": str(html_path),
                 },
             )
-            self.workspace.save_project(self.current_project)
+            self._save_project()
 
             QMessageBox.information(
                 self,
@@ -967,6 +976,7 @@ class _ExportMixin:
             QMessageBox.critical(self, "Integrity report error", str(e))
 
     def export_detailed_integrity_report(self):
+        self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return
@@ -1000,7 +1010,7 @@ class _ExportMixin:
                 },
             )
 
-            project_json_path = self.workspace.save_project(self.current_project)
+            project_json_path = self._save_project()
 
             report = build_detailed_integrity_report(
                 self.current_project,

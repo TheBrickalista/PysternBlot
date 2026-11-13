@@ -87,6 +87,50 @@ class _ProjectIOMixin:
         except TypeError:
             return str(value)
 
+    # ------------------------------------------------------------------
+    # Gesture commit (pysternblot/ui/gesture_commit.py)
+    # ------------------------------------------------------------------
+
+    def _flush_gesture(self) -> None:
+        """Commit any pending continuous-control change (one log entry and
+        one save) before proceeding. A no-op when nothing is pending, when
+        there is no committer (e.g. test hosts) or while it is committing."""
+        committer = getattr(self, "_gesture_committer", None)
+        if committer is not None and not committer.is_flushing:
+            committer.flush()
+
+    def _save_project(self):
+        """Every UI-initiated save goes through here: the pending gesture is
+        committed first, so project.json never holds a value its operation
+        log does not record. Returns the saved path."""
+        self._flush_gesture()
+        return self.workspace.save_project(self.current_project)
+
+    def _commit_gesture(self, project, key, old_value, new_value, log_kwargs) -> None:
+        """GestureCommitter callback: one log entry (start -> final value) and
+        one raw save, into the project the gesture belongs to. The entry's
+        timestamp is the commit time, i.e. the end of the gesture, by design."""
+        if project is None:
+            return
+        operation, target_type, target_id, field, _channel = key
+        if old_value == new_value and old_value is not None:
+            return  # gesture returned to its start: nothing to log or save
+        current = self.current_project
+        self.current_project = project
+        try:
+            self.log_operation(
+                operation,
+                target_type=target_type,
+                target_id=target_id,
+                field=field,
+                old_value=old_value,
+                new_value=new_value,
+                **log_kwargs,
+            )
+            self.workspace.save_project(project)  # raw save: the commit itself
+        finally:
+            self.current_project = current
+
     def log_operation(
         self,
         operation: str,
@@ -101,6 +145,10 @@ class _ProjectIOMixin:
     ):
         if not self.current_project:
             return
+
+        # Any other operation first commits a pending gesture, which keeps the
+        # log in the order things happened (reentrancy-guarded in the committer).
+        self._flush_gesture()
 
         if old_value == new_value and old_value is not None:
             return
@@ -121,6 +169,7 @@ class _ProjectIOMixin:
         )
 
     def open_project(self):
+        self._flush_gesture()
         path, _ = QFileDialog.getOpenFileName(self, "Open project.json", "", "JSON (*.json)")
         if not path:
             return
@@ -136,6 +185,7 @@ class _ProjectIOMixin:
             QMessageBox.critical(self, "Error", str(e))
 
     def new_project(self):
+        self._flush_gesture()
         name, ok = QInputDialog.getText(self, "New Project", "Project name:")
         if not ok or not name.strip():
             return
@@ -219,6 +269,7 @@ class _ProjectIOMixin:
             )
 
     def import_blot(self):
+        self._flush_gesture()
         if not self.current_project:
             QMessageBox.information(
                 self,
@@ -335,7 +386,7 @@ class _ProjectIOMixin:
             self._populate_prov_blot_combo()
             self._update_prov_label()
 
-            self.workspace.save_project(self.current_project)
+            self._save_project()
 
             QMessageBox.information(
                 self,
@@ -349,6 +400,7 @@ class _ProjectIOMixin:
             QMessageBox.critical(self, "Error", str(e))
 
     def _on_import_nir_blot(self):
+        self._flush_gesture()
         if not self.current_project:
             QMessageBox.information(
                 self,
@@ -482,7 +534,7 @@ class _ProjectIOMixin:
                 note=f"{len(file_paths)} channel(s) imported",
             )
 
-            self.workspace.save_project(self.current_project)
+            self._save_project()
 
             self.active_blot_id = blot_id
             self._active_nir_channel = 0
@@ -503,6 +555,7 @@ class _ProjectIOMixin:
             QMessageBox.critical(self, "Error", str(e))
 
     def import_membrane(self):
+        self._flush_gesture()
         if not self.current_project or not self.current_project.panel.blots:
             QMessageBox.information(
                 self,
@@ -563,7 +616,7 @@ class _ProjectIOMixin:
             # Optional: force overlay visible immediately
             blot.display.overlay_visible = True
 
-            self.workspace.save_project(self.current_project)
+            self._save_project()
             self.refresh_previews()
             self.refresh_library()
 
@@ -596,6 +649,7 @@ class _ProjectIOMixin:
             self._archive_project_from_library(row)
 
     def _archive_project_from_library(self, row: int):
+        self._flush_gesture()
         path_item = self.library_table.item(row, 5)
         if path_item is None:
             return
@@ -607,6 +661,7 @@ class _ProjectIOMixin:
             QMessageBox.critical(self, "Error archiving project", str(e))
 
     def _open_archive_manager(self):
+        self._flush_gesture()
         dialog = QDialog(self)
         dialog.setWindowTitle("Manage Archives")
         dialog.setMinimumSize(560, 380)
@@ -696,6 +751,7 @@ class _ProjectIOMixin:
         self.refresh_library()
 
     def _rename_project_from_library(self, row: int):
+        self._flush_gesture()
         path_item = self.library_table.item(row, 5)
         name_item = self.library_table.item(row, 0)
         if path_item is None or name_item is None:
@@ -726,6 +782,7 @@ class _ProjectIOMixin:
         return self.current_project.panel.blots[0]
 
     def export_library(self):
+        self._flush_gesture()
         projects_root = self.workspace.projects_dir
         if not projects_root.exists():
             QMessageBox.information(self, "No projects", "No projects found in workspace.")
@@ -824,6 +881,7 @@ class _ProjectIOMixin:
             QMessageBox.critical(self, "Export failed", str(e))
 
     def import_library(self):
+        self._flush_gesture()
         src_path, _ = QFileDialog.getOpenFileName(
             self, "Open Archive", "", "Pystern Blot Archive (*.pbarchive)"
         )

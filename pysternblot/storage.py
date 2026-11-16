@@ -979,7 +979,9 @@ class Workspace:
         converted to this blot's native pixels (template x f, see
         physical_scale) when `project` is given. The cached TIFF is always in
         native pixels: source data is never resampled.
-        Rotation → levels → crop, all in 16-bit.
+        Levels → rotation → flip → crop, all in 16-bit. The work is done by
+        levels_rotate_flip_crop_uint16, which processes only the crop window
+        and is bit-identical to running that sequence on the full image.
         """
         self.ensure()
 

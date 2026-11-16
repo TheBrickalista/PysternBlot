@@ -85,6 +85,8 @@ class ProvenancePixmapCache:
     """
 
     def __init__(self, maxsize: int = 4):
+        # Capped by entry count, not bytes: very large NIR scans could make 4
+        # entries heavy; a byte cap would be the fix if memory becomes an issue.
         self.maxsize = int(maxsize)
         self._items: "OrderedDict[tuple, QPixmap]" = OrderedDict()
 

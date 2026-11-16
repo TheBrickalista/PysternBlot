@@ -177,6 +177,11 @@ class _ProjectIOMixin:
             self.current_project = self.workspace.load_project(path)
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
             self.refresh_previews()
             self._refresh_overlay_ladder_ui()
             self.refresh_library()
@@ -194,6 +199,11 @@ class _ProjectIOMixin:
             self.current_project = self.workspace.load_project(str(proj_path))
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
             self.refresh_previews()
             self._refresh_overlay_ladder_ui()
             self.refresh_library()

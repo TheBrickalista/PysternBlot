@@ -1905,6 +1905,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
           "active" only the active blot (all its channels if NIR), for display
                    changes that affect that blot alone (levels, rotation dial);
           "none"   none: rebuild the scenes from the existing preview files.
+        Opening or switching a project must use "all": the preview cache key
+        (assets/<sha256>/preview_crop_<blot.id>...) has no project id.
         """
         if not self.current_project:
             return
@@ -2755,6 +2757,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                 self._get_legend_suggestions,
                 self._add_legend_suggestion
             )
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
             self.refresh_previews()
             self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
         except Exception as e:

@@ -182,7 +182,7 @@ class _ProjectIOMixin:
             # id, so two projects using the same image with the same blot id share one
             # file. Opening or switching a project must regenerate every preview;
             # never narrow this scope.
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
@@ -204,7 +204,7 @@ class _ProjectIOMixin:
             # id, so two projects using the same image with the same blot id share one
             # file. Opening or switching a project must regenerate every preview;
             # never narrow this scope.
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
@@ -404,7 +404,7 @@ class _ProjectIOMixin:
                 f"Copied to:\n{dest}\n\nAttached to project as {blot_id}"
             )
 
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)   # new blot
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -549,7 +549,7 @@ class _ProjectIOMixin:
             self.active_blot_id = blot_id
             self._active_nir_channel = 0
             self._sync_controls_from_project()
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)   # new blot
 
             channel_info = "\n".join(
                 f"  Ch{c.channel_index + 1}: {c.wavelength_nm}nm {c.filter_name or ''}"

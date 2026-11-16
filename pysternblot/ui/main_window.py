@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
 )
-from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices
+from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices, QPainter
 from PySide6.QtCore import Qt, QThreadPool, QUrl
 
 import re
@@ -374,7 +374,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.scale_warning_label.setVisible(False)
         final_l.addWidget(self.scale_warning_label)
 
-        self.view = QGraphicsView()
+        self.view = ZoomableGraphicsView()
+        # Keep the figure's on-screen rendering as before (QGraphicsView's
+        # default: text antialiasing only); the class adds zoom/pan/fit mode.
+        self.view.setRenderHints(QPainter.RenderHint.TextAntialiasing)
+        self.view.setToolTip("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
         final_l.addWidget(self.view)
 
         self.tabs.addTab(final, "Figure")
@@ -1538,13 +1542,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if panel_scene is None:
             raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
-        self.view.setScene(panel_scene)
+        # fit=True forces a refit; fit=False keeps the user's zoom and pan
+        # (or fits, if the view is still in fit mode).
+        self.view.set_scene_keep_view(panel_scene, force_fit=fit)
         self._update_scale_warnings()
-
-        if fit:
-            rect = panel_scene.itemsBoundingRect()
-            if rect.isValid() and not rect.isNull():
-                self.view.fitInView(rect, Qt.KeepAspectRatio)
 
     def _on_crop_commit(self, blot: Blot):
         if not self.current_project:
@@ -1569,9 +1570,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
-        self.view.setScene(panel_scene)
+        self.view.set_scene_keep_view(panel_scene)
         self._update_scale_warnings()
-        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     def _on_mw_label_size_changed(self, value: int):
         if not self.current_project:
@@ -1617,9 +1617,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._regenerate_crop_previews(self.current_project.panel.blots)
 
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
-        self.view.setScene(panel_scene)
+        self.view.set_scene_keep_view(panel_scene)
         self._update_scale_warnings()
-        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     # -------------------------
     # Dropdown history manager
@@ -1803,7 +1802,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._flush_gesture()
         self._active_nir_channel = channel_index
         self._sync_controls_from_project()
-        self.refresh_previews(regenerate="none")
+        self.refresh_previews(regenerate="none", fit_original=True)   # a different image
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
@@ -1898,12 +1897,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             prov_scene = self._build_provenance_scene_for_view()
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
-            self.prov_view.setScene(prov_scene)
-            self.prov_view.fit_scene()
+            self.prov_view.set_scene_keep_view(prov_scene)
         except Exception as e:
             QMessageBox.critical(self, "Render error", str(e))
 
-    def refresh_previews(self, regenerate: str = "all"):
+    def refresh_previews(self, regenerate: str = "all", *,
+                         fit_figure: bool = False, fit_original: bool = False):
         """Rebuild the figure and Original Image scenes.
 
         regenerate: which cached crop previews to rebuild first —
@@ -1914,6 +1913,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
           "none"   none: rebuild the scenes from the existing preview files.
         Opening or switching a project must use "all": the preview cache key
         (assets/<sha256>/preview_crop_<blot.id>...) has no project id.
+
+        fit_figure / fit_original force a refit of the figure / Original Image
+        view (new project, other blot or channel, imports). Otherwise each
+        view keeps the user's zoom and pan, or fits if still in fit mode.
         """
         if not self.current_project:
             return
@@ -1936,16 +1939,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if panel_scene is None:
                 raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
-            self.view.setScene(panel_scene)
+            self.view.set_scene_keep_view(panel_scene, force_fit=fit_figure)
             self._update_scale_warnings()
-            self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = self._build_provenance_scene_for_view()
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
-            self.prov_view.setScene(prov_scene)
-            self.prov_view.fit_scene()
+            self.prov_view.set_scene_keep_view(prov_scene, force_fit=fit_original)
 
         except Exception as e:
             QMessageBox.critical(self, "Render error", str(e))
@@ -2053,7 +2054,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._update_prov_label()
         self._sync_controls_from_project()
-        self.refresh_previews(regenerate="none")
+        self.refresh_previews(regenerate="none", fit_original=True)   # a different image
 
     def _get_active_blot(self):
         if not self.current_project or not self.current_project.panel.blots:
@@ -2759,7 +2760,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             # id, so two projects using the same image with the same blot id share one
             # file. Opening or switching a project must regenerate every preview;
             # never narrow this scope.
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
         except Exception as e:
             QMessageBox.critical(self, "Error opening project", str(e))

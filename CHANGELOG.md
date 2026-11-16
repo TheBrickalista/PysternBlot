@@ -69,6 +69,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   the operation log were not affected.
 - **Changing the kDa label size now updates the overlay ladder labels in the Original Image view
   at once**, not only in the figure.
+- **Zoom and pan are kept when the views redraw.** Changing opacity, levels, label sizes, the grid
+  or the legend zone used to reset the Original Image view (and the figure) to fit the window. A
+  view now keeps the user's zoom and pan until the Fit button or a double-click; it refits by
+  itself when the content changes (another blot or NIR channel, opening or creating a project,
+  importing a blot). The figure can now be zoomed and panned like the Original Image view
+  (Shift+scroll to zoom, drag or scroll to pan, double-click to fit).
 
 ---
 

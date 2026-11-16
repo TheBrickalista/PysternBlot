@@ -937,6 +937,9 @@ def build_provenance_scene(
             white=white,
             gamma=gamma,
             invert=invert,
+            # Same flips as the blot image, so the overlay stays aligned.
+            flip_horizontal=flip_h,
+            flip_vertical=flip_v,
             pixmap_cache=pixmap_cache,
         )
         if not ov.isNull():

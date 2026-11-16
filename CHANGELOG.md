@@ -58,6 +58,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Figure exports (PNG/PDF/SVG) rebuild the crop previews before rendering**, so an export can
   no longer use a stale cached crop, whatever the on-screen view last refreshed.
+- **The membrane overlay is now flipped with its blot.** In the Original Image view and the
+  annotated context TIFF export, the overlay was drawn with the blot's rotation and levels but
+  not its horizontal or vertical flip, so on a flipped blot it was mirrored relative to the image.
+  This has been the case since flips were added in 1.0.0. Overlay ladder bands are positioned by
+  clicking on that view, so **ladder bands picked on a flipped blot's membrane overlay before this
+  fix may be misplaced**, mostly with a vertical flip (the band is recorded at the mirrored
+  height), and the figure draws its overlay ladder markers from those positions. Re-check those
+  projects and re-assign the affected bands. Crop previews, blot images in exported figures and
+  the operation log were not affected.
 
 ---
 

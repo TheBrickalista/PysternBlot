@@ -2929,6 +2929,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._flush_gesture()
         try:
             self.current_project = self.workspace.load_project(path)
+            self._handle_duplicate_nir_channels(self.current_project)
             self._sync_controls_from_project()
             self.legend_tab.bind(
                 self.current_project,

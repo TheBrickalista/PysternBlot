@@ -205,6 +205,25 @@ class Blot(BaseModel):
         if ch is not None:
             ch.crop = crop
 
+    def duplicate_channel_indices(self) -> list[int]:
+        """channel_index values used by more than one channel (NIR), sorted.
+        NIR imports now refuse these; projects written before can contain them."""
+        seen: set[int] = set()
+        dups: set[int] = set()
+        for c in self.channels:
+            (dups if c.channel_index in seen else seen).add(c.channel_index)
+        return sorted(dups)
+
+    def renumber_channels_in_file_order(self) -> tuple[list[int], list[int]]:
+        """Give the channels unique indices 0, 1, ... in list order, which is
+        file order (the import sorts by channel_index, stably, so channels
+        with the same index keep the order their files were chosen in).
+        Returns (old indices, new indices)."""
+        old = [c.channel_index for c in self.channels]
+        for i, c in enumerate(self.channels):
+            c.channel_index = i
+        return old, [c.channel_index for c in self.channels]
+
     def resolve_channel(self, channel_index: int) -> Optional["BlotChannel"]:
         """The NIR channel a selection refers to: the channel with this
         channel_index (its stable identity), or, if there is none, the channel

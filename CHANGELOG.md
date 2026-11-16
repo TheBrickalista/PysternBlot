@@ -131,6 +131,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   of the same number: only the first could be selected, and the other's figure row showed its
   whole, uncropped image. The import now stops before anything is copied, stored or logged,
   and the message names both files and their scan numbers.
+- **Projects that already have two NIR channels with the same number are flagged.** When such a
+  project is opened, or imported from an archive, a warning names each affected blot, its files
+  and the repeated channel, and explains that only the first channel is usable and the other's
+  figure row shows its uncropped image. "Renumber channels" numbers the blot's channels Ch1,
+  Ch2, … in file order, logs one `nir_channels_renumbered` entry per blot with the old and new
+  channel numbers, and rebuilds the previews; "Leave as is" changes nothing.
 
 ---
 

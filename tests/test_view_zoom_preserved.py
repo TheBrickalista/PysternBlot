@@ -41,12 +41,25 @@ def qapp():
     return app
 
 
-def _shown(tmp_path):
+# Window sizes chosen so the Original Image viewport gets both odd and even
+# heights (an even height used to drift 1 px per recentring redraw).
+WINDOW_SIZES = [(1200, 900), (1200, 901), (1201, 899), (1199, 897)]
+SIZE_IDS = [f"{w}x{h}" for w, h in WINDOW_SIZES]
+
+
+def _shown(tmp_path, size=(1200, 900)):
     win = _real_tiff_window(tmp_path)
-    win.resize(1200, 900)
+    win.resize(*size)
     win.show()
     QTest.qWaitForWindowExposed(win)
     return win
+
+
+def _centre(view) -> QPointF:
+    """The exact (floating-point) scene point at the viewport centre."""
+    vp = view.viewport()
+    inverse, _ok = view.viewportTransform().inverted()
+    return inverse.map(QPointF(vp.width() / 2.0, vp.height() / 2.0))
 
 
 def _show_tab_of(win, view):
@@ -92,8 +105,9 @@ def _zoomed_and_panned(win, view):
 # --------------------------------------------------------------------------
 # Preserved
 # --------------------------------------------------------------------------
-def test_original_image_keeps_zoom_on_opacity_change(qapp, tmp_path):
-    win = _shown(tmp_path)
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_original_image_keeps_zoom_on_opacity_change(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
     before = _zoomed_and_panned(win, win.prov_view)
     old_scene = win.prov_view.scene()
     win.alpha_slider.setValue(win.alpha_slider.value() + 20)
@@ -102,8 +116,9 @@ def test_original_image_keeps_zoom_on_opacity_change(qapp, tmp_path):
     assert _state(win.prov_view) == before
 
 
-def test_original_image_keeps_zoom_on_grid_toggle(qapp, tmp_path):
-    win = _shown(tmp_path)
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_original_image_keeps_zoom_on_grid_toggle(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
     before = _zoomed_and_panned(win, win.prov_view)
     old_scene = win.prov_view.scene()
     win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
@@ -111,8 +126,9 @@ def test_original_image_keeps_zoom_on_grid_toggle(qapp, tmp_path):
     assert _state(win.prov_view) == before
 
 
-def test_figure_keeps_zoom_on_levels_change(qapp, tmp_path):
-    win = _shown(tmp_path)
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_figure_keeps_zoom_on_levels_change(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
     before = _zoomed_and_panned(win, win.view)
     old_scene = win.view.scene()
     win.black_value_edit.setText("2500")
@@ -121,12 +137,42 @@ def test_figure_keeps_zoom_on_levels_change(qapp, tmp_path):
     assert _state(win.view) == before
 
 
-def test_zoom_is_kept_across_many_redraws_without_drift(qapp, tmp_path):
-    win = _shown(tmp_path)
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_zoom_is_kept_across_many_redraws_without_drift(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
     before = _zoomed_and_panned(win, win.prov_view)
+    centre0 = _centre(win.prov_view)
     for _ in range(10):
         win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
     assert _state(win.prov_view) == before
+    assert _centre(win.prov_view) == centre0
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_grid_toggles_even_restore_exactly_odd_stay_within_half_a_pixel(qapp, tmp_path, size):
+    # The grid's 1 px pen grows the scene rect by half a pixel on each side,
+    # so every toggle changes the scene rect: the view must recentre without
+    # accumulating rounding. Scroll positions are whole device pixels, so with
+    # a changed rect the centre can only be kept to half a device pixel,
+    # i.e. 0.5 / scale in scene units.
+    win = _shown(tmp_path, size)
+    view = win.prov_view
+    before = _zoomed_and_panned(win, view)
+    centre0 = _centre(view)
+    half_device_px = 0.5 / view.transform().m11()
+    rect0 = view.sceneRect()
+    for k in range(1, 12):
+        win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+        c = _centre(view)
+        if k % 2 == 0:
+            assert view.sceneRect() == rect0
+            assert _state(view) == before, f"after {k} toggles"
+            assert c == centre0, f"after {k} toggles"
+        else:
+            assert view.sceneRect() != rect0
+            assert _state(view)[:2] == before[:2]                        # zoom unchanged
+            assert abs(c.x() - centre0.x()) <= half_device_px, f"after {k} toggles"
+            assert abs(c.y() - centre0.y()) <= half_device_px, f"after {k} toggles"
 
 
 # --------------------------------------------------------------------------
@@ -187,8 +233,30 @@ def test_in_fit_mode_the_next_refresh_follows_the_scene_size(qapp, tmp_path):
     assert after == _fitted_state(win.view)
 
 
-def test_zoomed_figure_is_not_refit_by_a_crop_resize(qapp, tmp_path):
-    win = _shown(tmp_path)
+def test_no_drift_for_both_viewport_parities(qapp, tmp_path):
+    # Viewport sizes depend on platform fonts and widgets, so a fixed window
+    # size does not guarantee an even (or odd) viewport. Eight consecutive
+    # window heights cover both parities on any platform.
+    win = _shown(tmp_path, (1200, 897))
+    view = win.prov_view
+    parities = set()
+    for height in range(897, 905):
+        win.resize(1200, height)
+        QApplication.processEvents()
+        view.fit_scene()
+        before = _zoomed_and_panned(win, view)
+        centre0 = _centre(view)
+        parities.add(view.viewport().height() % 2)
+        for _ in range(10):
+            win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+        assert _state(view) == before, f"window height {height}"
+        assert _centre(view) == centre0, f"window height {height}"
+    assert parities == {0, 1}, "both even and odd viewport heights must be exercised"
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_zoomed_figure_is_not_refit_by_a_crop_resize(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
     before = _zoomed_and_panned(win, win.view)
     ct = win.current_project.panel.crop_template
     ct.w = ct.w * 0.8

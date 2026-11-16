@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent, QPainter
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QPointF
 
 
 class ZoomableGraphicsView(QGraphicsView):
@@ -21,6 +21,11 @@ class ZoomableGraphicsView(QGraphicsView):
         self._panning = False
         self._pan_start = QPoint()
         self._fit_mode = True
+        # Keep-mode anchor: the exact (float) scene point at the viewport
+        # centre, and the view state it was last restored to. See
+        # set_scene_keep_view.
+        self._anchor: QPointF | None = None
+        self._anchor_signature = None
 
         # Only user interaction with a scrollbar emits actionTriggered (not
         # setValue from fitting or scene changes), so it marks a user pan.
@@ -135,6 +140,7 @@ class ZoomableGraphicsView(QGraphicsView):
             self._zoom = 0
             self.fitInView(rect, Qt.KeepAspectRatio)
         self._fit_mode = True
+        self._anchor = None                     # re-derived from the fitted view
 
     # ------------------------------------------------------------ fit mode
     @property
@@ -156,16 +162,54 @@ class ZoomableGraphicsView(QGraphicsView):
             self.fit_scene()
             return
 
+        anchor = self._current_anchor()
         old_rect = self.sceneRect()
         old_scroll = self._scroll_values()
-        centre = self.mapToScene(self.viewport().rect().center())
         transform = self.transform()
 
         self.setScene(scene)
         self.setTransform(transform)            # zoom kept, so _zoom stays valid
         if self.sceneRect() == old_rect:
-            # Same extent: restore the exact scroll position (no drift).
+            # Same extent: restore the exact scroll position.
             self.horizontalScrollBar().setValue(old_scroll[0])
             self.verticalScrollBar().setValue(old_scroll[1])
         else:
-            self.centerOn(centre)
+            # The extent changed (e.g. the grid's pen adds half a pixel on
+            # each side): put the anchor back at the viewport centre.
+            self._scroll_to_anchor(anchor)
+        # Remember the state this restore produced: while the view stays in
+        # it (no user zoom/pan/resize), the next redraw reuses the same exact
+        # anchor instead of re-deriving it from rounded scroll values, so
+        # rounding never accumulates.
+        self._anchor = anchor
+        self._anchor_signature = self._view_signature()
+
+    # ------------------------------------------------------- anchor helpers
+    def _view_signature(self):
+        return (self._scroll_values(), self.transform(), self.viewport().size(), self.sceneRect())
+
+    def _viewport_centre_scene(self) -> QPointF:
+        """The exact scene point at the viewport centre (float; not the
+        integer QRect.center(), which is half a pixel off for even sizes)."""
+        vp = self.viewport()
+        inverse, _ok = self.viewportTransform().inverted()
+        return inverse.map(QPointF(vp.width() / 2.0, vp.height() / 2.0))
+
+    def _current_anchor(self) -> QPointF:
+        """The stored anchor if the view is still exactly as the last keep-
+        mode restore left it; otherwise (user zoom, pan, resize, fit) the
+        current centre, which then becomes the anchor."""
+        if self._anchor is not None and self._anchor_signature == self._view_signature():
+            return QPointF(self._anchor)
+        return self._viewport_centre_scene()
+
+    def _scroll_to_anchor(self, anchor: QPointF) -> None:
+        """Scroll so the anchor is at the viewport centre, to the nearest
+        device pixel. A scrollbar value is the transformed-scene coordinate
+        of the viewport's left / top edge, so it is computed directly from
+        the anchor and the transform (centerOn's int() truncation, applied
+        to a rounded centre, lost a pixel per redraw on even sizes)."""
+        p = self.transform().map(anchor)
+        vp = self.viewport()
+        self.horizontalScrollBar().setValue(round(p.x() - vp.width() / 2.0))
+        self.verticalScrollBar().setValue(round(p.y() - vp.height() / 2.0))

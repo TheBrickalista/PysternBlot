@@ -166,6 +166,12 @@ class _ExportMixin:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return None, None
 
+        # build_panel_scene reads the cached preview_crop_*.tif files and does
+        # not regenerate them. Rebuild every blot's crops from the model first,
+        # so an export never contains a stale cache, whatever the on-screen
+        # refresh scope was. This is the only output path that reads those
+        # caches (the legend-zone export renders from the full original).
+        self._regenerate_crop_previews(self.current_project.panel.blots)
         scene = build_panel_scene(self.current_project, self.workspace.root)
         if scene is None:
             QMessageBox.critical(self, "Export error", "Could not build final result scene.")

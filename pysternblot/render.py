@@ -855,6 +855,8 @@ def build_provenance_scene(
     show_legend_zone: bool = False,
     on_legend_zone_commit=None,
     pixmap_cache: Optional[ProvenancePixmapCache] = None,
+    on_crop_press=None,
+    on_legend_zone_press=None,
 ) -> QGraphicsScene:
     """
     Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
@@ -871,6 +873,10 @@ def build_provenance_scene(
 
     pixmap_cache: only the on-screen view passes one (see
     _load_rotated_display_pixmap); exports call without it.
+
+    on_crop_press(blot) / on_legend_zone_press(blot) fire on mouse press on
+    the crop / legend zone rectangle, before it moves, so the caller can
+    record the value before the interaction (the log's old_value).
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -1029,6 +1035,7 @@ def build_provenance_scene(
         on_change=_apply_position,
         on_move_commit=_on_move_commit,
         on_resize_commit=_on_resize_commit,
+        on_press=(lambda: on_crop_press(blot)) if callable(on_crop_press) else None,
     )
     scene.addItem(rect_item)
 
@@ -1087,6 +1094,7 @@ def build_provenance_scene(
             on_change=_apply_legend_zone_from_scene_rect,
             on_move_commit=_on_legend_zone_move_commit,
             on_resize_commit=_on_legend_zone_resize_commit,
+            on_press=(lambda: on_legend_zone_press(blot)) if callable(on_legend_zone_press) else None,
         )
         legend_item.setPen(QPen(QColor("#1e88e5"), 2, Qt.DashLine))  # blue vs black crop
         scene.addItem(legend_item)

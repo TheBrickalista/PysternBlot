@@ -75,6 +75,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             project_getter=lambda: self.current_project,
             parent=self,
         )
+        # Values captured on mouse press on the crop / legend zone rectangles,
+        # logged as old_value when that interaction commits (None otherwise).
+        self._crop_press_snapshot = None
+        self._legend_zone_press_snapshot = None
         # Original Image view pixmaps (screen only; exports never use it).
         self._prov_pixmap_cache = ProvenancePixmapCache(maxsize=4)
         self._prov_pixmap_cache_project = None
@@ -1547,25 +1551,59 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.view.set_scene_keep_view(panel_scene, force_fit=fit)
         self._update_scale_warnings()
 
+    def _crop_log_value(self, blot: Blot):
+        """(asset_sha256, crop, note, channel) as crop_committed logs it.
+
+        ECL: blot.crop. NIR: a move changes the active channel's own crop
+        (set_channel_crop), not blot.crop, so the channel's crop is logged,
+        identified by its asset (as nir_channel_imported and NIR exports do)
+        and its index. channel is None for ECL.
+        """
+        if blot.is_nir() and blot.channels:
+            idx = self._active_nir_channel
+            ch = next((c for c in blot.channels if c.channel_index == idx), None)
+            if ch is not None:
+                # i is channel_index (0-based); the UI shows it as Ch<i+1>.
+                note = (f"Crop rectangle committed after user interaction. "
+                        f"NIR channel {idx} (Ch{idx + 1}).")
+                return ch.asset_sha256, blot.get_channel_crop(idx), note, idx
+        return blot.asset_sha256, blot.crop, "Crop rectangle committed after user interaction.", None
+
+    def _on_crop_press(self, blot: Blot):
+        """Mouse press on the crop rectangle, before it moves: remember the
+        crop (as crop_committed logs it) and the template, for old_value."""
+        if not self.current_project:
+            return
+        _asset, crop, _note, channel = self._crop_log_value(blot)
+        ct = self.current_project.panel.crop_template
+        self._crop_press_snapshot = {
+            "blot_id": blot.id,
+            "channel": channel,
+            "crop": crop.model_copy(deep=True),
+            "template": {"w": ct.w, "h": ct.h},
+        }
+
+    def _take_crop_press_snapshot(self, blot_id=None, channel=None, *, match_channel=True):
+        """The press snapshot for this interaction (used once), or None."""
+        snap, self._crop_press_snapshot = self._crop_press_snapshot, None
+        if snap is None:
+            return None
+        if blot_id is not None and snap["blot_id"] != blot_id:
+            return None
+        if match_channel and snap["channel"] != channel:
+            return None
+        return snap
+
     def _on_crop_commit(self, blot: Blot):
         if not self.current_project:
             return
 
-        asset_sha256 = blot.asset_sha256
-        new_crop = blot.crop
-        note = "Crop rectangle committed after user interaction."
-        if blot.is_nir() and blot.channels:
-            # A NIR move changes the active channel's own crop (set_channel_crop),
-            # not blot.crop: log that channel's crop, identified by its asset
-            # (as nir_channel_imported and NIR exports do) and its index.
-            idx = self._active_nir_channel
-            ch = next((c for c in blot.channels if c.channel_index == idx), None)
-            if ch is not None:
-                asset_sha256 = ch.asset_sha256
-                new_crop = blot.get_channel_crop(idx)
-                # i is channel_index (0-based); the UI shows it as Ch<i+1>.
-                note = (f"Crop rectangle committed after user interaction. "
-                        f"NIR channel {idx} (Ch{idx + 1}).")
+        asset_sha256, new_crop, note, channel = self._crop_log_value(blot)
+        # old_value: the crop at mouse press. A commit without a press (none
+        # recorded) keeps old_value=None. log_operation skips old == new, so a
+        # click that does not move the crop writes no entry.
+        snap = self._take_crop_press_snapshot(blot.id, channel)
+        old_crop = snap["crop"] if snap is not None else None
 
         self.log_operation(
             "crop_committed",
@@ -1573,7 +1611,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             target_id=blot.id,
             asset_sha256=asset_sha256,
             field="crop",
-            old_value=None,
+            old_value=old_crop,
             new_value=new_crop,
             note=note,
         )
@@ -1617,12 +1655,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
 
+        # old_value: the template at mouse press (None without a press).
+        snap = self._take_crop_press_snapshot(match_channel=False)
         self.log_operation(
             "crop_template_resized",
             target_type="project",
             target_id=self.current_project.project.id,
             field="panel.crop_template",
-            old_value=None,
+            old_value=snap["template"] if snap is not None else None,
             new_value={"w": self.current_project.panel.crop_template.w,
                        "h": self.current_project.panel.crop_template.h},
             note="Crop template resized; all blot previews regenerated.",
@@ -1902,6 +1942,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             show_legend_zone=self._legend_zone_visible,
             on_legend_zone_commit=self._on_legend_zone_commit,
             pixmap_cache=self._prov_pixmap_cache,
+            on_crop_press=self._on_crop_press,
+            on_legend_zone_press=self._on_legend_zone_press,
         )
 
     def _refresh_provenance_only(self):
@@ -1970,6 +2012,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._sync_controls_from_project()
 
+    @staticmethod
+    def _legend_zone_log_value(blot):
+        lz = blot.legend_zone
+        return {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
+
+    def _on_legend_zone_press(self, blot):
+        """Mouse press on the legend zone rectangle, before it moves."""
+        self._legend_zone_press_snapshot = {
+            "blot_id": blot.id, "zone": self._legend_zone_log_value(blot),
+        }
+
     def _on_legend_zone_commit(self, blot):
         """Called after the legend export zone is moved or resized in the
         Original Image view: logs legend_zone_changed with the new zone and
@@ -1978,10 +2031,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
 
-        lz = blot.legend_zone
-        new_value = (
-            {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
-        )
+        new_value = self._legend_zone_log_value(blot)
+        # old_value: the zone at mouse press (None without a press).
+        snap, self._legend_zone_press_snapshot = self._legend_zone_press_snapshot, None
+        old_value = snap["zone"] if snap is not None and snap["blot_id"] == blot.id else None
 
         self.log_operation(
             "legend_zone_changed",
@@ -1989,7 +2042,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             target_id=blot.id,
             asset_sha256=blot.asset_sha256,
             field="legend_zone",
-            old_value=None,
+            old_value=old_value,
             new_value=new_value,
         )
 

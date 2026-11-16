@@ -22,6 +22,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   switching blot or NIR channel, opening, creating, switching, renaming or archiving a project,
   and closing the window, so `project.json` and the operation log never disagree. If the app quits
   mid-gesture, the uncommitted change is lost from both.
+- **Crop, crop-template and legend-zone log entries now record the previous value.**
+  `crop_committed`, `crop_template_resized` and `legend_zone_changed` used to log
+  `old_value: null`; they now record the crop, template size or zone from before the drag (taken
+  when the mouse is pressed), in the same shape as the new value. A click that doesn't move
+  anything is no longer logged. Projects from earlier versions, whose entries have
+  `old_value: null`, load and verify as before.
 - **Packaged apps are built with pydantic 2.14.2** (was 2.14.1; pydantic-core 2.50.2, was 2.50.1)
   (#225).
 

@@ -14,7 +14,6 @@ except ImportError:
     _pysternblot_version = "unknown"
 from dataclasses import dataclass, field
 from pathlib import Path
-import numpy as np
 from .models import (
     AssetEntry,
     BlotChannel,
@@ -45,9 +44,8 @@ class ImportArchiveResult:
 
 from .image_utils import (
     load_image_as_uint16,
-    apply_levels_uint16,
-    rotate_uint16,
     crop_uint16,
+    levels_rotate_flip_crop_uint16,
     save_uint16_tiff,
 )
 
@@ -1014,15 +1012,9 @@ class Workspace:
         gamma = float(getattr(display, "levels_gamma", 1.0))
         invert = bool(getattr(display, "invert", False))
 
-        img = apply_levels_uint16(img, black, white, gamma, invert)
-
         rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
-        img = rotate_uint16(img, rotation_deg, expand=False)
-
-        if bool(getattr(display, "flip_horizontal", False)):
-            img = np.fliplr(img)
-        if bool(getattr(display, "flip_vertical", False)):
-            img = np.flipud(img)
+        flip_h = bool(getattr(display, "flip_horizontal", False))
+        flip_v = bool(getattr(display, "flip_vertical", False))
 
         # w/h come from the shared crop template (in this blot's native
         # pixels), not the per-blot crop
@@ -1040,7 +1032,11 @@ class Workspace:
         x = int(round(float(c.x)))
         y = int(round(float(c.y)))
 
-        cropped = crop_uint16(img, x, y, w, h)
+        # Levels -> rotate -> flip -> crop, processing only the pixels the
+        # crop window needs; identical to the full-image sequence.
+        cropped = levels_rotate_flip_crop_uint16(
+            img, black, white, gamma, invert, rotation_deg, flip_h, flip_v, x, y, w, h,
+        )
 
         out_path = self.assets_dir / sha256 / cache_name
         save_uint16_tiff(cropped, out_path)

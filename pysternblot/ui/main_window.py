@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QGraphicsView, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
+    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout, QLabel, QMessageBox, QToolBar, QSlider, QComboBox, QPushButton, QDial, QCheckBox, QSpinBox, QFrame, QSizePolicy, QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QScrollArea, QPlainTextEdit, QLineEdit, QInputDialog, QListWidget, QSplitter, QToolButton
 )
-from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices
+from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices, QPainter
 from PySide6.QtCore import Qt, QThreadPool, QUrl
 
 import re
@@ -19,7 +19,7 @@ from importlib.resources import files
 from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
-from ..render import build_panel_scene, build_provenance_scene
+from ..render import ProvenancePixmapCache, build_panel_scene, build_provenance_scene, default_legend_zone
 from ..physical_scale import scale_warnings
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..integrity import SATURATION_SOLID_PIXEL_THRESHOLD
@@ -75,6 +75,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             project_getter=lambda: self.current_project,
             parent=self,
         )
+        # Values captured on mouse press on the crop / legend zone rectangles,
+        # logged as old_value when that interaction commits (None otherwise).
+        self._crop_press_snapshot = None
+        self._legend_zone_press_snapshot = None
+        # Original Image view pixmaps (screen only; exports never use it).
+        self._prov_pixmap_cache = ProvenancePixmapCache(maxsize=4)
+        self._prov_pixmap_cache_project = None
 
         self._update_banner = None
         self._update_pool = QThreadPool.globalInstance()
@@ -371,7 +378,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.scale_warning_label.setVisible(False)
         final_l.addWidget(self.scale_warning_label)
 
-        self.view = QGraphicsView()
+        self.view = ZoomableGraphicsView()
+        # Keep the figure's on-screen rendering as before (QGraphicsView's
+        # default: text antialiasing only); the class adds zoom/pan/fit mode.
+        self.view.setRenderHints(QPainter.RenderHint.TextAntialiasing)
+        self.view.setToolTip("Scroll to pan  •  Shift+Scroll to zoom  •  Double-click to fit")
         final_l.addWidget(self.view)
 
         self.tabs.addTab(final, "Figure")
@@ -1361,9 +1372,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
         self.legend_zone_cb.blockSignals(False)
 
-        # Read-only: do not create blot.legend_zone here. It is created either by
-        # render.py (centred, when the zone is first shown) or by the write-path
-        # handlers below (_on_legend_zone_markers_toggled / _on_legend_zone_side_changed).
+        # Read-only: do not create blot.legend_zone here. With no stored zone,
+        # render.py only displays default_legend_zone(); the zone is stored
+        # (and logged) on its first move/resize or by the option handlers
+        # below (_on_legend_zone_markers_toggled / _on_legend_zone_side_changed).
         lz = blot.legend_zone
 
         self.legend_zone_markers_cb.setEnabled(bool(self._legend_zone_visible))
@@ -1535,27 +1547,73 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if panel_scene is None:
             raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
-        self.view.setScene(panel_scene)
+        # fit=True forces a refit; fit=False keeps the user's zoom and pan
+        # (or fits, if the view is still in fit mode).
+        self.view.set_scene_keep_view(panel_scene, force_fit=fit)
         self._update_scale_warnings()
 
-        if fit:
-            rect = panel_scene.itemsBoundingRect()
-            if rect.isValid() and not rect.isNull():
-                self.view.fitInView(rect, Qt.KeepAspectRatio)
+    def _crop_log_value(self, blot: Blot):
+        """(asset_sha256, crop, note, channel) as crop_committed logs it.
+
+        ECL: blot.crop. NIR: a move changes the active channel's own crop
+        (set_channel_crop), not blot.crop, so the channel's crop is logged,
+        identified by its asset (as nir_channel_imported and NIR exports do)
+        and its index. channel is None for ECL.
+        """
+        ch = self._active_channel(blot)
+        if ch is not None:
+            idx = ch.channel_index
+            # i is channel_index (0-based); the UI shows it as Ch<i+1>.
+            note = (f"Crop rectangle committed after user interaction. "
+                    f"NIR channel {idx} (Ch{idx + 1}).")
+            return ch.asset_sha256, blot.get_channel_crop(idx), note, idx
+        return blot.asset_sha256, blot.crop, "Crop rectangle committed after user interaction.", None
+
+    def _on_crop_press(self, blot: Blot):
+        """Mouse press on the crop rectangle, before it moves: remember the
+        crop (as crop_committed logs it) and the template, for old_value."""
+        if not self.current_project:
+            return
+        _asset, crop, _note, channel = self._crop_log_value(blot)
+        ct = self.current_project.panel.crop_template
+        self._crop_press_snapshot = {
+            "blot_id": blot.id,
+            "channel": channel,
+            "crop": crop.model_copy(deep=True),
+            "template": {"w": ct.w, "h": ct.h},
+        }
+
+    def _take_crop_press_snapshot(self, blot_id=None, channel=None, *, match_channel=True):
+        """The press snapshot for this interaction (used once), or None."""
+        snap, self._crop_press_snapshot = self._crop_press_snapshot, None
+        if snap is None:
+            return None
+        if blot_id is not None and snap["blot_id"] != blot_id:
+            return None
+        if match_channel and snap["channel"] != channel:
+            return None
+        return snap
 
     def _on_crop_commit(self, blot: Blot):
         if not self.current_project:
             return
 
+        asset_sha256, new_crop, note, channel = self._crop_log_value(blot)
+        # old_value: the crop at mouse press. A commit without a press (none
+        # recorded) keeps old_value=None. log_operation skips old == new, so a
+        # click that does not move the crop writes no entry.
+        snap = self._take_crop_press_snapshot(blot.id, channel)
+        old_crop = snap["crop"] if snap is not None else None
+
         self.log_operation(
             "crop_committed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=asset_sha256,
             field="crop",
-            old_value=None,
-            new_value=blot.crop,
-            note="Crop rectangle committed after user interaction.",
+            old_value=old_crop,
+            new_value=new_crop,
+            note=note,
         )
 
         # Persist the updated crop coordinates
@@ -1566,9 +1624,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         # Refresh ONLY the final result scene (avoid resetting the crop rect mid-drag)
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
-        self.view.setScene(panel_scene)
+        self.view.set_scene_keep_view(panel_scene)
         self._update_scale_warnings()
-        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     def _on_mw_label_size_changed(self, value: int):
         if not self.current_project:
@@ -1584,32 +1641,61 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
              "panel.style.kda_label_font_size_pt", None),
             old, new,
         )
-        self._gesture_committer.request_redraw(lambda: self._refresh_final_only(fit=False))
+        self._gesture_committer.request_redraw(self._refresh_after_kda_label_size)
+
+    def _refresh_after_kda_label_size(self):
+        """The kDa label size is used by the figure's markers and by the
+        overlay ladder labels in the Original Image view: redraw both, with no
+        crop-preview regeneration (the size does not affect crops)."""
+        self._refresh_final_only(fit=False)
+        self._refresh_provenance_only()
 
     def _on_crop_resize_commit(self):
         """Called when the crop rectangle is resized (affects all blots via crop_template)."""
         if not self.current_project:
             return
 
+        # old_value: the template at mouse press (None without a press).
+        snap = self._take_crop_press_snapshot(match_channel=False)
         self.log_operation(
             "crop_template_resized",
             target_type="project",
             target_id=self.current_project.project.id,
             field="panel.crop_template",
-            old_value=None,
+            old_value=snap["template"] if snap is not None else None,
             new_value={"w": self.current_project.panel.crop_template.w,
                        "h": self.current_project.panel.crop_template.h},
             note="Crop template resized; all blot previews regenerated.",
         )
+
+        # A resize from the top or left handle (or clamping at the image edge)
+        # also moves the crop of the resized blot (its active channel's, on
+        # NIR): log that as crop_committed, after the template entry. Skipped
+        # by log_operation when the position did not change.
+        if snap is not None:
+            blot = next((b for b in self.current_project.panel.blots
+                         if b.id == snap["blot_id"]), None)
+            if blot is not None:
+                asset_sha256, new_crop, note, channel = self._crop_log_value(blot)
+                if channel == snap["channel"]:
+                    self.log_operation(
+                        "crop_committed",
+                        target_type="blot",
+                        target_id=blot.id,
+                        asset_sha256=asset_sha256,
+                        field="crop",
+                        old_value=snap["crop"],
+                        new_value=new_crop,
+                        note=f"{note} Position changed by resizing the crop rectangle.",
+                    )
 
         self._save_project()
 
         self._regenerate_crop_previews(self.current_project.panel.blots)
 
         panel_scene = build_panel_scene(self.current_project, self.workspace.root)
-        self.view.setScene(panel_scene)
+        self.view.set_scene_keep_view(panel_scene)
         self._update_scale_warnings()
-        self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
     # -------------------------
     # Dropdown history manager
@@ -1728,20 +1814,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         blot = self._get_active_blot()
         if blot is None:
             return None
-        if blot.is_nir() and blot.channels:
-            idx = min(self._active_nir_channel, len(blot.channels) - 1)
-            return blot.channels[idx]
-        return blot
+        return self._active_channel(blot) or blot
+
+    def _active_channel(self, blot):
+        """The active NIR channel of this blot: the one whose channel_index is
+        _active_nir_channel (the channel selector's button ids are
+        channel_index values), or the lowest channel_index if none matches
+        (Blot.resolve_channel). None for ECL blots. Every path that needs
+        "the active channel" (view, crop, display and label edits, gesture
+        keys, log entries, legend-zone export) goes through this."""
+        return blot.resolve_channel(self._active_nir_channel) if blot is not None else None
 
     def _active_display(self):
         """Return the DisplaySettings for the active channel (NIR) or blot (ECL)."""
         blot = self._get_active_blot()
         if blot is None:
             return None
-        if blot.is_nir() and blot.channels:
-            idx = min(self._active_nir_channel, len(blot.channels) - 1)
-            return blot.channels[idx].display
-        return blot.display
+        ch = self._active_channel(blot)
+        return ch.display if ch is not None else blot.display
 
     def _rebuild_nir_channel_selector(self, blot) -> None:
         """Clear and rebuild the NIR channel radio buttons for the given blot.
@@ -1756,8 +1846,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if w:
                 w.deleteLater()
 
+        # Keep the selection on a channel that exists (by channel_index; the
+        # lowest one if the previous selection is not a channel of this blot).
+        _ch = blot.resolve_channel(self._active_nir_channel) if blot else None
+        self._active_nir_channel = _ch.channel_index if _ch is not None else 0
+
         if not blot or not blot.is_nir() or len(blot.channels) <= 1:
-            self._active_nir_channel = 0
             self._nir_ch_widget.setVisible(False)
             self._nir_ch_sep.setVisible(False)
             return
@@ -1793,7 +1887,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._flush_gesture()
         self._active_nir_channel = channel_index
         self._sync_controls_from_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none", fit_original=True)   # a different image
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
@@ -1816,7 +1910,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def change_overlay_alpha(self, value: int):
         blot = self._get_active_blot()
@@ -1861,6 +1955,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.scale_warning_label.setVisible(bool(warnings))
 
     def _build_provenance_scene_for_view(self):
+        # Screen-only pixmap cache, emptied whenever the project changes
+        # (any path that assigns current_project, including close/archive).
+        if self._prov_pixmap_cache_project is not self.current_project:
+            self._prov_pixmap_cache.clear()
+            self._prov_pixmap_cache_project = self.current_project
         return build_provenance_scene(
             self.current_project,
             self.workspace.root,
@@ -1871,6 +1970,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             nir_channel_index=self._active_nir_channel,
             show_legend_zone=self._legend_zone_visible,
             on_legend_zone_commit=self._on_legend_zone_commit,
+            pixmap_cache=self._prov_pixmap_cache,
+            on_crop_press=self._on_crop_press,
+            on_legend_zone_press=self._on_legend_zone_press,
         )
 
     def _refresh_provenance_only(self):
@@ -1882,12 +1984,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             prov_scene = self._build_provenance_scene_for_view()
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
-            self.prov_view.setScene(prov_scene)
-            self.prov_view.fit_scene()
+            self.prov_view.set_scene_keep_view(prov_scene)
         except Exception as e:
             QMessageBox.critical(self, "Render error", str(e))
 
-    def refresh_previews(self, regenerate: str = "all"):
+    def refresh_previews(self, regenerate: str = "all", *,
+                         fit_figure: bool = False, fit_original: bool = False):
         """Rebuild the figure and Original Image scenes.
 
         regenerate: which cached crop previews to rebuild first —
@@ -1896,6 +1998,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
           "active" only the active blot (all its channels if NIR), for display
                    changes that affect that blot alone (levels, rotation dial);
           "none"   none: rebuild the scenes from the existing preview files.
+        Opening or switching a project must use "all": the preview cache key
+        (assets/<sha256>/preview_crop_<blot.id>...) has no project id.
+
+        fit_figure / fit_original force a refit of the figure / Original Image
+        view (new project, other blot or channel, imports). Otherwise each
+        view keeps the user's zoom and pan, or fits if still in fit mode.
         """
         if not self.current_project:
             return
@@ -1918,16 +2026,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if panel_scene is None:
                 raise RuntimeError("build_panel_scene returned None (expected QGraphicsScene).")
 
-            self.view.setScene(panel_scene)
+            self.view.set_scene_keep_view(panel_scene, force_fit=fit_figure)
             self._update_scale_warnings()
-            self.view.fitInView(panel_scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 
             prov_scene = self._build_provenance_scene_for_view()
             if prov_scene is None:
                 raise RuntimeError("build_provenance_scene returned None (expected QGraphicsScene).")
 
-            self.prov_view.setScene(prov_scene)
-            self.prov_view.fit_scene()
+            self.prov_view.set_scene_keep_view(prov_scene, force_fit=fit_original)
 
         except Exception as e:
             QMessageBox.critical(self, "Render error", str(e))
@@ -1935,29 +2041,30 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._sync_controls_from_project()
 
-    def _on_crop_changed(self, blot):
-        if not self.current_project:
-            return
-        # persist crop
-        self._save_project()
-
-        # regenerate cached preview for this blot (all channels for NIR)
-        self._regenerate_crop_previews([blot])
-
-        # refresh both views
-        self.refresh_previews()
-
-    def _on_legend_zone_commit(self, blot):
-        """Mirrors _on_crop_changed but for the legend export zone — no crop
-        previews need regenerating since the legend zone doesn't affect them."""
-        if not self.current_project:
-            return
-
+    @staticmethod
+    def _legend_zone_log_value(blot):
         lz = blot.legend_zone
-        new_value = (
-            {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
-        )
+        return {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
 
+    def _active_image_size(self, blot):
+        """(width, height) of the image the Original Image view shows for this
+        blot (the active channel's on NIR blots); rotation (expand=False) and
+        flips keep the size. None if it cannot be read."""
+        ch = self._active_channel(blot)
+        sha256 = ch.asset_sha256 if ch is not None else blot.asset_sha256
+        try:
+            img = load_image_as_uint16(self.workspace.asset_original_file(sha256))
+        except Exception:
+            return None
+        return float(img.shape[1]), float(img.shape[0])
+
+    def _store_default_legend_zone(self, blot, zone, note: str):
+        """Store the displayed default zone on a blot that has none, and log
+        it as legend_zone_changed None -> value (before the caller's own
+        entry). No-op if a zone is already stored."""
+        if blot.legend_zone is not None:
+            return
+        blot.legend_zone = zone
         self.log_operation(
             "legend_zone_changed",
             target_type="blot",
@@ -1965,6 +2072,49 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             asset_sha256=blot.asset_sha256,
             field="legend_zone",
             old_value=None,
+            new_value=self._legend_zone_log_value(blot),
+            note=note,
+        )
+
+    def _ensure_legend_zone_for_edit(self, blot):
+        """A legend-zone option is being changed on a blot with no stored zone:
+        store the zone that is displayed (the centred default) and log it,
+        legend_zone_changed None -> value, before the option's own entry."""
+        if blot.legend_zone is not None:
+            return
+        size = self._active_image_size(blot)
+        zone = default_legend_zone(*size) if size is not None else LegendZone()
+        self._store_default_legend_zone(
+            blot, zone, "Default legend export zone stored before changing its options.")
+
+    def _on_legend_zone_press(self, blot):
+        """Mouse press on the legend zone rectangle, before it moves."""
+        self._legend_zone_press_snapshot = {
+            "blot_id": blot.id, "zone": self._legend_zone_log_value(blot),
+        }
+
+    def _on_legend_zone_commit(self, blot):
+        """Called after the legend export zone is moved or resized in the
+        Original Image view: logs legend_zone_changed with the new zone and
+        saves the project. Nothing is regenerated or redrawn: the legend zone
+        does not affect crop previews or the figure."""
+        if not self.current_project:
+            return
+
+        if blot.legend_zone is None:
+            return      # the default zone was shown but not moved: nothing stored
+        new_value = self._legend_zone_log_value(blot)
+        # old_value: the zone at mouse press (None without a press).
+        snap, self._legend_zone_press_snapshot = self._legend_zone_press_snapshot, None
+        old_value = snap["zone"] if snap is not None and snap["blot_id"] == blot.id else None
+
+        self.log_operation(
+            "legend_zone_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone",
+            old_value=old_value,
             new_value=new_value,
         )
 
@@ -2045,7 +2195,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._update_prov_label()
         self._sync_controls_from_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none", fit_original=True)   # a different image
 
     def _get_active_blot(self):
         if not self.current_project or not self.current_project.panel.blots:
@@ -2170,7 +2320,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _move_active_blot_down(self):
         if not self.current_project or not self.active_blot_id:
@@ -2199,12 +2349,28 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _active_channel_key(self, blot):
-        """NIR channel index for gesture keys (display settings are per
+        """NIR channel_index for gesture keys (display settings are per
         channel on NIR blots), None for ECL blots."""
-        return self._active_nir_channel if blot.is_nir() and blot.channels else None
+        ch = self._active_channel(blot)
+        return ch.channel_index if ch is not None else None
+
+    def _channel_log_target(self, blot):
+        """(asset_sha256, note) for a log entry about the active channel's
+        settings: display, protein label, antibody name, inclusion.
+
+        NIR: the active channel (_active_channel, the one _active_display()
+        and _get_active_channel_or_blot() edit), identified by its own asset (as nir_channel_imported and NIR
+        exports do) and a note "NIR channel <i> (Ch<i+1>)" (i =
+        channel_index). ECL: the blot's asset and no note, exactly as before.
+        """
+        if blot.is_nir() and blot.channels:
+            ch = self._get_active_channel_or_blot()
+            i = ch.channel_index
+            return ch.asset_sha256, f"NIR channel {i} (Ch{i + 1})."
+        return blot.asset_sha256, None
 
     def _on_rotation_changed(self, value: int):
         """Rotation dial: a continuous gesture (one log entry per gesture)."""
@@ -2222,9 +2388,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _display.rotation_deg = new
         self.prov_rotate_label.setText(f"{new:.1f}")
 
+        # asset/note name this tick's channel; the key carries the channel and
+        # a channel switch flushes first, so the entry names the channel the
+        # gesture started on.
+        _log_asset, _log_note = self._channel_log_target(blot)
         self._gesture_committer.update(
             ("rotation_changed", "blot", blot.id, "display.rotation_deg", self._active_channel_key(blot)),
-            old, new, asset_sha256=blot.asset_sha256,
+            old, new, asset_sha256=_log_asset, note=_log_note,
             source=self.prov_rotate_dial,
         )
         self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
@@ -2245,11 +2415,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         _display.rotation_deg = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2257,7 +2429,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_rotate_label.setText(f"{new:.1f}")
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_ccw(self):
         blot = self._get_active_blot()
@@ -2269,11 +2441,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = float(_display.rotation_deg)
         new = (old - 90.0) % 360.0
         _display.rotation_deg = new
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2283,7 +2457,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_cw(self):
         blot = self._get_active_blot()
@@ -2295,11 +2469,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = float(_display.rotation_deg)
         new = (old + 90.0) % 360.0
         _display.rotation_deg = new
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2309,7 +2485,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_label_edited(self):
         try:
@@ -2333,17 +2509,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = bool(_display.flip_horizontal)
         new = not old
         _display.flip_horizontal = new
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "flip_horizontal_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.flip_horizontal",
             old_value=old,
             new_value=new,
         )
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_flip_vertical(self):
         blot = self._get_active_blot()
@@ -2355,27 +2533,29 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = bool(_display.flip_vertical)
         new = not old
         _display.flip_vertical = new
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "flip_vertical_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.flip_vertical",
             old_value=old,
             new_value=new,
         )
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
-        self.refresh_previews()
+        self._refresh_provenance_only()
 
     def _on_legend_zone_toggled(self, checked: bool):
         self._legend_zone_visible = bool(checked)
         self.legend_zone_markers_cb.setEnabled(bool(checked))
         self.legend_zone_side_combo.setEnabled(bool(checked))
-        self.refresh_previews()
+        self._refresh_provenance_only()
 
     def _on_legend_zone_markers_toggled(self, checked: bool):
         if not self.current_project:
@@ -2383,8 +2563,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         blot = self._get_active_blot()
         if blot is None:
             return
-        if blot.legend_zone is None:
-            blot.legend_zone = LegendZone()
+        self._ensure_legend_zone_for_edit(blot)
 
         old = blot.legend_zone.show_markers
         new = bool(checked)
@@ -2411,8 +2590,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         new = self.legend_zone_side_combo.currentData()
         if new is None:
             return
-        if blot.legend_zone is None:
-            blot.legend_zone = LegendZone()
+        if blot.legend_zone is None and new == LegendZone().marker_side:
+            return      # no stored zone and no change: nothing to store or log
+        self._ensure_legend_zone_for_edit(blot)
 
         old = blot.legend_zone.marker_side
         if old == new:
@@ -2487,16 +2667,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.levels_black_slider, self.levels_white_slider, self.levels_gamma_slider))
 
         if _is_slider_gesture or _is_histogram_commit:
+            # The key carries the channel and a channel switch flushes first,
+            # so asset/note name the channel the gesture started on.
+            _log_asset, _log_note = self._channel_log_target(blot)
             self._gesture_committer.update(
-                _levels_key, old_levels, new_levels, asset_sha256=blot.asset_sha256,
+                _levels_key, old_levels, new_levels, asset_sha256=_log_asset, note=_log_note,
                 source=sender if _is_slider_gesture else None,
             )
         elif not _is_drag:
+            _log_asset, _log_note = self._channel_log_target(blot)
             self.log_operation(
                 "levels_changed",
                 target_type="blot",
                 target_id=blot.id,
-                asset_sha256=blot.asset_sha256,
+                asset_sha256=_log_asset,
+                note=_log_note,
                 field="display.levels",
                 old_value=old_levels,
                 new_value=new_levels,
@@ -2513,7 +2698,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
         elif not _is_drag:
             self._save_project()
-            self.refresh_previews()
+            self.refresh_previews(regenerate="active")
 
     def _on_histogram_gate_changed(self, which: str, value: int):
         """Receive continuous drag updates from the histogram widget.
@@ -2577,18 +2762,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         _display.invert = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "invert_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.invert",
             old_value=old,
             new_value=new,
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_display_section_toggled(self, checked: bool):
         old_height = self._display_frame.sizeHint().height()
@@ -2622,11 +2809,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new = bool(checked)
             blot.included_in_final = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "included_in_final_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="included_in_final",
             old_value=old,
             new_value=new,
@@ -2740,13 +2929,19 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._flush_gesture()
         try:
             self.current_project = self.workspace.load_project(path)
+            self._handle_duplicate_nir_channels(self.current_project)
             self._sync_controls_from_project()
             self.legend_tab.bind(
                 self.current_project,
                 self._get_legend_suggestions,
                 self._add_legend_suggestion
             )
-            self.refresh_previews()
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self.tabs.setCurrentIndex(2)  # Final Result tab with current ordering: Home, Library, Final Result...
         except Exception as e:
             QMessageBox.critical(self, "Error opening project", str(e))

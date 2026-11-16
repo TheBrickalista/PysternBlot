@@ -1,0 +1,194 @@
+{
+  "project": {
+    "id": "proj_test",
+    "name": "Test",
+    "created_utc": "2024-01-01T00:00:00Z",
+    "modified_utc": null,
+    "app_version": "0.1.0",
+    "license": "GPL-3.0-only",
+    "is_archived": false
+  },
+  "assets": {
+    "008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3": {
+      "sha256": "008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3",
+      "stored_original_path": "/fixture/workspace/assets/008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3/original.png",
+      "original_source_path": null,
+      "stored_preview_path": null,
+      "acquisition_metadata": null,
+      "saturation": null,
+      "float_display_scale": null
+    }
+  },
+  "marker_sets": [],
+  "panel": {
+    "style": {
+      "font_family": "Arial",
+      "font_size_pt": 9.0,
+      "top_header_height_px": 70,
+      "ladder_col_width_px": 60,
+      "protein_col_width_px": 90,
+      "gap_between_blots_px": 10,
+      "border_enabled": true,
+      "border_width_px": 1,
+      "kda_label_font_size_pt": 24.0
+    },
+    "lane_layout": {
+      "mode": "derived_from_groups",
+      "n_lanes_manual": null,
+      "header_block": {
+        "left_title": "kDa",
+        "groups": [
+          {
+            "label": "All",
+            "n_lanes": 1,
+            "underline": true
+          }
+        ],
+        "condition_rows": [
+          {
+            "values": [
+              ""
+            ],
+            "unit_right": null
+          }
+        ],
+        "span_rows": []
+      }
+    },
+    "blots": [
+      {
+        "id": "blot_01",
+        "asset_sha256": "008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3",
+        "overlay_asset_sha256": null,
+        "crop": {
+          "x": 9.0,
+          "y": 11.0,
+          "w": 40.0,
+          "h": 30.0,
+          "mode": "absolute",
+          "ladder_anchor": null
+        },
+        "ladder": {
+          "lane_index": 0,
+          "marker_set_id": "ms1",
+          "calibration_points": [
+            {
+              "y_px": 50.0,
+              "kda": 55.0
+            },
+            {
+              "y_px": 120.0,
+              "kda": 36.0
+            }
+          ],
+          "fit": null,
+          "show_ticks": true
+        },
+        "protein_label": {
+          "text": "P1",
+          "align": "center",
+          "font_size_pt": null
+        },
+        "display": {
+          "invert": false,
+          "gamma": 1.0,
+          "auto_contrast": true,
+          "overlay_alpha": 0.35,
+          "overlay_visible": true,
+          "rotation_deg": 0.0,
+          "flip_horizontal": false,
+          "flip_vertical": false,
+          "levels_black": 0,
+          "levels_white": 65535,
+          "levels_gamma": 1.0
+        },
+        "overlay_ladder": null,
+        "legend_zone": {
+          "x": 2.0,
+          "y": 3.0,
+          "w": 50.0,
+          "h": 40.0,
+          "show_markers": true,
+          "marker_side": "left"
+        },
+        "included_in_final": true,
+        "antibody_name": "",
+        "display_name": null,
+        "modality": "ecl",
+        "channels": []
+      }
+    ],
+    "layout": {
+      "stack_mode": "vertical_stack",
+      "order": [
+        "blot_01"
+      ]
+    },
+    "legend": {
+      "mode": "protein",
+      "upper_rows": [],
+      "lower_rows": []
+    },
+    "crop_template": {
+      "w": 36.0,
+      "h": 30.0
+    },
+    "reference_pixel_size_um": null
+  },
+  "operation_log": [
+    {
+      "timestamp_utc": "2026-11-16T13:53:25+00:00",
+      "operation": "crop_committed",
+      "target_type": "blot",
+      "target_id": "blot_01",
+      "asset_sha256": "008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3",
+      "field": "crop",
+      "old_value": null,
+      "new_value": {
+        "x": 9.0,
+        "y": 11.0,
+        "w": 40.0,
+        "h": 30.0,
+        "mode": "absolute",
+        "ladder_anchor": null
+      },
+      "note": "Crop rectangle committed after user interaction.",
+      "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "entry_hash": "cc33e9ff5281e3b1c8e6db414276c536ad0d404c35112d7ffeab19bff4280b5e"
+    },
+    {
+      "timestamp_utc": "2026-11-16T13:53:25+00:00",
+      "operation": "crop_template_resized",
+      "target_type": "project",
+      "target_id": "proj_test",
+      "asset_sha256": null,
+      "field": "panel.crop_template",
+      "old_value": null,
+      "new_value": {
+        "w": 36.0,
+        "h": 30.0
+      },
+      "note": "Crop template resized; all blot previews regenerated.",
+      "prev_hash": "cc33e9ff5281e3b1c8e6db414276c536ad0d404c35112d7ffeab19bff4280b5e",
+      "entry_hash": "541387acbcb1da5472e593c76bd052922db60cb40e79b0f3b09bc220fc173a6f"
+    },
+    {
+      "timestamp_utc": "2026-11-16T13:53:25+00:00",
+      "operation": "legend_zone_changed",
+      "target_type": "blot",
+      "target_id": "blot_01",
+      "asset_sha256": "008cc9ad9b98637574025d7836fabb6a365dde7eecc117d3357216484ab0b4f3",
+      "field": "legend_zone",
+      "old_value": null,
+      "new_value": {
+        "x": 2.0,
+        "y": 3.0,
+        "w": 50.0,
+        "h": 40.0
+      },
+      "note": null,
+      "prev_hash": "541387acbcb1da5472e593c76bd052922db60cb40e79b0f3b09bc220fc173a6f",
+      "entry_hash": "6aca011bfa9f61e1a68e910191df6ff524fbbb0e41610313057caf93c602f7c8"
+    }
+  ]
+}

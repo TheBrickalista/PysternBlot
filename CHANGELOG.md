@@ -8,6 +8,136 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The operation log now records one entry per gesture for continuous controls** (#223). This
+  changes what the operation log contains. Dragging a slider or the rotation dial, or stepping a
+  spinbox (overlay opacity, protein and kDa label size, border width, rotation, levels sliders
+  and the histogram), previously wrote one entry per tick; it now writes a single entry from the
+  value before the gesture to the final value, timestamped when the gesture ends. A gesture ends
+  when the slider is released, spinbox editing finishes, or after 0.7 s without change for
+  keyboard, wheel and spinbox input (a paused mouse drag stays one gesture until the button is
+  released). A gesture that returns to its starting value writes no entry. Typed rotation and
+  typed black/white values are still logged at once, one entry each. A pending change is
+  committed before every save, every other log entry, exports and integrity reports, imports,
+  switching blot or NIR channel, opening, creating, switching, renaming or archiving a project,
+  and closing the window, so `project.json` and the operation log never disagree. If the app quits
+  mid-gesture, the uncommitted change is lost from both.
+- **Crop, crop-template and legend-zone log entries now record the previous value.**
+  `crop_committed`, `crop_template_resized` and `legend_zone_changed` used to log
+  `old_value: null`; they now record the crop, template size or zone from before the drag (taken
+  when the mouse is pressed), in the same shape as the new value. A click that doesn't move
+  anything is no longer logged. Projects from earlier versions, whose entries have
+  `old_value: null`, load and verify as before.
+- **Packaged apps are built with pydantic 2.14.2** (was 2.14.1; pydantic-core 2.50.2, was 2.50.1)
+  (#225).
+
+*Performance only: the entries below leave exported image data and the operation log unchanged.*
+
+- **Faster crop previews.** Levels and rotation are now applied only to the part of the image
+  under the crop window, instead of the whole image, and the result is bit-identical to the
+  previous full-image pipeline. A full refresh of a 6-blot 1200 × 1648 16-bit project went from
+  ~358 ms to ~70 ms.
+- **Fewer crop-preview rebuilds.** Switching the active blot or NIR channel, reordering blots, and
+  editing protein labels, overlay visibility or overlay ladder bands no longer rebuild every crop
+  preview. Rotate, flip, invert, typed rotation and typed levels rebuild only the active blot, and
+  the grid and legend-zone toggles redraw only the Original Image view. Opening or switching a
+  project, imports, crop-size changes and the Refresh button still rebuild everything. On the
+  same project, switching blot went from ~366 ms to ~42 ms (~3 ms back to a recently shown blot).
+- **Live redraws during slider drags.** The figure and the Original Image view now follow a drag,
+  at most once every 80 ms with the final position always drawn, instead of updating only once
+  the slider stops (a throttle instead of a debounce). Still one log entry per gesture.
+- **Original Image view: pixmap cache and lookup-table levels** (screen only). The last four
+  displayed images are kept, keyed on the image and its display settings, and levels go through
+  a lookup table built with the same function, so the values are identical. Exports use neither.
+
+*The entries below change only CI, docs and test tooling, not the application.*
+
+- **GitHub Actions bumped** (#221, #224): `actions/setup-python` 7.1.0 (was 7.0.0),
+  `astral-sh/setup-uv` 10.3.3 (was 10.3.0, via 10.3.2), `github/codeql-action` init/analyze 4.39.1
+  (was 4.39.0).
+- **Docs build requires Sphinx ≥ 9.2.0** (was ≥ 9.1.1) (#222).
+- **Dev dependencies: pytest 9.2.0** (was 9.1.1) **and pyflakes 4.1.0** (was 4.0.3) (#225).
+- **Tests pass under pytest 9.2.** pytest 9.2 rejects nested data structures in a single
+  `pytest.approx()`; the legend layout tests now compare their lists of (x1, x2) underline pairs
+  element by element (#226).
+
+### Fixed
+- **Figure exports (PNG/PDF/SVG) rebuild the crop previews before rendering**, so an export can
+  no longer use a stale cached crop, whatever the on-screen view last refreshed.
+- **The membrane overlay is now flipped with its blot.** In the Original Image view and the
+  annotated context TIFF export, the overlay was drawn with the blot's rotation and levels but
+  not its horizontal or vertical flip, so on a flipped blot it was mirrored relative to the image.
+  This has been the case since flips were added in 1.0.0. Overlay ladder bands are positioned by
+  clicking on that view, so **ladder bands picked on a flipped blot's membrane overlay before this
+  fix may be misplaced**, mostly with a vertical flip (the band is recorded at the mirrored
+  height), and the figure draws its overlay ladder markers from those positions. Re-check those
+  projects and re-assign the affected bands. Crop previews, blot images in exported figures and
+  the operation log were not affected.
+- **Changing the kDa label size now updates the overlay ladder labels in the Original Image view
+  at once**, not only in the figure.
+- **Zoom and pan are kept when the views redraw.** Changing opacity, levels, label sizes, the grid
+  or the legend zone used to reset the Original Image view (and the figure) to fit the window. A
+  view now keeps the user's zoom and pan until the Fit button or a double-click; it refits by
+  itself when the content changes (another blot or NIR channel, opening or creating a project,
+  importing a blot). The figure can now be zoomed and panned like the Original Image view
+  (Shift+scroll to zoom, drag or scroll to pan, double-click to fit).
+- **`crop_committed` entries for NIR blots record the crop of the channel that moved.** Each NIR
+  channel has its own crop position, but the entry recorded the blot's fallback crop, which a
+  channel move does not change. The entry now records the moved channel's crop, names that
+  channel's asset in `asset_sha256` (as `nir_channel_imported` and NIR exports do) and says
+  "NIR channel <i> (Ch<i+1>)" in its note. Earlier NIR `crop_committed` entries recorded the
+  blot's fallback crop rather than the moved channel's crop. Integrity verification of existing
+  logs is unaffected: old entries are verified as written. ECL entries are unchanged.
+- **NIR display entries name the channel that was edited.** Levels (typed, sliders and
+  histogram), rotation (typed, dial and the 90° buttons), flips and invert are per channel on NIR
+  blots, but their log entries named only the blot (its asset, no channel). They now carry the
+  edited channel's asset in `asset_sha256` and "NIR channel <i> (Ch<i+1>)" in the note, with the
+  same field names; for a slider or dial gesture, the channel the gesture started on. Earlier NIR
+  display entries named the blot, not the channel; old entries verify as written. ECL entries
+  are unchanged.
+- **NIR protein label, antibody name and inclusion entries name the channel too.** On NIR blots
+  the protein label text and font size, the antibody name and "include in figure" are set per
+  channel; their log entries now follow the same convention (the channel's asset, "NIR channel
+  <i> (Ch<i+1>)" in the note, same field names; for a font-size gesture, the channel it started
+  on). Earlier entries named the blot, not the channel; old entries verify as written. ECL
+  entries are unchanged.
+- **Showing the legend export zone no longer changes the project without a log entry.** The
+  first time the zone was shown, a default zone (300 × 200, centred) was stored on the blot and
+  written to `project.json` at the next save, with nothing in the operation log; changing its
+  marker options before moving it stored a zone at the image corner instead. The default is now
+  only displayed. It is stored, and logged as `legend_zone_changed` from no zone to the new
+  value, when the zone is first moved or resized, or before its marker options are changed (then
+  at the centred position shown). When no zone is stored, the legend-zone PNG export stores and
+  logs the default zone first, then exports it; its output is identical to before. With the
+  legend-zone checkbox unticked it is refused, as before. Projects that already have a stored
+  zone behave as before.
+- **Crop moves caused by a crop resize are logged.** Resizing the crop rectangle from its top or
+  left edge, or growing it past the image edge, also moves the crop (of the active channel, on
+  NIR blots), but only `crop_template_resized` was logged. A `crop_committed` entry with the
+  previous and new crop now follows it, named as the other crop entries and noting that the
+  move came from a resize. A resize that only changes the size is logged as before.
+- **NIR blots whose channels are not numbered from 1 now work in the Original Image view.**
+  Importing a single Typhoon file that is the second scan of a two-channel acquisition ("Scan
+  number 2/2") gives a blot whose only channel is Ch2. On such a blot the Original Image view
+  showed the image with default display settings instead of the channel's (so levels, gamma and
+  invert changes did not appear there, although they reached the figure), and dragging the crop
+  did nothing. The same mix-up could pick a different channel for display than for editing when
+  channel numbers had gaps. The active channel is now found the same way everywhere, by its
+  channel number (the lowest one when the selection does not match the blot), for the view,
+  crop, display and label edits, log entries and the legend-zone export.
+- **A NIR import of two files that would be the same channel is refused.** Choosing two files
+  with the same Typhoon "Scan number" (for example the same scan twice), or a file without a
+  scan number in first position next to a "1/2" scan, used to import a blot with two channels
+  of the same number: only the first could be selected, and the other's figure row showed its
+  whole, uncropped image. The import now stops before anything is copied, stored or logged,
+  and the message names both files and their scan numbers.
+- **Projects that already have two NIR channels with the same number are flagged.** When such a
+  project is opened, or imported from an archive, a warning names each affected blot, its files
+  and the repeated channel, and explains that only the first channel is usable and the other's
+  figure row shows its uncropped image. "Renumber channels" numbers the blot's channels Ch1,
+  Ch2, … in file order, logs one `nir_channels_renumbered` entry per blot with the old and new
+  channel numbers, and rebuilds the previews; "Leave as is" changes nothing.
+
 ---
 
 ## [1.2.4] — 2026-11-04

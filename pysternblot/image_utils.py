@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Literal
@@ -300,6 +301,26 @@ def apply_levels_uint16(
     return np.ascontiguousarray(out)
 
 
+def apply_levels_uint16_lut(
+    img: np.ndarray,
+    black: int,
+    white: int,
+    gamma: float,
+    invert: bool,
+) -> np.ndarray:
+    """
+    Same result as apply_levels_uint16, via a 65536-entry lookup table.
+
+    The table is built with apply_levels_uint16 itself (levels are pointwise),
+    so every value maps exactly as it would there. Faster on full images; used
+    by the Original Image view only, exports keep apply_levels_uint16.
+    """
+    if img.dtype != np.uint16:
+        raise TypeError(f"Expected uint16 image, got {img.dtype}")
+    lut = apply_levels_uint16(np.arange(65536, dtype=np.uint16), black, white, gamma, invert)
+    return np.ascontiguousarray(lut[img])
+
+
 def rotate_uint16(
     img: np.ndarray,
     rotation_deg: float,
@@ -355,6 +376,121 @@ def crop_uint16(img: np.ndarray, x: int, y: int, w: int, h: int) -> np.ndarray:
     h = max(1, min(int(h), ih - y))
 
     return np.ascontiguousarray(img[y:y + h, x:x + w])
+
+
+# Pillow's rotate() fast paths (copy / transpose) for these angles; the
+# crop-window path below only reproduces its affine-transform path.
+_ROTATE_FAST_PATH_ANGLES = (0.0, 90.0, 180.0, 270.0)
+# Bicubic samples a 4x4 neighbourhood; 4 px of margin around the source
+# bounding box keeps every sample (and Pillow's edge clamping) identical.
+_BICUBIC_PAD = 4
+
+
+def levels_rotate_flip_crop_uint16(
+    img: np.ndarray,
+    black: int,
+    white: int,
+    gamma: float,
+    invert: bool,
+    rotation_deg: float,
+    flip_h: bool,
+    flip_v: bool,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+) -> np.ndarray:
+    """
+    Levels, rotate (expand=False), flip, then crop, processing only the
+    source pixels the crop window needs.
+
+    Returns exactly what the full-image sequence returns:
+        crop_uint16(flip(rotate_uint16(apply_levels_uint16(img, ...),
+                                       rotation_deg, expand=False)), x, y, w, h)
+    (verified bit-identical in tests/test_crop_window_rotation.py).
+    Levels are pointwise, so applying them to a sub-image is identical; the
+    rotation is the same Pillow affine transform, offset to the sub-image.
+    """
+    if img.dtype != np.uint16:
+        raise TypeError(f"Expected uint16 image, got {img.dtype}")
+
+    deg = float(rotation_deg)
+
+    if abs(deg) < 1e-6 or (deg % 360.0) in _ROTATE_FAST_PATH_ANGLES:
+        # rotate_uint16 returns the image unchanged, or Pillow uses copy /
+        # transpose: run the original full sequence.
+        out = apply_levels_uint16(img, black, white, gamma, invert)
+        out = rotate_uint16(out, deg, expand=False)
+        if flip_h:
+            out = np.fliplr(out)
+        if flip_v:
+            out = np.flipud(out)
+        return crop_uint16(out, x, y, w, h)
+
+    ih, iw = img.shape[:2]
+
+    # a. Clamp exactly like crop_uint16 (expand=False keeps the image size).
+    x = max(0, min(int(x), max(0, iw - 1)))
+    y = max(0, min(int(y), max(0, ih - 1)))
+    w = max(1, min(int(w), iw - x))
+    h = max(1, min(int(h), ih - y))
+
+    # c. The same window in the rotated, unflipped frame.
+    rx = iw - x - w if flip_h else x
+    ry = ih - y - h if flip_v else y
+
+    # d. Destination->source affine matrix, built exactly as Pillow 13.0.0's
+    # Image.rotate builds it for expand=False, center=None, translate=None
+    # (checked against the installed source: angle % 360, -radians,
+    # round(..., 15), centre (w/2, h/2), post_trans (0, 0)).
+    angle = -math.radians(deg % 360.0)
+    m = [
+        round(math.cos(angle), 15),
+        round(math.sin(angle), 15),
+        0.0,
+        round(-math.sin(angle), 15),
+        round(math.cos(angle), 15),
+        0.0,
+    ]
+    cx, cy = iw / 2, ih / 2
+    a, b, c, d, e, f = m
+    m[2], m[5] = a * -cx + b * -cy + c, d * -cx + e * -cy + f
+    m[2] += cx
+    m[5] += cy
+    a, b, c, d, e, f = m
+
+    # e. Source bounding box of the window, padded for bicubic, clamped.
+    corners = ((rx, ry), (rx + w, ry), (rx, ry + h), (rx + w, ry + h))
+    sx = [a * px + b * py + c for px, py in corners]
+    sy = [d * px + e * py + f for px, py in corners]
+    bx0 = max(0, math.floor(min(sx)) - _BICUBIC_PAD)
+    by0 = max(0, math.floor(min(sy)) - _BICUBIC_PAD)
+    bx1 = min(iw, math.ceil(max(sx)) + _BICUBIC_PAD)
+    by1 = min(ih, math.ceil(max(sy)) + _BICUBIC_PAD)
+
+    if bx1 <= bx0 or by1 <= by0:
+        # The whole window maps outside the source: Pillow fills with 0.
+        out = np.zeros((h, w), dtype=np.uint16)
+    else:
+        # f. Same levels function, same arguments, on the sub-image only.
+        sub = apply_levels_uint16(img[by0:by1, bx0:bx1], black, white, gamma, invert)
+        # g. Same transform as rotate(), offset to the window and sub-image.
+        pil = Image.fromarray(sub.astype(np.int32), mode="I")
+        rotated = pil.transform(
+            (w, h),
+            Image.Transform.AFFINE,
+            (a, b, c + a * rx + b * ry - bx0, d, e, f + d * rx + e * ry - by0),
+            resample=Image.Resampling.BICUBIC,
+            fillcolor=0,
+        )
+        out = np.clip(np.array(rotated, dtype=np.int32), 0, 65535).astype(np.uint16)
+
+    # h. Flips.
+    if flip_h:
+        out = np.fliplr(out)
+    if flip_v:
+        out = np.flipud(out)
+    return np.ascontiguousarray(out)
 
 
 def save_uint16_tiff(img: np.ndarray, path: str | Path) -> None:

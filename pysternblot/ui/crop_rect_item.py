@@ -11,6 +11,8 @@ class CropRectItem(QGraphicsRectItem):
 
     - Drag inside to move
     - Drag edges/corners to resize
+    - Calls on_press() on left mouse press, before any geometry change (so
+      the caller can capture the value before the interaction)
     - Calls on_change(scene_rect: QRectF) whenever geometry changes
     - Calls on_commit(scene_rect: QRectF) on mouse release (end of interaction)
 
@@ -40,10 +42,11 @@ class CropRectItem(QGraphicsRectItem):
     L = 9
 
     def __init__(self, rect: QRectF, callback=None, *, on_change=None, on_commit=None,
-                 on_move_commit=None, on_resize_commit=None):
+                 on_move_commit=None, on_resize_commit=None, on_press=None):
         super().__init__(rect)
 
         # Backward compat + new API
+        self._on_press = on_press
         self._on_change = on_change if on_change is not None else callback
         self._on_commit = on_commit
         self._on_move_commit = on_move_commit
@@ -163,6 +166,9 @@ class CropRectItem(QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # Before anything moves: no on_change has fired for this interaction.
+            if callable(self._on_press):
+                self._on_press()
             self._active_handle = self._pick_handle(event.pos())
             self._press_scene_pos = event.scenePos()
             self._press_rect = QRectF(self.rect())

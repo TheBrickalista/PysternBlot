@@ -32,7 +32,57 @@ from ..image_utils import (
 from ..jsonsafe import finite_or_none
 from ..logchain import append_log_entry
 from ..physical_scale import native_crop_size, reconcile_reference_pixel_size
-from ..storage import parse_iq800_metadata, parse_licor_metadata
+from ..storage import (
+    DuplicateNirChannelError,
+    check_nir_channel_indices,
+    parse_iq800_metadata,
+    parse_licor_metadata,
+)
+
+
+def _blots_with_duplicate_channels(project) -> list:
+    return [b for b in project.panel.blots if b.is_nir() and b.duplicate_channel_indices()]
+
+
+def _channel_file_name(project, ch) -> str:
+    asset = project.assets.get(ch.asset_sha256)
+    src = getattr(asset, "original_source_path", None) if asset is not None else None
+    return Path(src).name if src else f"asset {ch.asset_sha256[:12]}"
+
+
+def _duplicate_channels_in_project_message(project, blots) -> str:
+    lines = [f"Project \u201c{project.project.name}\u201d has NIR blots with two channels "
+             f"of the same number:", ""]
+    for b in blots:
+        dups = ", ".join(f"Ch{i + 1}" for i in b.duplicate_channel_indices())
+        lines.append(f"\u2022 {b.display_name or b.id}: {dups} used more than once")
+        for ch in b.channels:
+            lines.append(f"      Ch{ch.channel_index + 1}: {_channel_file_name(project, ch)}")
+    lines += [
+        "",
+        "Only the first of these channels can be selected and edited, and the "
+        "other's figure row shows its whole, uncropped image.",
+        "",
+        "Renumber channels: number them Ch1, Ch2, \u2026 in file order "
+        "(logged; previews are rebuilt).",
+        "Leave as is: change nothing.",
+    ]
+    return "\n".join(lines)
+
+
+def _duplicate_channel_message(e: DuplicateNirChannelError) -> str:
+    def describe(path, scan):
+        if scan:
+            return f"{path.name}  (Scan number {scan})"
+        return f"{path.name}  (no Scan number: taken as Ch{e.channel_index + 1} by file order)"
+
+    return (
+        f"These two files would both be channel Ch{e.channel_index + 1}:\n\n"
+        f"  {describe(e.first_path, e.first_scan)}\n"
+        f"  {describe(e.second_path, e.second_scan)}\n\n"
+        f"Choose two different scans of the acquisition (for example Scan number "
+        f"1/2 and 2/2). Nothing was imported."
+    )
 
 
 # bit_depth == 32 is this codebase's sentinel for "float source" (see
@@ -168,6 +218,67 @@ class _ProjectIOMixin:
             ),
         )
 
+    # ------------------------------------------------------------------
+    # NIR blots with duplicate channel numbers (projects written before imports refused them)
+    # ------------------------------------------------------------------
+    def _ask_renumber_channels(self, text: str) -> bool:
+        """Warning with "Renumber channels" / "Leave as is"; True = renumber."""
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("NIR channels with the same number")
+        msg.setText(text)
+        renumber = msg.addButton("Renumber channels", QMessageBox.AcceptRole)
+        leave = msg.addButton("Leave as is", QMessageBox.RejectRole)
+        msg.setDefaultButton(leave)
+        msg.exec()
+        return msg.clickedButton() is renumber
+
+    def _handle_duplicate_nir_channels(self, project, *, regenerate_previews: bool = False) -> bool:
+        """If any NIR blot of project has duplicate channel_index values, warn
+        and offer to renumber them. Nothing changes unless the user chooses
+        "Renumber channels"; then each affected blot is renumbered in file
+        order, logged (nir_channels_renumbered, old -> new channel list), and
+        the project is saved. Returns True if it was renumbered.
+
+        regenerate_previews: rebuild the renumbered blots' crop previews here
+        (a project that is not being opened); an opened project's previews
+        are rebuilt by the open's full refresh."""
+        blots = _blots_with_duplicate_channels(project)
+        if not blots:
+            return False
+        if not self._ask_renumber_channels(_duplicate_channels_in_project_message(project, blots)):
+            return False
+
+        current = self.current_project
+        self.current_project = project          # log_operation writes to the current project
+        try:
+            for b in blots:
+                files = ", ".join(_channel_file_name(project, ch) for ch in b.channels)
+                old, new = b.renumber_channels_in_file_order()
+                self.log_operation(
+                    "nir_channels_renumbered",
+                    target_type="blot",
+                    target_id=b.id,
+                    asset_sha256=b.asset_sha256,
+                    field="channels.channel_index",
+                    old_value=old,
+                    new_value=new,
+                    note=f"Duplicate NIR channel numbers renumbered in file order: {files}.",
+                )
+            self.workspace.save_project(project)
+        finally:
+            self.current_project = current
+
+        if regenerate_previews:
+            for b in blots:
+                for ch in b.channels:
+                    try:
+                        self.workspace.ensure_blot_crop_preview(
+                            b, project.panel, channel_index=ch.channel_index, project=project)
+                    except Exception as e:
+                        print(f"[preview] failed for {b.id} ch{ch.channel_index}: {e}")
+        return True
+
     def open_project(self):
         self._flush_gesture()
         path, _ = QFileDialog.getOpenFileName(self, "Open project.json", "", "JSON (*.json)")
@@ -175,9 +286,15 @@ class _ProjectIOMixin:
             return
         try:
             self.current_project = self.workspace.load_project(path)
+            self._handle_duplicate_nir_channels(self.current_project)
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
-            self.refresh_previews()
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Loaded", path)
@@ -194,7 +311,12 @@ class _ProjectIOMixin:
             self.current_project = self.workspace.load_project(str(proj_path))
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
-            self.refresh_previews()
+            # Must stay regenerate="all": crop previews are cached at
+            # assets/<sha256>/preview_crop_<blot.id>[_ch<n>].tif, a key with no project
+            # id, so two projects using the same image with the same blot id share one
+            # file. Opening or switching a project must regenerate every preview;
+            # never narrow this scope.
+            self.refresh_previews(fit_figure=True, fit_original=True)
             self._refresh_overlay_ladder_ui()
             self.refresh_library()
             QMessageBox.information(self, "Created", f"Project created:\n{proj_path}")
@@ -394,7 +516,7 @@ class _ProjectIOMixin:
                 f"Copied to:\n{dest}\n\nAttached to project as {blot_id}"
             )
 
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)   # new blot
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -417,6 +539,15 @@ class _ProjectIOMixin:
         file_paths = [dialog.channel1_path]
         if dialog.channel2_path is not None:
             file_paths.append(dialog.channel2_path)
+
+        # Two files that would be the same channel (same Typhoon "Scan
+        # number", or a file without one taking the other's position) are
+        # refused before anything is copied, stored or logged.
+        try:
+            check_nir_channel_indices(file_paths)
+        except DuplicateNirChannelError as e:
+            QMessageBox.warning(self, "Same NIR channel twice", _duplicate_channel_message(e))
+            return
 
         # JPEG rejection for each channel file
         for fp in file_paths:
@@ -537,9 +668,10 @@ class _ProjectIOMixin:
             self._save_project()
 
             self.active_blot_id = blot_id
-            self._active_nir_channel = 0
+            # The channel selector (rebuilt by the sync) selects the blot's
+            # lowest channel_index; no reset needed here.
             self._sync_controls_from_project()
-            self.refresh_previews()
+            self.refresh_previews(fit_figure=True, fit_original=True)   # new blot
 
             channel_info = "\n".join(
                 f"  Ch{c.channel_index + 1}: {c.wavelength_nm}nm {c.filter_name or ''}"
@@ -918,6 +1050,17 @@ class _ProjectIOMixin:
             msg.setWindowTitle("Import complete")
             msg.setText("\n".join(lines))
             msg.exec()
+
+            # Projects from older versions can hold NIR blots with duplicate
+            # channel numbers: offer to renumber each one (nothing changes
+            # without that choice).
+            for project_id in result.imported_project_ids:
+                pj = self.workspace.projects_dir / project_id / "project.json"
+                try:
+                    imported = self.workspace.load_project(str(pj))
+                except Exception:
+                    continue
+                self._handle_duplicate_nir_channels(imported, regenerate_previews=True)
 
             if result.imported_project_ids:
                 self.refresh_library()

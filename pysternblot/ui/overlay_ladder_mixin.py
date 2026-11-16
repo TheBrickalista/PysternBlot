@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QEvent
 
+from .. import render as _render
 from ..models import OverlayLadder, LadderBandAssignment
 
 
@@ -99,7 +100,7 @@ class _OverlayLadderMixin:
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _open_overlay_ladder_dialog(self):
         blot = self._get_active_blot()
@@ -203,7 +204,7 @@ class _OverlayLadderMixin:
             self.current_project.marker_sets = list(self.marker_set_library.items)
 
             self._save_project()
-            self.refresh_previews()
+            self.refresh_previews(regenerate="none")
             self._populate_overlay_ladder_assignment_table()
 
         def close_dialog():
@@ -238,11 +239,13 @@ class _OverlayLadderMixin:
 
         target.protein_label.text = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "protein_label_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="protein_label.text",
             old_value=old,
             new_value=new,
@@ -251,7 +254,7 @@ class _OverlayLadderMixin:
         self._add_protein_label_suggestion(new)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _on_antibody_name_changed(self, *_args):
         blot = self._get_active_blot()
@@ -267,11 +270,13 @@ class _OverlayLadderMixin:
 
         target.antibody_name = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "antibody_name_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="antibody_name",
             old_value=old,
             new_value=new,
@@ -295,10 +300,14 @@ class _OverlayLadderMixin:
 
         target.protein_label.font_size_pt = new
 
-        channel = self._active_nir_channel if blot.is_nir() and blot.channels else None
+        channel = self._active_channel_key(blot)
+        # asset/note name this tick's channel; the key carries the channel and
+        # a channel switch flushes first, so the entry names the channel the
+        # gesture started on.
+        _log_asset, _log_note = self._channel_log_target(blot)
         self._gesture_committer.update(
             ("protein_font_size_changed", "blot", blot.id, "protein_label.font_size_pt", channel),
-            old, new, asset_sha256=blot.asset_sha256,
+            old, new, asset_sha256=_log_asset, note=_log_note,
         )
         # The protein label is drawn only in the figure (build_panel_scene),
         # never in the Original Image view: no crop preview depends on it.
@@ -310,8 +319,9 @@ class _OverlayLadderMixin:
                 pos = event.position().toPoint()
                 scene_pos = self.prov_view.mapToScene(pos)
 
-                # In render.py provenance image starts at x0=10, y0=10
-                image_y = float(scene_pos.y() - 10.0)
+                # Scene -> image pixels: the image is drawn at
+                # render.PROVENANCE_IMAGE_ORIGIN (read at call time).
+                image_y = float(scene_pos.y() - _render.PROVENANCE_IMAGE_ORIGIN[1])
 
                 self._assign_pending_overlay_ladder_band(image_y)
                 return True
@@ -381,7 +391,7 @@ class _OverlayLadderMixin:
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
         self._refresh_overlay_ladder_ui()
 
         if self.overlay_ladder_dialog is not None:
@@ -492,4 +502,4 @@ class _OverlayLadderMixin:
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")

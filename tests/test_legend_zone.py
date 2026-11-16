@@ -17,6 +17,7 @@ import struct
 import sys
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -56,9 +57,11 @@ from pysternblot.models import (
     ProteinLabel,
     Style,
 )
-from pysternblot.render import build_panel_scene, build_provenance_scene
+from pysternblot import render
+from pysternblot.render import build_panel_scene, build_provenance_scene, default_legend_zone
 from pysternblot.storage import Workspace
 from pysternblot.ui.export_mixin import _ExportMixin
+from pysternblot.ui import export_mixin as export_mixin_module
 from pysternblot.ui.crop_rect_item import CropRectItem
 from pysternblot.ui.main_window import MainWindow
 
@@ -348,20 +351,29 @@ class TestProvenanceSceneLegendZone:
         assert len(self._crop_rect_items(scene_without)) == 1
         assert len(self._crop_rect_items(scene_with)) == 2
 
-    def test_show_legend_zone_true_creates_default_centered_zone(self, qapp, tmp_path):
+    def test_show_legend_zone_true_shows_default_centered_zone_without_storing_it(
+            self, qapp, tmp_path):
+        # Rendering never changes the model: with no stored zone, the default
+        # (centred) zone is displayed but blot.legend_zone stays None until
+        # the user moves, resizes or configures it.
         ws, sha = _make_workspace(tmp_path)
         proj = _minimal_project(sha, LegendSettings())
         blot = proj.panel.blots[0]
         assert blot.legend_zone is None
 
-        build_provenance_scene(proj, ws, blot_id="b1", show_legend_zone=True)
+        scene = build_provenance_scene(proj, ws, blot_id="b1", show_legend_zone=True)
 
-        assert blot.legend_zone is not None
+        assert blot.legend_zone is None
         # Default 300x200 zone centered on the 300x200 synthetic image -> (0, 0).
-        assert blot.legend_zone.x == pytest.approx(0.0)
-        assert blot.legend_zone.y == pytest.approx(0.0)
-        assert blot.legend_zone.w == pytest.approx(300.0)
-        assert blot.legend_zone.h == pytest.approx(200.0)
+        legend_item = next(i for i in self._crop_rect_items(scene)
+                           if i.pen().color().name() == "#1e88e5")
+        r = legend_item.crop_scene_rect()
+        ox, oy = render.PROVENANCE_IMAGE_ORIGIN
+        assert (r.x() - ox, r.y() - oy) == (pytest.approx(0.0), pytest.approx(0.0))
+        assert (r.width(), r.height()) == (pytest.approx(300.0), pytest.approx(200.0))
+        assert default_legend_zone(300, 200).model_dump() == {
+            "x": 0.0, "y": 0.0, "w": 300.0, "h": 200.0,
+            "show_markers": True, "marker_side": "left"}
 
     def test_legend_zone_pen_distinct_from_crop_pen(self, qapp, tmp_path):
         ws, sha = _make_workspace(tmp_path)
@@ -419,7 +431,7 @@ class TestSyncThenRenderRealOrder:
         win.current_project = proj
         return win, proj
 
-    def test_sync_is_read_only_then_render_creates_centred_zone(self, qapp, tmp_path):
+    def test_sync_is_read_only_then_render_shows_centred_zone(self, qapp, tmp_path):
         # A size that does not match the default 300x200 zone, so a correctly
         # centred zone cannot coincide with the origin.
         img_w, img_h = 1000, 800
@@ -435,40 +447,52 @@ class TestSyncThenRenderRealOrder:
         )
 
         # Step 2: user ticks "Legend export zone" -> refresh_previews() ->
-        # build_provenance_scene(show_legend_zone=True). This is where the
-        # zone must be created, centred on the image.
+        # build_provenance_scene(show_legend_zone=True). The zone is shown
+        # centred on the image, but not stored (rendering never changes the
+        # model).
         win._legend_zone_visible = True
         scene = build_provenance_scene(
             proj, win.workspace.root, blot_id=blot.id, show_legend_zone=True,
         )
         assert scene is not None
+        assert blot.legend_zone is None
 
-        assert blot.legend_zone is not None
         default_w, default_h = 300.0, 200.0
         expected_x = (img_w - default_w) / 2.0
         expected_y = (img_h - default_h) / 2.0
-        assert blot.legend_zone.x == pytest.approx(expected_x)
-        assert blot.legend_zone.y == pytest.approx(expected_y)
-        assert (blot.legend_zone.x, blot.legend_zone.y) != (0.0, 0.0)
+        legend_items = [i for i in scene.items() if isinstance(i, CropRectItem)]
+        legend_item = next(i for i in legend_items
+                           if i.pen().color().name() == "#1e88e5")
+        r = legend_item.crop_scene_rect()
+        ox, oy = render.PROVENANCE_IMAGE_ORIGIN
+        assert r.x() - ox == pytest.approx(expected_x)
+        assert r.y() - oy == pytest.approx(expected_y)
+        assert (r.x() - ox, r.y() - oy) != (0.0, 0.0)
 
         # Step 3: refresh_previews() calls _sync_controls_from_project() again
-        # after rendering. It must not clobber the zone render.py just made.
+        # after rendering. It must still not create (or clobber) the zone.
         win._sync_controls_from_project()
-        assert blot.legend_zone.x == pytest.approx(expected_x)
-        assert blot.legend_zone.y == pytest.approx(expected_y)
+        assert blot.legend_zone is None
 
-        # Step 4: the export guard in export_mixin.py would now let the
-        # export proceed with the checkbox checked.
+        # Step 4: with the checkbox checked, export_legend_zone_png proceeds,
+        # using the same centred default the view shows (no stored zone).
         win.legend_zone_cb.blockSignals(True)
         win.legend_zone_cb.setChecked(True)
         win.legend_zone_cb.blockSignals(False)
-
-        lz = blot.legend_zone
-        guard_blocks_export = lz is None or not win.legend_zone_cb.isChecked()
-        assert not guard_blocks_export, (
-            "export_legend_zone_png's guard must not refuse export once the "
-            "zone has been shown and the checkbox is checked"
-        )
+        out = tmp_path / "zone.png"
+        with patch.object(export_mixin_module.QFileDialog, "getSaveFileName",
+                          return_value=(str(out), "")), \
+             patch.object(export_mixin_module.QMessageBox, "information") as info, \
+             patch.object(export_mixin_module.QMessageBox, "critical") as critical:
+            win.export_legend_zone_png()
+        assert not critical.called, critical.call_args
+        assert out.is_file(), info.call_args
+        # The export stored and logged the zone it used, before its own entry.
+        assert blot.legend_zone is not None
+        assert (blot.legend_zone.x, blot.legend_zone.y) == (
+            pytest.approx(expected_x), pytest.approx(expected_y))
+        ops = [e.operation for e in proj.operation_log]
+        assert ops[-2:] == ["legend_zone_changed", "export_generated"]
 
         win.close()
 

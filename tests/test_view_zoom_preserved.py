@@ -1,0 +1,321 @@
+# Pystern Blot
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3 of the License.
+
+"""
+Zoom and pan survive redraws of the Original Image view and the figure.
+
+A view is in fit mode until the user zooms or pans; redraws then keep the
+user's transform and scroll position. The Fit button, a double-click and
+content changes (other blot or channel, new project, imports) refit.
+
+The "preserved" checks use only plain QGraphicsView API (transform and
+scrollbars), so they also run against the code before this change.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QAbstractSlider, QApplication
+
+from test_refresh_scope_staleness import ECL_A, ECL_B, NIR, _window as _real_tiff_window
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    return app
+
+
+# Window sizes chosen so the Original Image viewport gets both odd and even
+# heights (an even height used to drift 1 px per recentring redraw).
+WINDOW_SIZES = [(1200, 900), (1200, 901), (1201, 899), (1199, 897)]
+SIZE_IDS = [f"{w}x{h}" for w, h in WINDOW_SIZES]
+
+
+def _shown(tmp_path, size=(1200, 900)):
+    win = _real_tiff_window(tmp_path)
+    win.resize(*size)
+    win.show()
+    QTest.qWaitForWindowExposed(win)
+    return win
+
+
+def _centre(view) -> QPointF:
+    """The exact (floating-point) scene point at the viewport centre."""
+    vp = view.viewport()
+    inverse, _ok = view.viewportTransform().inverted()
+    return inverse.map(QPointF(vp.width() / 2.0, vp.height() / 2.0))
+
+
+def _show_tab_of(win, view):
+    for i in range(win.tabs.count()):
+        if win.tabs.widget(i).isAncestorOf(view):
+            win.tabs.setCurrentIndex(i)
+            QApplication.processEvents()
+            return
+    raise AssertionError("view not found in any tab")
+
+
+def _user_zoom_in(view, steps=6):
+    centre = QPointF(view.viewport().rect().center())
+    for _ in range(steps):
+        ev = QWheelEvent(centre, view.viewport().mapToGlobal(centre), QPoint(0, 0), QPoint(0, 120),
+                         Qt.NoButton, Qt.ShiftModifier, Qt.NoScrollPhase, False)
+        view.wheelEvent(ev)
+
+
+def _user_pan(view):
+    for bar in (view.horizontalScrollBar(), view.verticalScrollBar()):
+        for _ in range(3):
+            bar.triggerAction(QAbstractSlider.SliderPageStepAdd)
+
+
+def _state(view):
+    t = view.transform()
+    return (round(t.m11(), 9), round(t.m22(), 9),
+            view.horizontalScrollBar().value(), view.verticalScrollBar().value())
+
+
+def _zoomed_and_panned(win, view):
+    _show_tab_of(win, view)
+    fitted = _state(view)
+    _user_zoom_in(view)
+    _user_pan(view)
+    state = _state(view)
+    assert state[0] > fitted[0] * 1.5, "precondition: the user zoom must take effect"
+    assert state[2] > 0 or state[3] > 0, "precondition: the user pan must take effect"
+    return state
+
+
+# --------------------------------------------------------------------------
+# Preserved
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_original_image_keeps_zoom_on_opacity_change(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
+    before = _zoomed_and_panned(win, win.prov_view)
+    old_scene = win.prov_view.scene()
+    win.alpha_slider.setValue(win.alpha_slider.value() + 20)
+    win._gesture_committer.flush()                 # runs the provenance-only redraw
+    assert win.prov_view.scene() is not old_scene  # really redrawn
+    assert _state(win.prov_view) == before
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_original_image_keeps_zoom_on_grid_toggle(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
+    before = _zoomed_and_panned(win, win.prov_view)
+    old_scene = win.prov_view.scene()
+    win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+    assert win.prov_view.scene() is not old_scene
+    assert _state(win.prov_view) == before
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_figure_keeps_zoom_on_levels_change(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
+    before = _zoomed_and_panned(win, win.view)
+    old_scene = win.view.scene()
+    win.black_value_edit.setText("2500")
+    win._on_black_value_edited()                   # typed levels -> refresh_previews("active")
+    assert win.view.scene() is not old_scene
+    assert _state(win.view) == before
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_zoom_is_kept_across_many_redraws_without_drift(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
+    before = _zoomed_and_panned(win, win.prov_view)
+    centre0 = _centre(win.prov_view)
+    for _ in range(10):
+        win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+    assert _state(win.prov_view) == before
+    assert _centre(win.prov_view) == centre0
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_grid_toggles_even_restore_exactly_odd_stay_within_half_a_pixel(qapp, tmp_path, size):
+    # The grid's 1 px pen grows the scene rect by half a pixel on each side,
+    # so every toggle changes the scene rect: the view must recentre without
+    # accumulating rounding. Scroll positions are whole device pixels, so with
+    # a changed rect the centre can only be kept to half a device pixel,
+    # i.e. 0.5 / scale in scene units.
+    win = _shown(tmp_path, size)
+    view = win.prov_view
+    before = _zoomed_and_panned(win, view)
+    centre0 = _centre(view)
+    half_device_px = 0.5 / view.transform().m11()
+    rect0 = view.sceneRect()
+    for k in range(1, 12):
+        win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+        c = _centre(view)
+        if k % 2 == 0:
+            assert view.sceneRect() == rect0
+            assert _state(view) == before, f"after {k} toggles"
+            assert c == centre0, f"after {k} toggles"
+        else:
+            assert view.sceneRect() != rect0
+            assert _state(view)[:2] == before[:2]                        # zoom unchanged
+            assert abs(c.x() - centre0.x()) <= half_device_px, f"after {k} toggles"
+            assert abs(c.y() - centre0.y()) <= half_device_px, f"after {k} toggles"
+
+
+# --------------------------------------------------------------------------
+# Refit
+# --------------------------------------------------------------------------
+def _fitted_state(view):
+    view.fit_scene()
+    return _state(view)
+
+
+def test_switching_blot_refits_original_image(qapp, tmp_path):
+    win = _shown(tmp_path)
+    _zoomed_and_panned(win, win.prov_view)
+    win.prov_blot_combo.setCurrentIndex(win.prov_blot_combo.findData(NIR))
+    assert win.prov_view.in_fit_mode
+    after = _state(win.prov_view)
+    assert after == _fitted_state(win.prov_view)
+
+
+def test_switching_nir_channel_refits_original_image(qapp, tmp_path):
+    win = _shown(tmp_path)
+    win.prov_blot_combo.setCurrentIndex(win.prov_blot_combo.findData(NIR))
+    _zoomed_and_panned(win, win.prov_view)
+    win._on_nir_channel_changed(1)
+    assert win.prov_view.in_fit_mode
+    assert _state(win.prov_view) == _fitted_state(win.prov_view)
+
+
+def test_fit_button_and_double_click_return_to_fit_mode(qapp, tmp_path):
+    win = _shown(tmp_path)
+    _zoomed_and_panned(win, win.prov_view)
+    assert not win.prov_view.in_fit_mode
+    win.prov_fit_btn.click()
+    assert win.prov_view.in_fit_mode
+
+    _zoomed_and_panned(win, win.view)
+    assert not win.view.in_fit_mode
+    QTest.mouseDClick(win.view.viewport(), Qt.LeftButton, Qt.NoModifier,
+                      win.view.viewport().rect().center())
+    assert win.view.in_fit_mode
+
+
+def test_in_fit_mode_the_next_refresh_follows_the_scene_size(qapp, tmp_path):
+    win = _shown(tmp_path)
+    _show_tab_of(win, win.view)
+    _zoomed_and_panned(win, win.view)
+    QTest.mouseDClick(win.view.viewport(), Qt.LeftButton, Qt.NoModifier,
+                      win.view.viewport().rect().center())
+    fitted_before = _state(win.view)
+
+    # A crop resize changes the figure's size; the view is in fit mode, so
+    # the (non-forced) redraw fits the new scene.
+    ct = win.current_project.panel.crop_template
+    ct.w, ct.h = ct.w * 0.5, ct.h * 2.0
+    win._on_crop_resize_commit()
+    after = _state(win.view)
+    assert after != fitted_before                  # a different size, refitted
+    assert after == _fitted_state(win.view)
+
+
+def test_no_drift_for_both_viewport_parities(qapp, tmp_path):
+    # Viewport sizes depend on platform fonts and widgets, so a fixed window
+    # size does not guarantee an even (or odd) viewport. Eight consecutive
+    # window heights cover both parities on any platform.
+    win = _shown(tmp_path, (1200, 897))
+    view = win.prov_view
+    parities = set()
+    for height in range(897, 905):
+        win.resize(1200, height)
+        QApplication.processEvents()
+        view.fit_scene()
+        before = _zoomed_and_panned(win, view)
+        centre0 = _centre(view)
+        parities.add(view.viewport().height() % 2)
+        for _ in range(10):
+            win.prov_grid_cb.setChecked(not win.prov_grid_cb.isChecked())
+        assert _state(view) == before, f"window height {height}"
+        assert _centre(view) == centre0, f"window height {height}"
+    assert parities == {0, 1}, "both even and odd viewport heights must be exercised"
+
+
+@pytest.mark.parametrize("size", WINDOW_SIZES, ids=SIZE_IDS)
+def test_zoomed_figure_is_not_refit_by_a_crop_resize(qapp, tmp_path, size):
+    win = _shown(tmp_path, size)
+    before = _zoomed_and_panned(win, win.view)
+    ct = win.current_project.panel.crop_template
+    ct.w = ct.w * 0.8
+    win._on_crop_resize_commit()
+    assert not win.view.in_fit_mode
+    assert _state(win.view)[:2] == before[:2]      # zoom kept (scene size changed)
+
+
+def test_forced_fit_paths_refit(qapp, tmp_path):
+    win = _shown(tmp_path)
+    _zoomed_and_panned(win, win.view)
+    win._on_border_width_changed(3)                # _refresh_final_only(fit=True)
+    win._gesture_committer.flush()
+    assert win.view.in_fit_mode
+    _zoomed_and_panned(win, win.prov_view)
+    win.prov_blot_combo.setCurrentIndex(win.prov_blot_combo.findData(ECL_B))
+    assert win.prov_view.in_fit_mode
+
+
+def test_zoom_and_fit_mode_are_pure_view_state(qapp, tmp_path):
+    win = _shown(tmp_path)
+    n_log = len(win.current_project.operation_log)
+    _zoomed_and_panned(win, win.prov_view)
+    _zoomed_and_panned(win, win.view)
+    win.prov_fit_btn.click()
+    assert len(win.current_project.operation_log) == n_log
+    assert win.active_blot_id == ECL_A
+
+
+def test_drag_on_empty_area_pans_the_view(qapp, tmp_path):
+    # The drag-to-pan path (ZoomableGraphicsView mouse press/move/release on
+    # an empty spot): the scrollbars follow the mouse and fit mode is left.
+    win = _shown(tmp_path)
+    view = win.view
+    _show_tab_of(win, view)
+    _user_zoom_in(view, steps=10)
+    vp = view.viewport()
+    hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+    hbar.setValue((hbar.minimum() + hbar.maximum()) // 2)
+    vbar.setValue((vbar.minimum() + vbar.maximum()) // 2)
+    empty = next((QPoint(x, y) for y in range(20, vp.height() - 20, 7)
+                  for x in range(20, vp.width() - 20, 7) if view.itemAt(QPoint(x, y)) is None),
+                 None)
+    assert empty is not None, "no empty spot in the zoomed figure"
+    before = (hbar.value(), vbar.value())
+
+    def send(kind, pt, button, buttons):
+        QApplication.sendEvent(vp, QMouseEvent(kind, QPointF(pt), QPointF(vp.mapToGlobal(pt)),
+                                               button, buttons, Qt.NoModifier))
+
+    send(QEvent.MouseButtonPress, empty, Qt.LeftButton, Qt.LeftButton)
+    send(QEvent.MouseMove, empty + QPoint(-15, -10), Qt.NoButton, Qt.LeftButton)
+    send(QEvent.MouseMove, empty + QPoint(-30, -20), Qt.NoButton, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, empty + QPoint(-30, -20), Qt.LeftButton, Qt.NoButton)
+
+    def clamped(bar, v):
+        return max(bar.minimum(), min(bar.maximum(), v))
+
+    expected = (clamped(hbar, before[0] + 30), clamped(vbar, before[1] + 20))
+    assert expected != before, "precondition: the zoomed figure must be scrollable"
+    assert (hbar.value(), vbar.value()) == expected
+    assert not view.in_fit_mode

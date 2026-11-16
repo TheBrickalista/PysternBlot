@@ -14,7 +14,6 @@ except ImportError:
     _pysternblot_version = "unknown"
 from dataclasses import dataclass, field
 from pathlib import Path
-import numpy as np
 from .models import (
     AssetEntry,
     BlotChannel,
@@ -45,9 +44,7 @@ class ImportArchiveResult:
 
 from .image_utils import (
     load_image_as_uint16,
-    apply_levels_uint16,
-    rotate_uint16,
-    crop_uint16,
+    levels_rotate_flip_crop_uint16,
     save_uint16_tiff,
 )
 
@@ -126,6 +123,54 @@ def parse_typhoon_tag270(tag_text: str) -> dict:
     except Exception:
         pass
     return result
+
+
+def _read_tag270_meta(path: str | Path) -> dict:
+    """parse_typhoon_tag270 of a file's TIFF Tag 270, or {} if unreadable."""
+    try:
+        with Image.open(str(path)) as im:
+            tag270 = im.tag_v2.get(270, "")
+        return parse_typhoon_tag270(tag270)
+    except Exception:
+        return {}
+
+
+def nir_channel_assignment(file_paths) -> list[tuple[Path, int, str | None]]:
+    """(path, channel_index, scan_number) for each file, exactly as
+    Workspace.import_nir_blot_typhoon assigns them: channel_index from the
+    Tag 270 "Scan number" (numerator - 1), or the file's position in
+    file_paths when there is none (scan_number is then None)."""
+    out = []
+    for i, fp in enumerate(file_paths):
+        meta = _read_tag270_meta(fp)
+        idx = meta.get("channel_index")
+        out.append((Path(fp), i if idx is None else int(idx), meta.get("scan_number")))
+    return out
+
+
+class DuplicateNirChannelError(ValueError):
+    """Two files of one NIR import would become the same channel."""
+
+    def __init__(self, first: tuple, second: tuple):
+        (self.first_path, self.channel_index, self.first_scan) = first
+        (self.second_path, _idx, self.second_scan) = second
+        super().__init__(
+            f"{self.first_path.name} and {self.second_path.name} would both be "
+            f"channel {self.channel_index + 1} (Scan number "
+            f"{self.first_scan or 'missing'} / {self.second_scan or 'missing'})"
+        )
+
+
+def check_nir_channel_indices(file_paths) -> list[tuple[Path, int, str | None]]:
+    """nir_channel_assignment, or DuplicateNirChannelError if two files would
+    get the same channel_index. Reads metadata only: nothing is copied."""
+    assigned = nir_channel_assignment(file_paths)
+    seen: dict[int, tuple] = {}
+    for entry in assigned:
+        if entry[1] in seen:
+            raise DuplicateNirChannelError(seen[entry[1]], entry)
+        seen[entry[1]] = entry
+    return assigned
 
 
 def parse_typhoon_inf(inf_path: Path) -> dict:
@@ -947,27 +992,6 @@ class Workspace:
             raise FileNotFoundError(f"No original.* found in {d}")
         return matches[0]
 
-    def generate_crop_preview_tiff(self, sha256: str, crop: dict) -> Path:
-        """
-        Generate (or overwrite) a 16-bit preview_crop.tif for this asset sha256
-        using the crop rectangle (absolute pixel coords).
-        """
-        self.ensure()
-        original_path = self.asset_original_file(sha256)
-
-        img = load_image_as_uint16(original_path)
-
-        x = int(round(float(crop.get("x", 0))))
-        y = int(round(float(crop.get("y", 0))))
-        w = int(round(float(crop.get("w", img.shape[1]))))
-        h = int(round(float(crop.get("h", img.shape[0]))))
-
-        cropped = crop_uint16(img, x, y, w, h)
-
-        out_path = (self.assets_dir / sha256) / "preview_crop.tif"
-        save_uint16_tiff(cropped, out_path)
-        return out_path
-    
     def ensure_blot_crop_preview(self, blot, panel, channel_index: int = -1, *, project=None) -> Path:
         """
         Generate/update a 16-bit crop preview TIFF from blot settings.
@@ -981,7 +1005,9 @@ class Workspace:
         converted to this blot's native pixels (template x f, see
         physical_scale) when `project` is given. The cached TIFF is always in
         native pixels: source data is never resampled.
-        Rotation → levels → crop, all in 16-bit.
+        Levels → rotation → flip → crop, all in 16-bit. The work is done by
+        levels_rotate_flip_crop_uint16, which processes only the crop window
+        and is bit-identical to running that sequence on the full image.
         """
         self.ensure()
 
@@ -1014,15 +1040,9 @@ class Workspace:
         gamma = float(getattr(display, "levels_gamma", 1.0))
         invert = bool(getattr(display, "invert", False))
 
-        img = apply_levels_uint16(img, black, white, gamma, invert)
-
         rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
-        img = rotate_uint16(img, rotation_deg, expand=False)
-
-        if bool(getattr(display, "flip_horizontal", False)):
-            img = np.fliplr(img)
-        if bool(getattr(display, "flip_vertical", False)):
-            img = np.flipud(img)
+        flip_h = bool(getattr(display, "flip_horizontal", False))
+        flip_v = bool(getattr(display, "flip_vertical", False))
 
         # w/h come from the shared crop template (in this blot's native
         # pixels), not the per-blot crop
@@ -1040,7 +1060,11 @@ class Workspace:
         x = int(round(float(c.x)))
         y = int(round(float(c.y)))
 
-        cropped = crop_uint16(img, x, y, w, h)
+        # Levels -> rotate -> flip -> crop, processing only the pixels the
+        # crop window needs; identical to the full-image sequence.
+        cropped = levels_rotate_flip_crop_uint16(
+            img, black, white, gamma, invert, rotation_deg, flip_h, flip_v, x, y, w, h,
+        )
 
         out_path = self.assets_dir / sha256 / cache_name
         save_uint16_tiff(cropped, out_path)
@@ -1089,6 +1113,9 @@ class Workspace:
         The caller is responsible for attaching the returned channels to a Blot,
         populating project.assets, and saving the project.
         """
+        # Refuse duplicate channel indices before anything is stored.
+        check_nir_channel_indices(file_paths)
+
         # Collect (channel_index, sha256, tag270_meta, inf_meta) per file.
         entries: list[tuple[int, str, dict, dict]] = []
         for i, fp in enumerate(file_paths):

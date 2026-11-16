@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import numpy as np
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -23,9 +24,33 @@ from .physical_scale import blot_display_scale, native_crop_size, template_size_
 from .image_utils import (
     load_image_as_uint16,
     apply_levels_uint16,
+    apply_levels_uint16_lut,
     rotate_uint16,
     uint16_to_qpixmap,
 )
+
+
+# Scene position of the image's top-left pixel in the Original Image view
+# (build_provenance_scene). Image pixel (x, y) is at scene (x0 + x, y0 + y);
+# code mapping scene clicks back to image pixels must use this constant.
+PROVENANCE_IMAGE_ORIGIN: tuple[float, float] = (10.0, 10.0)
+
+# Size of the legend export zone used when a blot has none stored.
+DEFAULT_LEGEND_ZONE_SIZE: tuple[float, float] = (300.0, 200.0)
+
+
+def default_legend_zone(image_w: float, image_h: float) -> LegendZone:
+    """The legend export zone shown (and exported) for a blot with no stored
+    zone: DEFAULT_LEGEND_ZONE_SIZE, centred on the displayed image. Pure: it
+    never touches the model. The zone is stored, and logged, only when the
+    user first moves, resizes or configures it."""
+    w, h = DEFAULT_LEGEND_ZONE_SIZE
+    return LegendZone(
+        x=max(0.0, (float(image_w) - w) / 2.0),
+        y=max(0.0, (float(image_h) - h) / 2.0),
+        w=w,
+        h=h,
+    )
 
 
 # LI-COR channel name -> excitation laser (nm), matching the Typhoon band keys.
@@ -74,6 +99,39 @@ def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
 
 
 
+class ProvenancePixmapCache:
+    """Small LRU of Original Image view pixmaps (screen only).
+
+    Keyed on (sha256, rotation_deg, levels_black, levels_white, levels_gamma,
+    invert, flip_h, flip_v). Assets are content-addressed, so the sha covers
+    the file contents. Exports never pass a cache.
+    """
+
+    def __init__(self, maxsize: int = 4):
+        # Capped by entry count, not bytes: very large NIR scans could make 4
+        # entries heavy; a byte cap would be the fix if memory becomes an issue.
+        self.maxsize = int(maxsize)
+        self._items: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, key: tuple) -> Optional[QPixmap]:
+        pm = self._items.get(key)
+        if pm is not None:
+            self._items.move_to_end(key)
+        return pm
+
+    def put(self, key: tuple, pm: QPixmap) -> None:
+        self._items[key] = pm
+        self._items.move_to_end(key)
+        while len(self._items) > self.maxsize:
+            self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
 def _load_rotated_display_pixmap(
     workspace_root: Path,
     sha256: str,
@@ -84,10 +142,26 @@ def _load_rotated_display_pixmap(
     invert: bool = False,
     flip_horizontal: bool = False,
     flip_vertical: bool = False,
+    pixmap_cache: Optional[ProvenancePixmapCache] = None,
 ) -> QPixmap:
     """
     Load original image, apply levels → rotate → flip in 16-bit.
+
+    pixmap_cache (Original Image view only): reuse a pixmap built from the
+    same asset and display settings, and build new ones with the
+    lookup-table levels (identical values). Without it (every export), the
+    code path is unchanged.
     """
+    key = None
+    if pixmap_cache is not None:
+        key = (
+            sha256, float(rotation_deg), int(black), int(white), float(gamma),
+            bool(invert), bool(flip_horizontal), bool(flip_vertical),
+        )
+        cached = pixmap_cache.get(key)
+        if cached is not None:
+            return cached
+
     asset_dir = workspace_root / "assets" / sha256
     original_path = None
     for p in asset_dir.glob("original.*"):
@@ -99,15 +173,21 @@ def _load_rotated_display_pixmap(
 
     try:
         img = load_image_as_uint16(original_path)
-        img = apply_levels_uint16(img, black, white, gamma, invert)
+        if pixmap_cache is None:
+            img = apply_levels_uint16(img, black, white, gamma, invert)
+        else:
+            img = apply_levels_uint16_lut(img, black, white, gamma, invert)
         img = rotate_uint16(img, rotation_deg, expand=False)
         if flip_horizontal:
             img = np.fliplr(img)
         if flip_vertical:
             img = np.flipud(img)
-        return uint16_to_qpixmap(np.ascontiguousarray(img))
+        pm = uint16_to_qpixmap(np.ascontiguousarray(img))
     except Exception:
         return QPixmap()
+    if key is not None and not pm.isNull():
+        pixmap_cache.put(key, pm)
+    return pm
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str, blot_id: str) -> QPixmap:
     """
@@ -792,6 +872,9 @@ def build_provenance_scene(
     nir_channel_index: int = 0,
     show_legend_zone: bool = False,
     on_legend_zone_commit=None,
+    pixmap_cache: Optional[ProvenancePixmapCache] = None,
+    on_crop_press=None,
+    on_legend_zone_press=None,
 ) -> QGraphicsScene:
     """
     Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
@@ -805,6 +888,13 @@ def build_provenance_scene(
     by "Export Zone + Legend". A default LegendZone centered on the image is created
     if blot.legend_zone is None. on_legend_zone_commit(blot) fires after a move or
     resize commit, mirroring on_crop_commit but without touching crop state.
+
+    pixmap_cache: only the on-screen view passes one (see
+    _load_rotated_display_pixmap); exports call without it.
+
+    on_crop_press(blot) / on_legend_zone_press(blot) fire on mouse press on
+    the crop / legend zone rectangle, before it moves, so the caller can
+    record the value before the interaction (the log's old_value).
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -823,11 +913,16 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
-    # For NIR blots, get sha256 and display from the selected channel.
-    try:
-        sha256, display = blot.get_display_channel(nir_channel_index)
-    except (IndexError, AttributeError):
+    # For NIR blots, the selected channel (Blot.resolve_channel: by
+    # channel_index, lowest index if none matches) gives the image, display
+    # settings and crop; every use below goes through active_index.
+    _active_ch = blot.resolve_channel(nir_channel_index)
+    if _active_ch is not None:
+        sha256, display = _active_ch.asset_sha256, _active_ch.display
+        active_index = _active_ch.channel_index
+    else:
         sha256, display = blot.asset_sha256, blot.display
+        active_index = nir_channel_index
 
     rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
     black = int(getattr(display, "levels_black", 0))
@@ -847,6 +942,7 @@ def build_provenance_scene(
         invert=invert,
         flip_horizontal=flip_h,
         flip_vertical=flip_v,
+        pixmap_cache=pixmap_cache,
     )
     if pm.isNull():
         scene.addText(
@@ -857,7 +953,7 @@ def build_provenance_scene(
         return scene
 
     # Full blot image
-    x0, y0 = 10.0, 10.0
+    x0, y0 = PROVENANCE_IMAGE_ORIGIN
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 
@@ -875,6 +971,10 @@ def build_provenance_scene(
             white=white,
             gamma=gamma,
             invert=invert,
+            # Same flips as the blot image, so the overlay stays aligned.
+            flip_horizontal=flip_h,
+            flip_vertical=flip_v,
+            pixmap_cache=pixmap_cache,
         )
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)
@@ -900,7 +1000,7 @@ def build_provenance_scene(
     # Crop box overlay (crop coords are in image pixel space). The shared
     # template is in reference pixels; this image shows it at its own native
     # size (template x f, see physical_scale), i.e. the region actually cut.
-    c = blot.get_channel_crop(nir_channel_index)
+    c = blot.get_channel_crop(active_index)
     ct = project.panel.crop_template
     native_w, native_h = native_crop_size(project, blot)
 
@@ -925,9 +1025,9 @@ def build_provenance_scene(
         # template: a move must not rewrite crop_template (with f != 1 the
         # native -> template round trip would drift).
         x, y, w, h = _clamped_image_rect(scene_rect)
-        _cur = blot.get_channel_crop(nir_channel_index)
+        _cur = blot.get_channel_crop(active_index)
         blot.set_channel_crop(
-            nir_channel_index,
+            active_index,
             Crop(x=x, y=y, w=_cur.w, h=_cur.h, mode=_cur.mode),
         )
         return w, h
@@ -958,18 +1058,17 @@ def build_provenance_scene(
         on_change=_apply_position,
         on_move_commit=_on_move_commit,
         on_resize_commit=_on_resize_commit,
+        on_press=(lambda: on_crop_press(blot)) if callable(on_crop_press) else None,
     )
     scene.addItem(rect_item)
 
     # --- Optional legend export zone (second, visually distinct rect) ---
     if show_legend_zone:
-        if blot.legend_zone is None:
-            # The zone only comes into existence here, the first time it's shown, so
-            # it starts centred on the image rather than pinned at the origin.
-            default_w, default_h = 300.0, 200.0
-            default_x = max(0.0, (float(pm.width()) - default_w) / 2.0)
-            default_y = max(0.0, (float(pm.height()) - default_h) / 2.0)
-            blot.legend_zone = LegendZone(x=default_x, y=default_y, w=default_w, h=default_h)
+        # Rendering never changes the model: with no stored zone, the default
+        # is only displayed. It is stored when the user first moves or resizes
+        # it (below), and logged then (MainWindow._on_legend_zone_commit).
+        shown_zone = (blot.legend_zone if blot.legend_zone is not None
+                      else default_legend_zone(pm.width(), pm.height()))
 
         def _apply_legend_zone_from_scene_rect(scene_rect: QRectF) -> None:
             # Convert scene coords -> image pixel coords (same pattern as the crop rect)
@@ -985,9 +1084,10 @@ def build_provenance_scene(
             if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
             if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
 
-            # blot.legend_zone is guaranteed to exist here: this callback is only wired
-            # up to legend_item below, which is constructed after the block above has
-            # already ensured blot.legend_zone is set.
+            if blot.legend_zone is None:
+                if (x, y, w, h) == (shown_zone.x, shown_zone.y, shown_zone.w, shown_zone.h):
+                    return          # not moved: the default stays implicit
+                blot.legend_zone = shown_zone.model_copy()   # first move / resize
             blot.legend_zone.x = x
             blot.legend_zone.y = y
             blot.legend_zone.w = w
@@ -1003,7 +1103,7 @@ def build_provenance_scene(
             if callable(on_legend_zone_commit):
                 on_legend_zone_commit(blot)
 
-        lz = blot.legend_zone
+        lz = shown_zone
         legend_zone_rect = QRectF(
             x0 + float(lz.x),
             y0 + float(lz.y),
@@ -1016,6 +1116,7 @@ def build_provenance_scene(
             on_change=_apply_legend_zone_from_scene_rect,
             on_move_commit=_on_legend_zone_move_commit,
             on_resize_commit=_on_legend_zone_resize_commit,
+            on_press=(lambda: on_legend_zone_press(blot)) if callable(on_legend_zone_press) else None,
         )
         legend_item.setPen(QPen(QColor("#1e88e5"), 2, Qt.DashLine))  # blue vs black crop
         scene.addItem(legend_item)
@@ -1033,12 +1134,8 @@ def build_provenance_scene(
 
         # Determine active channel wavelength for NIR per-channel filtering.
         _active_wavelength: Optional[int] = None
-        if blot.is_nir() and blot.channels:
-            _active_ch = next(
-                (c for c in blot.channels if c.channel_index == nir_channel_index), None
-            )
-            if _active_ch is not None:
-                _active_wavelength = _marker_channel_key(_active_ch)
+        if _active_ch is not None:
+            _active_wavelength = _marker_channel_key(_active_ch)
 
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)

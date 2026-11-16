@@ -22,6 +22,7 @@ from ..image_utils import get_bit_depth
 from ..render import (
     build_panel_scene,
     build_provenance_scene,
+    default_legend_zone,
     draw_legend_into_scene,
     _load_rotated_display_pixmap,
     _band_visible_on_channel,
@@ -166,6 +167,12 @@ class _ExportMixin:
             QMessageBox.information(self, "No project", "Create or open a project first.")
             return None, None
 
+        # build_panel_scene reads the cached preview_crop_*.tif files and does
+        # not regenerate them. Rebuild every blot's crops from the model first,
+        # so an export never contains a stale cache, whatever the on-screen
+        # refresh scope was. This is the only output path that reads those
+        # caches (the legend-zone export renders from the full original).
+        self._regenerate_crop_previews(self.current_project.panel.blots)
         scene = build_panel_scene(self.current_project, self.workspace.root)
         if scene is None:
             QMessageBox.critical(self, "Export error", "Could not build final result scene.")
@@ -715,12 +722,9 @@ class _ExportMixin:
         )
 
         active_wavelength = None
-        if blot.is_nir() and blot.channels:
-            active_ch = next(
-                (c for c in blot.channels if c.channel_index == self._active_nir_channel), None
-            )
-            if active_ch is not None:
-                active_wavelength = _marker_channel_key(active_ch)
+        active_ch = blot.resolve_channel(self._active_nir_channel)   # = MainWindow._active_channel
+        if active_ch is not None:
+            active_wavelength = _marker_channel_key(active_ch)
 
         marker_font = QFont(style.font_family, int(style.kda_label_font_size_pt))
         marker_font.setBold(False)
@@ -797,8 +801,7 @@ class _ExportMixin:
             QMessageBox.information(self, "No blot", "No active blot to export.")
             return
 
-        lz = getattr(blot, "legend_zone", None)
-        if lz is None or not self.legend_zone_cb.isChecked():
+        if not self.legend_zone_cb.isChecked():
             QMessageBox.information(
                 self,
                 "Legend export zone not set",
@@ -807,9 +810,10 @@ class _ExportMixin:
             )
             return
 
-        try:
-            sha256, display = blot.get_display_channel(self._active_nir_channel)
-        except (IndexError, AttributeError):
+        active_ch = blot.resolve_channel(self._active_nir_channel)   # = MainWindow._active_channel
+        if active_ch is not None:
+            sha256, display = active_ch.asset_sha256, active_ch.display
+        else:
             sha256, display = blot.asset_sha256, blot.display
 
         pm_full = _load_rotated_display_pixmap(
@@ -827,7 +831,17 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", "Could not load blot image.")
             return
 
-        crop = blot.get_channel_crop(self._active_nir_channel)
+        # The stored zone, or the same default the Original Image view shows
+        # (same image, same size), so what is shown is what is exported. A
+        # default is stored and logged once the PNG is written (below), so an
+        # export never uses a zone that is not stored.
+        lz = getattr(blot, "legend_zone", None)
+        default_zone = None
+        if lz is None:
+            lz = default_zone = default_legend_zone(pm_full.width(), pm_full.height())
+
+        crop = blot.get_channel_crop(active_ch.channel_index if active_ch is not None
+                                     else self._active_nir_channel)
         # The zone export draws this one image at its native resolution, so
         # the crop box is the template converted to its native pixels.
         native_w, native_h = native_crop_size(self.current_project, blot)
@@ -898,6 +912,12 @@ class _ExportMixin:
         if not img.save(path):
             QMessageBox.critical(self, "Export error", "Could not save PNG.")
             return
+
+        if default_zone is not None:
+            # Store and log the zone just exported, before the export entry.
+            # (Not earlier: a cancelled dialog or a failed write stores nothing.)
+            self._store_default_legend_zone(
+                blot, default_zone, "Default legend export zone stored for its first export.")
 
         try:
             # sha256 is the image actually drawn: for an NIR blot, the active

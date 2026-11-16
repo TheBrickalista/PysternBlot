@@ -5,8 +5,7 @@
 Tests for pysternblot/storage.py
 
 No Qt and no display required — all tests use tmp_path for file I/O and
-never call any Qt-dependent storage methods (ensure_blot_crop_preview,
-generate_crop_preview_tiff).
+never call any Qt-dependent storage methods (ensure_blot_crop_preview).
 
 Run from repo root:
     pytest tests/test_storage.py -v

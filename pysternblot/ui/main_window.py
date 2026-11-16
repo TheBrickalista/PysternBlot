@@ -1793,7 +1793,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._flush_gesture()
         self._active_nir_channel = channel_index
         self._sync_controls_from_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def toggle_overlay(self, checked: bool):
         blot = self._get_active_blot()
@@ -1816,7 +1816,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def change_overlay_alpha(self, value: int):
         blot = self._get_active_blot()
@@ -1945,7 +1945,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self._regenerate_crop_previews([blot])
 
         # refresh both views
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _on_legend_zone_commit(self, blot):
         """Mirrors _on_crop_changed but for the legend export zone — no crop
@@ -2045,7 +2045,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._update_prov_label()
         self._sync_controls_from_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _get_active_blot(self):
         if not self.current_project or not self.current_project.panel.blots:
@@ -2170,7 +2170,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _move_active_blot_down(self):
         if not self.current_project or not self.active_blot_id:
@@ -2199,7 +2199,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _active_channel_key(self, blot):
         """NIR channel index for gesture keys (display settings are per
@@ -2257,7 +2257,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.prov_rotate_label.setText(f"{new:.1f}")
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_ccw(self):
         blot = self._get_active_blot()
@@ -2283,7 +2283,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_cw(self):
         blot = self._get_active_blot()
@@ -2309,7 +2309,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.prov_rotate_dial.setValue(int(round(new * 10.0)))
         self.prov_rotate_dial.blockSignals(False)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_rotate_label_edited(self):
         try:
@@ -2343,7 +2343,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_flip_vertical(self):
         blot = self._get_active_blot()
@@ -2365,17 +2365,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             new_value=new,
         )
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_prov_grid_toggled(self, checked: bool):
         self.prov_grid_visible = bool(checked)
-        self.refresh_previews()
+        self._refresh_provenance_only()
 
     def _on_legend_zone_toggled(self, checked: bool):
         self._legend_zone_visible = bool(checked)
         self.legend_zone_markers_cb.setEnabled(bool(checked))
         self.legend_zone_side_combo.setEnabled(bool(checked))
-        self.refresh_previews()
+        self._refresh_provenance_only()
 
     def _on_legend_zone_markers_toggled(self, checked: bool):
         if not self.current_project:
@@ -2513,7 +2513,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
         elif not _is_drag:
             self._save_project()
-            self.refresh_previews()
+            self.refresh_previews(regenerate="active")
 
     def _on_histogram_gate_changed(self, which: str, value: int):
         """Receive continuous drag updates from the histogram widget.
@@ -2588,7 +2588,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         )
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="active")
 
     def _on_display_section_toggled(self, checked: bool):
         old_height = self._display_frame.sizeHint().height()

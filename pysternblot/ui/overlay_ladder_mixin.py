@@ -99,7 +99,7 @@ class _OverlayLadderMixin:
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _open_overlay_ladder_dialog(self):
         blot = self._get_active_blot()
@@ -203,7 +203,7 @@ class _OverlayLadderMixin:
             self.current_project.marker_sets = list(self.marker_set_library.items)
 
             self._save_project()
-            self.refresh_previews()
+            self.refresh_previews(regenerate="none")
             self._populate_overlay_ladder_assignment_table()
 
         def close_dialog():
@@ -251,7 +251,7 @@ class _OverlayLadderMixin:
         self._add_protein_label_suggestion(new)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
 
     def _on_antibody_name_changed(self, *_args):
         blot = self._get_active_blot()
@@ -381,7 +381,7 @@ class _OverlayLadderMixin:
         self.current_project.marker_sets = list(self.marker_set_library.items)
 
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")
         self._refresh_overlay_ladder_ui()
 
         if self.overlay_ladder_dialog is not None:
@@ -492,4 +492,4 @@ class _OverlayLadderMixin:
 
         self.current_project.marker_sets = list(self.marker_set_library.items)
         self._save_project()
-        self.refresh_previews()
+        self.refresh_previews(regenerate="none")

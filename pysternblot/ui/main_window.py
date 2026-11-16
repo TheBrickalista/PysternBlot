@@ -1560,14 +1560,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         identified by its asset (as nir_channel_imported and NIR exports do)
         and its index. channel is None for ECL.
         """
-        if blot.is_nir() and blot.channels:
-            idx = self._active_nir_channel
-            ch = next((c for c in blot.channels if c.channel_index == idx), None)
-            if ch is not None:
-                # i is channel_index (0-based); the UI shows it as Ch<i+1>.
-                note = (f"Crop rectangle committed after user interaction. "
-                        f"NIR channel {idx} (Ch{idx + 1}).")
-                return ch.asset_sha256, blot.get_channel_crop(idx), note, idx
+        ch = self._active_channel(blot)
+        if ch is not None:
+            idx = ch.channel_index
+            # i is channel_index (0-based); the UI shows it as Ch<i+1>.
+            note = (f"Crop rectangle committed after user interaction. "
+                    f"NIR channel {idx} (Ch{idx + 1}).")
+            return ch.asset_sha256, blot.get_channel_crop(idx), note, idx
         return blot.asset_sha256, blot.crop, "Crop rectangle committed after user interaction.", None
 
     def _on_crop_press(self, blot: Blot):
@@ -1815,20 +1814,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         blot = self._get_active_blot()
         if blot is None:
             return None
-        if blot.is_nir() and blot.channels:
-            idx = min(self._active_nir_channel, len(blot.channels) - 1)
-            return blot.channels[idx]
-        return blot
+        return self._active_channel(blot) or blot
+
+    def _active_channel(self, blot):
+        """The active NIR channel of this blot: the one whose channel_index is
+        _active_nir_channel (the channel selector's button ids are
+        channel_index values), or the lowest channel_index if none matches
+        (Blot.resolve_channel). None for ECL blots. Every path that needs
+        "the active channel" (view, crop, display and label edits, gesture
+        keys, log entries, legend-zone export) goes through this."""
+        return blot.resolve_channel(self._active_nir_channel) if blot is not None else None
 
     def _active_display(self):
         """Return the DisplaySettings for the active channel (NIR) or blot (ECL)."""
         blot = self._get_active_blot()
         if blot is None:
             return None
-        if blot.is_nir() and blot.channels:
-            idx = min(self._active_nir_channel, len(blot.channels) - 1)
-            return blot.channels[idx].display
-        return blot.display
+        ch = self._active_channel(blot)
+        return ch.display if ch is not None else blot.display
 
     def _rebuild_nir_channel_selector(self, blot) -> None:
         """Clear and rebuild the NIR channel radio buttons for the given blot.
@@ -1843,8 +1846,12 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             if w:
                 w.deleteLater()
 
+        # Keep the selection on a channel that exists (by channel_index; the
+        # lowest one if the previous selection is not a channel of this blot).
+        _ch = blot.resolve_channel(self._active_nir_channel) if blot else None
+        self._active_nir_channel = _ch.channel_index if _ch is not None else 0
+
         if not blot or not blot.is_nir() or len(blot.channels) <= 1:
-            self._active_nir_channel = 0
             self._nir_ch_widget.setVisible(False)
             self._nir_ch_sep.setVisible(False)
             return
@@ -2043,10 +2050,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         """(width, height) of the image the Original Image view shows for this
         blot (the active channel's on NIR blots); rotation (expand=False) and
         flips keep the size. None if it cannot be read."""
-        try:
-            sha256, _display = blot.get_display_channel(self._active_nir_channel)
-        except (IndexError, AttributeError):
-            sha256 = blot.asset_sha256
+        ch = self._active_channel(blot)
+        sha256 = ch.asset_sha256 if ch is not None else blot.asset_sha256
         try:
             img = load_image_as_uint16(self.workspace.asset_original_file(sha256))
         except Exception:
@@ -2347,16 +2352,17 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.refresh_previews(regenerate="none")
 
     def _active_channel_key(self, blot):
-        """NIR channel index for gesture keys (display settings are per
+        """NIR channel_index for gesture keys (display settings are per
         channel on NIR blots), None for ECL blots."""
-        return self._active_nir_channel if blot.is_nir() and blot.channels else None
+        ch = self._active_channel(blot)
+        return ch.channel_index if ch is not None else None
 
     def _channel_log_target(self, blot):
         """(asset_sha256, note) for a log entry about the active channel's
         settings: display, protein label, antibody name, inclusion.
 
-        NIR: the channel _active_display() / _get_active_channel_or_blot()
-        edit, identified by its own asset (as nir_channel_imported and NIR
+        NIR: the active channel (_active_channel, the one _active_display()
+        and _get_active_channel_or_blot() edit), identified by its own asset (as nir_channel_imported and NIR
         exports do) and a note "NIR channel <i> (Ch<i+1>)" (i =
         channel_index). ECL: the blot's asset and no note, exactly as before.
         """

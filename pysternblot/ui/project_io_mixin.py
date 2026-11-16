@@ -32,7 +32,27 @@ from ..image_utils import (
 from ..jsonsafe import finite_or_none
 from ..logchain import append_log_entry
 from ..physical_scale import native_crop_size, reconcile_reference_pixel_size
-from ..storage import parse_iq800_metadata, parse_licor_metadata
+from ..storage import (
+    DuplicateNirChannelError,
+    check_nir_channel_indices,
+    parse_iq800_metadata,
+    parse_licor_metadata,
+)
+
+
+def _duplicate_channel_message(e: DuplicateNirChannelError) -> str:
+    def describe(path, scan):
+        if scan:
+            return f"{path.name}  (Scan number {scan})"
+        return f"{path.name}  (no Scan number: taken as Ch{e.channel_index + 1} by file order)"
+
+    return (
+        f"These two files would both be channel Ch{e.channel_index + 1}:\n\n"
+        f"  {describe(e.first_path, e.first_scan)}\n"
+        f"  {describe(e.second_path, e.second_scan)}\n\n"
+        f"Choose two different scans of the acquisition (for example Scan number "
+        f"1/2 and 2/2). Nothing was imported."
+    )
 
 
 # bit_depth == 32 is this codebase's sentinel for "float source" (see
@@ -428,6 +448,15 @@ class _ProjectIOMixin:
         if dialog.channel2_path is not None:
             file_paths.append(dialog.channel2_path)
 
+        # Two files that would be the same channel (same Typhoon "Scan
+        # number", or a file without one taking the other's position) are
+        # refused before anything is copied, stored or logged.
+        try:
+            check_nir_channel_indices(file_paths)
+        except DuplicateNirChannelError as e:
+            QMessageBox.warning(self, "Same NIR channel twice", _duplicate_channel_message(e))
+            return
+
         # JPEG rejection for each channel file
         for fp in file_paths:
             if not self._check_jpeg_and_8bit(str(fp)):
@@ -547,7 +576,8 @@ class _ProjectIOMixin:
             self._save_project()
 
             self.active_blot_id = blot_id
-            self._active_nir_channel = 0
+            # The channel selector (rebuilt by the sync) selects the blot's
+            # lowest channel_index; no reset needed here.
             self._sync_controls_from_project()
             self.refresh_previews(fit_figure=True, fit_original=True)   # new blot
 

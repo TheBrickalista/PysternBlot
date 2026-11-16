@@ -300,7 +300,7 @@ class _OverlayLadderMixin:
 
         target.protein_label.font_size_pt = new
 
-        channel = self._active_nir_channel if blot.is_nir() and blot.channels else None
+        channel = self._active_channel_key(blot)
         # asset/note name this tick's channel; the key carries the channel and
         # a channel switch flushes first, so the entry names the channel the
         # gesture started on.

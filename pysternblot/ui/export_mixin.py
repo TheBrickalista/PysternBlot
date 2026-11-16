@@ -722,12 +722,9 @@ class _ExportMixin:
         )
 
         active_wavelength = None
-        if blot.is_nir() and blot.channels:
-            active_ch = next(
-                (c for c in blot.channels if c.channel_index == self._active_nir_channel), None
-            )
-            if active_ch is not None:
-                active_wavelength = _marker_channel_key(active_ch)
+        active_ch = blot.resolve_channel(self._active_nir_channel)   # = MainWindow._active_channel
+        if active_ch is not None:
+            active_wavelength = _marker_channel_key(active_ch)
 
         marker_font = QFont(style.font_family, int(style.kda_label_font_size_pt))
         marker_font.setBold(False)
@@ -813,9 +810,10 @@ class _ExportMixin:
             )
             return
 
-        try:
-            sha256, display = blot.get_display_channel(self._active_nir_channel)
-        except (IndexError, AttributeError):
+        active_ch = blot.resolve_channel(self._active_nir_channel)   # = MainWindow._active_channel
+        if active_ch is not None:
+            sha256, display = active_ch.asset_sha256, active_ch.display
+        else:
             sha256, display = blot.asset_sha256, blot.display
 
         pm_full = _load_rotated_display_pixmap(
@@ -842,7 +840,8 @@ class _ExportMixin:
         if lz is None:
             lz = default_zone = default_legend_zone(pm_full.width(), pm_full.height())
 
-        crop = blot.get_channel_crop(self._active_nir_channel)
+        crop = blot.get_channel_crop(active_ch.channel_index if active_ch is not None
+                                     else self._active_nir_channel)
         # The zone export draws this one image at its native resolution, so
         # the crop box is the template converted to its native pixels.
         native_w, native_h = native_crop_size(self.current_project, blot)

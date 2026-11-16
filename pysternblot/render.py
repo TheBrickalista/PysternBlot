@@ -913,11 +913,16 @@ def build_provenance_scene(
     if blot is None:
         blot = project.panel.blots[0]
 
-    # For NIR blots, get sha256 and display from the selected channel.
-    try:
-        sha256, display = blot.get_display_channel(nir_channel_index)
-    except (IndexError, AttributeError):
+    # For NIR blots, the selected channel (Blot.resolve_channel: by
+    # channel_index, lowest index if none matches) gives the image, display
+    # settings and crop; every use below goes through active_index.
+    _active_ch = blot.resolve_channel(nir_channel_index)
+    if _active_ch is not None:
+        sha256, display = _active_ch.asset_sha256, _active_ch.display
+        active_index = _active_ch.channel_index
+    else:
         sha256, display = blot.asset_sha256, blot.display
+        active_index = nir_channel_index
 
     rotation_deg = float(getattr(display, "rotation_deg", 0.0) or 0.0)
     black = int(getattr(display, "levels_black", 0))
@@ -995,7 +1000,7 @@ def build_provenance_scene(
     # Crop box overlay (crop coords are in image pixel space). The shared
     # template is in reference pixels; this image shows it at its own native
     # size (template x f, see physical_scale), i.e. the region actually cut.
-    c = blot.get_channel_crop(nir_channel_index)
+    c = blot.get_channel_crop(active_index)
     ct = project.panel.crop_template
     native_w, native_h = native_crop_size(project, blot)
 
@@ -1020,9 +1025,9 @@ def build_provenance_scene(
         # template: a move must not rewrite crop_template (with f != 1 the
         # native -> template round trip would drift).
         x, y, w, h = _clamped_image_rect(scene_rect)
-        _cur = blot.get_channel_crop(nir_channel_index)
+        _cur = blot.get_channel_crop(active_index)
         blot.set_channel_crop(
-            nir_channel_index,
+            active_index,
             Crop(x=x, y=y, w=_cur.w, h=_cur.h, mode=_cur.mode),
         )
         return w, h
@@ -1129,12 +1134,8 @@ def build_provenance_scene(
 
         # Determine active channel wavelength for NIR per-channel filtering.
         _active_wavelength: Optional[int] = None
-        if blot.is_nir() and blot.channels:
-            _active_ch = next(
-                (c for c in blot.channels if c.channel_index == nir_channel_index), None
-            )
-            if _active_ch is not None:
-                _active_wavelength = _marker_channel_key(_active_ch)
+        if _active_ch is not None:
+            _active_wavelength = _marker_channel_key(_active_ch)
 
         tick_pen = QPen(Qt.black)
         tick_pen.setWidth(5)

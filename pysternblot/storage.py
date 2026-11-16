@@ -125,6 +125,54 @@ def parse_typhoon_tag270(tag_text: str) -> dict:
     return result
 
 
+def _read_tag270_meta(path: str | Path) -> dict:
+    """parse_typhoon_tag270 of a file's TIFF Tag 270, or {} if unreadable."""
+    try:
+        with Image.open(str(path)) as im:
+            tag270 = im.tag_v2.get(270, "")
+        return parse_typhoon_tag270(tag270)
+    except Exception:
+        return {}
+
+
+def nir_channel_assignment(file_paths) -> list[tuple[Path, int, str | None]]:
+    """(path, channel_index, scan_number) for each file, exactly as
+    Workspace.import_nir_blot_typhoon assigns them: channel_index from the
+    Tag 270 "Scan number" (numerator - 1), or the file's position in
+    file_paths when there is none (scan_number is then None)."""
+    out = []
+    for i, fp in enumerate(file_paths):
+        meta = _read_tag270_meta(fp)
+        idx = meta.get("channel_index")
+        out.append((Path(fp), i if idx is None else int(idx), meta.get("scan_number")))
+    return out
+
+
+class DuplicateNirChannelError(ValueError):
+    """Two files of one NIR import would become the same channel."""
+
+    def __init__(self, first: tuple, second: tuple):
+        (self.first_path, self.channel_index, self.first_scan) = first
+        (self.second_path, _idx, self.second_scan) = second
+        super().__init__(
+            f"{self.first_path.name} and {self.second_path.name} would both be "
+            f"channel {self.channel_index + 1} (Scan number "
+            f"{self.first_scan or 'missing'} / {self.second_scan or 'missing'})"
+        )
+
+
+def check_nir_channel_indices(file_paths) -> list[tuple[Path, int, str | None]]:
+    """nir_channel_assignment, or DuplicateNirChannelError if two files would
+    get the same channel_index. Reads metadata only: nothing is copied."""
+    assigned = nir_channel_assignment(file_paths)
+    seen: dict[int, tuple] = {}
+    for entry in assigned:
+        if entry[1] in seen:
+            raise DuplicateNirChannelError(seen[entry[1]], entry)
+        seen[entry[1]] = entry
+    return assigned
+
+
 def parse_typhoon_inf(inf_path: Path) -> dict:
     """Parse an Amersham Typhoon .inf sidecar.
 
@@ -1065,6 +1113,9 @@ class Workspace:
         The caller is responsible for attaching the returned channels to a Blot,
         populating project.assets, and saving the project.
         """
+        # Refuse duplicate channel indices before anything is stored.
+        check_nir_channel_indices(file_paths)
+
         # Collect (channel_index, sha256, tag270_meta, inf_meta) per file.
         entries: list[tuple[int, str, dict, dict]] = []
         for i, fp in enumerate(file_paths):

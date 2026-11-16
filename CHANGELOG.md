@@ -116,6 +116,21 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   NIR blots), but only `crop_template_resized` was logged. A `crop_committed` entry with the
   previous and new crop now follows it, named as the other crop entries and noting that the
   move came from a resize. A resize that only changes the size is logged as before.
+- **NIR blots whose channels are not numbered from 1 now work in the Original Image view.**
+  Importing a single Typhoon file that is the second scan of a two-channel acquisition ("Scan
+  number 2/2") gives a blot whose only channel is Ch2. On such a blot the Original Image view
+  showed the image with default display settings instead of the channel's (so levels, gamma and
+  invert changes did not appear there, although they reached the figure), and dragging the crop
+  did nothing. The same mix-up could pick a different channel for display than for editing when
+  channel numbers had gaps. The active channel is now found the same way everywhere, by its
+  channel number (the lowest one when the selection does not match the blot), for the view,
+  crop, display and label edits, log entries and the legend-zone export.
+- **A NIR import of two files that would be the same channel is refused.** Choosing two files
+  with the same Typhoon "Scan number" (for example the same scan twice), or a file without a
+  scan number in first position next to a "1/2" scan, used to import a blot with two channels
+  of the same number: only the first could be selected, and the other's figure row showed its
+  whole, uncropped image. The import now stops before anything is copied, stored or logged,
+  and the message names both files and their scan numbers.
 
 ---
 

@@ -205,6 +205,20 @@ class Blot(BaseModel):
         if ch is not None:
             ch.crop = crop
 
+    def resolve_channel(self, channel_index: int) -> Optional["BlotChannel"]:
+        """The NIR channel a selection refers to: the channel with this
+        channel_index (its stable identity), or, if there is none, the channel
+        with the lowest channel_index. None for ECL blots and NIR blots
+        without channels. Channels are matched by channel_index, never by
+        list position: a blot imported from one Typhoon file of a 2-channel
+        scan (Scan number 2/2) has channel_index 1 only."""
+        if not self.is_nir() or not self.channels:
+            return None
+        ch = next((c for c in self.channels if c.channel_index == channel_index), None)
+        if ch is not None:
+            return ch
+        return min(self.channels, key=lambda c: c.channel_index)
+
     def get_display_channel(self, channel_index: int = 0) -> tuple[str, DisplaySettings]:
         """Return (asset_sha256, display) for the given channel.
 

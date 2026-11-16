@@ -111,6 +111,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   logs the default zone first, then exports it; its output is identical to before. With the
   legend-zone checkbox unticked it is refused, as before. Projects that already have a stored
   zone behave as before.
+- **Crop moves caused by a crop resize are logged.** Resizing the crop rectangle from its top or
+  left edge, or growing it past the image edge, also moves the crop (of the active channel, on
+  NIR blots), but only `crop_template_resized` was logged. A `crop_committed` entry with the
+  previous and new crop now follows it, named as the other crop entries and noting that the
+  move came from a resize. A resize that only changes the size is logged as before.
 
 ---
 

@@ -1669,6 +1669,27 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             note="Crop template resized; all blot previews regenerated.",
         )
 
+        # A resize from the top or left handle (or clamping at the image edge)
+        # also moves the crop of the resized blot (its active channel's, on
+        # NIR): log that as crop_committed, after the template entry. Skipped
+        # by log_operation when the position did not change.
+        if snap is not None:
+            blot = next((b for b in self.current_project.panel.blots
+                         if b.id == snap["blot_id"]), None)
+            if blot is not None:
+                asset_sha256, new_crop, note, channel = self._crop_log_value(blot)
+                if channel == snap["channel"]:
+                    self.log_operation(
+                        "crop_committed",
+                        target_type="blot",
+                        target_id=blot.id,
+                        asset_sha256=asset_sha256,
+                        field="crop",
+                        old_value=snap["crop"],
+                        new_value=new_crop,
+                        note=f"{note} Position changed by resizing the crop rectangle.",
+                    )
+
         self._save_project()
 
         self._regenerate_crop_previews(self.current_project.panel.blots)

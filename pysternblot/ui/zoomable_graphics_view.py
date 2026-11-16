@@ -82,11 +82,11 @@ class ZoomableGraphicsView(QGraphicsView):
     # Left-drag crop handles/items still works because itemAt catches them
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            item = self.itemAt(event.pos())
+            item = self.itemAt(event.position().toPoint())
 
             if item is None:
                 self._panning = True
-                self._pan_start = event.pos()
+                self._pan_start = event.position().toPoint()
                 self.setCursor(Qt.ClosedHandCursor)
                 event.accept()
                 return
@@ -95,8 +95,8 @@ class ZoomableGraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self._panning:
-            delta = event.pos() - self._pan_start
-            self._pan_start = event.pos()
+            delta = event.position().toPoint() - self._pan_start
+            self._pan_start = event.position().toPoint()
             if not delta.isNull():
                 self._leave_fit_mode()          # drag = user pan
 

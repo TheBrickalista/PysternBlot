@@ -25,8 +25,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractSlider, QApplication
 
@@ -216,3 +216,38 @@ def test_zoom_and_fit_mode_are_pure_view_state(qapp, tmp_path):
     win.prov_fit_btn.click()
     assert len(win.current_project.operation_log) == n_log
     assert win.active_blot_id == ECL_A
+
+
+def test_drag_on_empty_area_pans_the_view(qapp, tmp_path):
+    # The drag-to-pan path (ZoomableGraphicsView mouse press/move/release on
+    # an empty spot): the scrollbars follow the mouse and fit mode is left.
+    win = _shown(tmp_path)
+    view = win.view
+    _show_tab_of(win, view)
+    _user_zoom_in(view, steps=10)
+    vp = view.viewport()
+    hbar, vbar = view.horizontalScrollBar(), view.verticalScrollBar()
+    hbar.setValue((hbar.minimum() + hbar.maximum()) // 2)
+    vbar.setValue((vbar.minimum() + vbar.maximum()) // 2)
+    empty = next((QPoint(x, y) for y in range(20, vp.height() - 20, 7)
+                  for x in range(20, vp.width() - 20, 7) if view.itemAt(QPoint(x, y)) is None),
+                 None)
+    assert empty is not None, "no empty spot in the zoomed figure"
+    before = (hbar.value(), vbar.value())
+
+    def send(kind, pt, button, buttons):
+        QApplication.sendEvent(vp, QMouseEvent(kind, QPointF(pt), QPointF(vp.mapToGlobal(pt)),
+                                               button, buttons, Qt.NoModifier))
+
+    send(QEvent.MouseButtonPress, empty, Qt.LeftButton, Qt.LeftButton)
+    send(QEvent.MouseMove, empty + QPoint(-15, -10), Qt.NoButton, Qt.LeftButton)
+    send(QEvent.MouseMove, empty + QPoint(-30, -20), Qt.NoButton, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, empty + QPoint(-30, -20), Qt.LeftButton, Qt.NoButton)
+
+    def clamped(bar, v):
+        return max(bar.minimum(), min(bar.maximum(), v))
+
+    expected = (clamped(hbar, before[0] + 30), clamped(vbar, before[1] + 20))
+    assert expected != before, "precondition: the zoomed figure must be scrollable"
+    assert (hbar.value(), vbar.value()) == expected
+    assert not view.in_fit_mode

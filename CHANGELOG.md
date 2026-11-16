@@ -101,6 +101,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   <i> (Ch<i+1>)" in the note, same field names; for a font-size gesture, the channel it started
   on). Earlier entries named the blot, not the channel; old entries verify as written. ECL
   entries are unchanged.
+- **Showing the legend export zone no longer changes the project without a log entry.** The
+  first time the zone was shown, a default zone (300 × 200, centred) was stored on the blot and
+  written to `project.json` at the next save, with nothing in the operation log; changing its
+  marker options before moving it stored a zone at the image corner instead. The default is now
+  only displayed. It is stored, and logged as `legend_zone_changed` from no zone to the new
+  value, when the zone is first moved or resized, or before its marker options are changed (then
+  at the centred position shown). When no zone is stored, the legend-zone PNG export stores and
+  logs the default zone first, then exports it; its output is identical to before. With the
+  legend-zone checkbox unticked it is refused, as before. Projects that already have a stored
+  zone behave as before.
 
 ---
 

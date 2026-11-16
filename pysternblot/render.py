@@ -35,6 +35,24 @@ from .image_utils import (
 # code mapping scene clicks back to image pixels must use this constant.
 PROVENANCE_IMAGE_ORIGIN: tuple[float, float] = (10.0, 10.0)
 
+# Size of the legend export zone used when a blot has none stored.
+DEFAULT_LEGEND_ZONE_SIZE: tuple[float, float] = (300.0, 200.0)
+
+
+def default_legend_zone(image_w: float, image_h: float) -> LegendZone:
+    """The legend export zone shown (and exported) for a blot with no stored
+    zone: DEFAULT_LEGEND_ZONE_SIZE, centred on the displayed image. Pure: it
+    never touches the model. The zone is stored, and logged, only when the
+    user first moves, resizes or configures it."""
+    w, h = DEFAULT_LEGEND_ZONE_SIZE
+    return LegendZone(
+        x=max(0.0, (float(image_w) - w) / 2.0),
+        y=max(0.0, (float(image_h) - h) / 2.0),
+        w=w,
+        h=h,
+    )
+
+
 # LI-COR channel name -> excitation laser (nm), matching the Typhoon band keys.
 _LICOR_CHANNEL_EXCITATION_NM = {"700": 685, "800": 785}
 
@@ -1041,13 +1059,11 @@ def build_provenance_scene(
 
     # --- Optional legend export zone (second, visually distinct rect) ---
     if show_legend_zone:
-        if blot.legend_zone is None:
-            # The zone only comes into existence here, the first time it's shown, so
-            # it starts centred on the image rather than pinned at the origin.
-            default_w, default_h = 300.0, 200.0
-            default_x = max(0.0, (float(pm.width()) - default_w) / 2.0)
-            default_y = max(0.0, (float(pm.height()) - default_h) / 2.0)
-            blot.legend_zone = LegendZone(x=default_x, y=default_y, w=default_w, h=default_h)
+        # Rendering never changes the model: with no stored zone, the default
+        # is only displayed. It is stored when the user first moves or resizes
+        # it (below), and logged then (MainWindow._on_legend_zone_commit).
+        shown_zone = (blot.legend_zone if blot.legend_zone is not None
+                      else default_legend_zone(pm.width(), pm.height()))
 
         def _apply_legend_zone_from_scene_rect(scene_rect: QRectF) -> None:
             # Convert scene coords -> image pixel coords (same pattern as the crop rect)
@@ -1063,9 +1079,10 @@ def build_provenance_scene(
             if x + w > pm.width():  x = max(0.0, float(pm.width()) - w)
             if y + h > pm.height(): y = max(0.0, float(pm.height()) - h)
 
-            # blot.legend_zone is guaranteed to exist here: this callback is only wired
-            # up to legend_item below, which is constructed after the block above has
-            # already ensured blot.legend_zone is set.
+            if blot.legend_zone is None:
+                if (x, y, w, h) == (shown_zone.x, shown_zone.y, shown_zone.w, shown_zone.h):
+                    return          # not moved: the default stays implicit
+                blot.legend_zone = shown_zone.model_copy()   # first move / resize
             blot.legend_zone.x = x
             blot.legend_zone.y = y
             blot.legend_zone.w = w
@@ -1081,7 +1098,7 @@ def build_provenance_scene(
             if callable(on_legend_zone_commit):
                 on_legend_zone_commit(blot)
 
-        lz = blot.legend_zone
+        lz = shown_zone
         legend_zone_rect = QRectF(
             x0 + float(lz.x),
             y0 + float(lz.y),

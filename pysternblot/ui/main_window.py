@@ -19,7 +19,7 @@ from importlib.resources import files
 from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
-from ..render import ProvenancePixmapCache, build_panel_scene, build_provenance_scene
+from ..render import ProvenancePixmapCache, build_panel_scene, build_provenance_scene, default_legend_zone
 from ..physical_scale import scale_warnings
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..integrity import SATURATION_SOLID_PIXEL_THRESHOLD
@@ -1372,9 +1372,10 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.legend_zone_cb.setChecked(bool(self._legend_zone_visible))
         self.legend_zone_cb.blockSignals(False)
 
-        # Read-only: do not create blot.legend_zone here. It is created either by
-        # render.py (centred, when the zone is first shown) or by the write-path
-        # handlers below (_on_legend_zone_markers_toggled / _on_legend_zone_side_changed).
+        # Read-only: do not create blot.legend_zone here. With no stored zone,
+        # render.py only displays default_legend_zone(); the zone is stored
+        # (and logged) on its first move/resize or by the option handlers
+        # below (_on_legend_zone_markers_toggled / _on_legend_zone_side_changed).
         lz = blot.legend_zone
 
         self.legend_zone_markers_cb.setEnabled(bool(self._legend_zone_visible))
@@ -2017,6 +2018,49 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         lz = blot.legend_zone
         return {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h} if lz is not None else None
 
+    def _active_image_size(self, blot):
+        """(width, height) of the image the Original Image view shows for this
+        blot (the active channel's on NIR blots); rotation (expand=False) and
+        flips keep the size. None if it cannot be read."""
+        try:
+            sha256, _display = blot.get_display_channel(self._active_nir_channel)
+        except (IndexError, AttributeError):
+            sha256 = blot.asset_sha256
+        try:
+            img = load_image_as_uint16(self.workspace.asset_original_file(sha256))
+        except Exception:
+            return None
+        return float(img.shape[1]), float(img.shape[0])
+
+    def _store_default_legend_zone(self, blot, zone, note: str):
+        """Store the displayed default zone on a blot that has none, and log
+        it as legend_zone_changed None -> value (before the caller's own
+        entry). No-op if a zone is already stored."""
+        if blot.legend_zone is not None:
+            return
+        blot.legend_zone = zone
+        self.log_operation(
+            "legend_zone_changed",
+            target_type="blot",
+            target_id=blot.id,
+            asset_sha256=blot.asset_sha256,
+            field="legend_zone",
+            old_value=None,
+            new_value=self._legend_zone_log_value(blot),
+            note=note,
+        )
+
+    def _ensure_legend_zone_for_edit(self, blot):
+        """A legend-zone option is being changed on a blot with no stored zone:
+        store the zone that is displayed (the centred default) and log it,
+        legend_zone_changed None -> value, before the option's own entry."""
+        if blot.legend_zone is not None:
+            return
+        size = self._active_image_size(blot)
+        zone = default_legend_zone(*size) if size is not None else LegendZone()
+        self._store_default_legend_zone(
+            blot, zone, "Default legend export zone stored before changing its options.")
+
     def _on_legend_zone_press(self, blot):
         """Mouse press on the legend zone rectangle, before it moves."""
         self._legend_zone_press_snapshot = {
@@ -2031,6 +2075,8 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
 
+        if blot.legend_zone is None:
+            return      # the default zone was shown but not moved: nothing stored
         new_value = self._legend_zone_log_value(blot)
         # old_value: the zone at mouse press (None without a press).
         snap, self._legend_zone_press_snapshot = self._legend_zone_press_snapshot, None
@@ -2490,8 +2536,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         blot = self._get_active_blot()
         if blot is None:
             return
-        if blot.legend_zone is None:
-            blot.legend_zone = LegendZone()
+        self._ensure_legend_zone_for_edit(blot)
 
         old = blot.legend_zone.show_markers
         new = bool(checked)
@@ -2518,8 +2563,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         new = self.legend_zone_side_combo.currentData()
         if new is None:
             return
-        if blot.legend_zone is None:
-            blot.legend_zone = LegendZone()
+        if blot.legend_zone is None and new == LegendZone().marker_side:
+            return      # no stored zone and no change: nothing to store or log
+        self._ensure_legend_zone_for_edit(blot)
 
         old = blot.legend_zone.marker_side
         if old == new:

@@ -34,6 +34,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import QApplication
 
+from pysternblot import render
 from pysternblot.integrity import build_integrity_report
 from pysternblot.logchain import verify_log_chain
 from pysternblot.models import Project
@@ -155,18 +156,28 @@ def test_crop_resize_logs_the_previous_template(qapp, tmp_path):
 
 def test_legend_zone_drag_logs_the_previous_zone(qapp, tmp_path):
     win = _prepared(tmp_path)
-    win.legend_zone_cb.setChecked(True)            # creates and shows the zone
+    win.legend_zone_cb.setChecked(True)            # shows the default zone (not stored)
     blot = win._get_active_blot()
-    lz = blot.legend_zone
-    before = {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h}
+    assert blot.legend_zone is None
+    ox, oy = render.PROVENANCE_IMAGE_ORIGIN
+
+    # First move: no stored zone before it -> old_value None.
+    shown = _legend_item(win).crop_scene_rect()
     n = len(win.current_project.operation_log)
+    _drag(win.prov_view, shown.center(), QPointF(-20, 35))
+    (first,) = _entries(win, n, "legend_zone_changed")
+    lz = blot.legend_zone
+    assert first.old_value is None
+    assert first.new_value == {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h}
+    assert (lz.x, lz.y) == (shown.x() - ox - 20, shown.y() - oy + 35)
 
-    _drag(win.prov_view, _legend_item(win).crop_scene_rect().center(), QPointF(-20, 35))
-
-    (entry,) = _entries(win, n, "legend_zone_changed")
-    assert entry.old_value == before
-    assert entry.new_value == {"x": lz.x, "y": lz.y, "w": lz.w, "h": lz.h}
-    assert (entry.new_value["x"], entry.new_value["y"]) == (before["x"] - 20, before["y"] + 35)
+    # Second move: the stored zone is the previous value.
+    before = dict(first.new_value)
+    n = len(win.current_project.operation_log)
+    _drag(win.prov_view, _legend_item(win).crop_scene_rect().center(), QPointF(15, -10))
+    (second,) = _entries(win, n, "legend_zone_changed")
+    assert second.old_value == before
+    assert (second.new_value["x"], second.new_value["y"]) == (before["x"] + 15, before["y"] - 10)
 
 
 # --------------------------------------------------------------------------

@@ -75,6 +75,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   itself when the content changes (another blot or NIR channel, opening or creating a project,
   importing a blot). The figure can now be zoomed and panned like the Original Image view
   (Shift+scroll to zoom, drag or scroll to pan, double-click to fit).
+- **`crop_committed` entries for NIR blots record the crop of the channel that moved.** Each NIR
+  channel has its own crop position, but the entry recorded the blot's fallback crop, which a
+  channel move does not change. The entry now records the moved channel's crop, names that
+  channel's asset in `asset_sha256` (as `nir_channel_imported` and NIR exports do) and says
+  "NIR channel <i> (Ch<i+1>)" in its note. Earlier NIR `crop_committed` entries recorded the
+  blot's fallback crop rather than the moved channel's crop. Integrity verification of existing
+  logs is unaffected: old entries are verified as written. ECL entries are unchanged.
 
 ---
 

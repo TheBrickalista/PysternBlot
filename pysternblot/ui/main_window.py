@@ -1551,15 +1551,31 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not self.current_project:
             return
 
+        asset_sha256 = blot.asset_sha256
+        new_crop = blot.crop
+        note = "Crop rectangle committed after user interaction."
+        if blot.is_nir() and blot.channels:
+            # A NIR move changes the active channel's own crop (set_channel_crop),
+            # not blot.crop: log that channel's crop, identified by its asset
+            # (as nir_channel_imported and NIR exports do) and its index.
+            idx = self._active_nir_channel
+            ch = next((c for c in blot.channels if c.channel_index == idx), None)
+            if ch is not None:
+                asset_sha256 = ch.asset_sha256
+                new_crop = blot.get_channel_crop(idx)
+                # i is channel_index (0-based); the UI shows it as Ch<i+1>.
+                note = (f"Crop rectangle committed after user interaction. "
+                        f"NIR channel {idx} (Ch{idx + 1}).")
+
         self.log_operation(
             "crop_committed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=asset_sha256,
             field="crop",
             old_value=None,
-            new_value=blot.crop,
-            note="Crop rectangle committed after user interaction.",
+            new_value=new_crop,
+            note=note,
         )
 
         # Persist the updated crop coordinates

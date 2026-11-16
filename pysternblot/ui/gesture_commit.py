@@ -20,8 +20,10 @@ every other log entry first flushes the pending change (see
 _ProjectIOMixin._save_project / log_operation). If the app crashes
 mid-gesture, the uncommitted change is lost from both, which is acceptable.
 
-Screen updates during a gesture are debounced separately (REDRAW_DEBOUNCE_MS)
-and use the narrowest refresh that the control can affect.
+Screen updates during a gesture are throttled separately (REDRAW_DEBOUNCE_MS)
+and use the narrowest refresh that the control can affect: the first request
+draws on the next event-loop turn, later ones coalesce and draw at most once
+per interval, and the latest request is always drawn.
 """
 
 from __future__ import annotations
@@ -35,7 +37,8 @@ from PySide6.QtWidgets import QAbstractSlider
 # changes have no "released" signal). While the source slider is held down
 # (mouse drag paused), the timer re-arms instead and sliderReleased commits.
 IDLE_COMMIT_MS = 700
-# Screen redraws during a gesture are coalesced over this interval.
+# Screen redraws during a gesture run at most once per this interval
+# (leading + trailing throttle, see request_redraw).
 REDRAW_DEBOUNCE_MS = 80
 
 # (operation, target_type, target_id, field, nir_channel_index_or_None)
@@ -68,10 +71,13 @@ class GestureCommitter(QObject):
         self._idle.setInterval(IDLE_COMMIT_MS)
         self._idle.timeout.connect(self._on_idle_timeout)
 
+        # Redraw throttle timer. Idle when inactive. Started with 0 ms for a
+        # leading-edge redraw, then with REDRAW_DEBOUNCE_MS as a cool-down
+        # after each redraw; requests while it is active only replace the
+        # pending fn, which the timeout then draws (trailing edge).
         self._redraw = QTimer(self)
         self._redraw.setSingleShot(True)
-        self._redraw.setInterval(REDRAW_DEBOUNCE_MS)
-        self._redraw.timeout.connect(self.run_pending_redraw)
+        self._redraw.timeout.connect(self._on_redraw_timeout)
 
     # ------------------------------------------------------------- state
     @property
@@ -104,11 +110,31 @@ class GestureCommitter(QObject):
         self._idle.start()   # restart: the gesture ends after IDLE_COMMIT_MS of quiet
 
     def request_redraw(self, fn: Callable[[], None]) -> None:
-        """Run fn after REDRAW_DEBOUNCE_MS of no further requests."""
+        """Throttled redraw: the screen follows a drag live.
+
+        - No redraw in the last REDRAW_DEBOUNCE_MS: fn runs on the next
+          event-loop turn (leading edge).
+        - Otherwise the request coalesces: the latest fn runs once when the
+          interval ends (trailing edge), so the final state is always drawn.
+        - While requests keep coming, redraws run at most once per interval.
+        """
         self._redraw_fn = fn
-        self._redraw.start()
+        if not self._redraw.isActive():
+            self._redraw.start(0)
+
+    def _on_redraw_timeout(self) -> None:
+        fn, self._redraw_fn = self._redraw_fn, None
+        if fn is None:
+            return                          # cool-down over, nothing pending: idle
+        try:
+            fn()
+        finally:
+            # Cool-down measured from the end of the redraw, so input events
+            # are processed between redraws even when one is slow.
+            self._redraw.start(REDRAW_DEBOUNCE_MS)
 
     def run_pending_redraw(self) -> None:
+        """Run the pending redraw now, if any (used by flush)."""
         self._redraw.stop()
         fn, self._redraw_fn = self._redraw_fn, None
         if fn is not None:

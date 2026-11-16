@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from unittest.mock import patch
 
 import numpy as np
@@ -33,7 +34,7 @@ from pysternblot.logchain import verify_log_chain
 from pysternblot.models import AssetEntry, Blot, Crop, CropTemplate, ProteinLabel
 from pysternblot.storage import Workspace
 from pysternblot.ui import export_mixin as export_mixin_module
-from pysternblot.ui.gesture_commit import IDLE_COMMIT_MS
+from pysternblot.ui.gesture_commit import IDLE_COMMIT_MS, REDRAW_DEBOUNCE_MS, GestureCommitter
 from pysternblot.ui.main_window import MainWindow
 
 from test_source_export import _encode_png_uint16, _minimal_ladder, _minimal_project, _write_asset
@@ -351,3 +352,93 @@ class TestScopedRefresh:
             assert set(spy) == expected, scope
         with pytest.raises(ValueError):
             win.refresh_previews(regenerate="some")
+
+
+# ===========================================================================
+# Redraw throttle: leading edge, trailing edge, at most once per interval
+# ===========================================================================
+
+class TestRedrawThrottle:
+
+    @staticmethod
+    def _committer():
+        return GestureCommitter(commit=lambda *a: None, project_getter=lambda: None)
+
+    @staticmethod
+    def _fire(c):
+        """Deliver the redraw timer's timeout now (deterministic)."""
+        assert c._redraw.isActive()
+        c._redraw.stop()
+        c._on_redraw_timeout()
+
+    def test_leading_edge_runs_on_next_event_loop_turn(self, qapp):
+        c, drawn = self._committer(), []
+        c.request_redraw(lambda: drawn.append(1))
+        assert drawn == []                              # not synchronous
+        assert c._redraw.isActive() and c._redraw.interval() == 0
+        QTest.qWait(1)                                  # one event-loop turn
+        assert drawn == [1]
+
+    def test_requests_during_interval_coalesce_to_latest(self, qapp):
+        c, drawn = self._committer(), []
+        c.request_redraw(lambda: drawn.append("first"))
+        self._fire(c)                                   # leading edge
+        assert drawn == ["first"]
+        assert c._redraw.isActive() and c._redraw.interval() == REDRAW_DEBOUNCE_MS
+
+        for k in range(5):                              # within the interval
+            c.request_redraw(lambda k=k: drawn.append(k))
+        assert drawn == ["first"]
+        self._fire(c)                                   # trailing edge
+        assert drawn == ["first", 4]                    # latest only, once
+
+        self._fire(c)                                   # cool-down, nothing pending
+        assert drawn == ["first", 4]
+        assert not c._redraw.isActive()                 # idle again
+
+        c.request_redraw(lambda: drawn.append("next"))  # new leading edge
+        assert c._redraw.interval() == 0
+        self._fire(c)
+        assert drawn == ["first", 4, "next"]
+
+    def test_flush_runs_pending_redraw_at_once(self, qapp):
+        c, drawn = self._committer(), []
+        c.request_redraw(lambda: drawn.append("lead"))
+        self._fire(c)
+        c.request_redraw(lambda: drawn.append("trail"))
+        c.flush()
+        assert drawn == ["lead", "trail"]
+        assert not c._redraw.isActive()
+
+    def test_continuous_requests_redraw_live_at_most_once_per_interval(self, qapp):
+        c, drawn = self._committer(), []
+        t0 = time.monotonic()
+        for k in range(80):                             # a tick every ~5 ms
+            c.request_redraw(lambda k=k: drawn.append((k, time.monotonic())))
+            QTest.qWait(5)
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        QTest.qWait(REDRAW_DEBOUNCE_MS * 3)             # let the trailing edge run
+
+        values = [k for k, _ in drawn]
+        assert values[0] == 0                           # leading edge
+        assert values[-1] == 79                         # final state drawn
+        assert values == sorted(values) and len(set(values)) == len(values)
+        # Live during the drag (a pure debounce draws once, after the pause) ...
+        assert len([1 for _, t in drawn if (t - t0) * 1000.0 <= elapsed_ms]) >= 2
+        # ... but never faster than once per interval (5% QTimer slack).
+        gaps = [(b - a) * 1000.0 for (_, a), (_, b) in zip(drawn, drawn[1:])]
+        assert min(gaps) >= REDRAW_DEBOUNCE_MS * 0.95
+        assert len(drawn) <= elapsed_ms / REDRAW_DEBOUNCE_MS + 2
+
+    def test_held_slider_drag_redraws_before_release(self, qapp, tmp_path):
+        win = _window(tmp_path)
+        redraws = []
+        with patch.object(win, "_refresh_provenance_only", lambda: redraws.append(1)):
+            win.alpha_slider.setSliderDown(True)
+            for v in range(36, 60):
+                win.alpha_slider.setValue(v)
+                QTest.qWait(10)
+            assert len(redraws) >= 2                    # the view follows the drag
+            assert _ops(win, "overlay_alpha_changed") == []   # still one gesture
+            win.alpha_slider.setSliderDown(False)       # sliderReleased -> flush
+        assert len(_ops(win, "overlay_alpha_changed")) == 1

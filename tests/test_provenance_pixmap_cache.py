@@ -31,10 +31,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QGraphicsPixmapItem
 
 from pysternblot import render
+from pysternblot.models import LegendZone
+from pysternblot.ui import export_mixin as export_mixin_module
 from pysternblot.image_utils import apply_levels_uint16, apply_levels_uint16_lut, load_image_as_uint16
 from pysternblot.render import ProvenancePixmapCache, _load_rotated_display_pixmap, build_provenance_scene
 
 from test_gesture_commit import _patched_save, _window
+from test_refresh_scope_staleness import ECL_A, _window as _real_tiff_window
 from test_source_export import _write_asset
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -246,3 +249,44 @@ def test_exports_do_not_use_the_cache_or_the_lut(qapp, tmp_path):
         win._export_provenance_scene_to_tiff(win.current_project.panel.blots[0].id, str(out))
     assert out.is_file()
     assert seen and all(c is None for c in seen)
+
+
+def test_legend_zone_export_does_not_use_the_cache_or_the_lut(qapp, tmp_path):
+    # export_legend_zone_png calls _load_rotated_display_pixmap through the
+    # name imported into export_mixin, so that is the name patched here.
+    win = _real_tiff_window(tmp_path)
+    blot = win._get_active_blot()
+    assert blot.id == ECL_A
+    blot.legend_zone = LegendZone(x=250, y=350, w=600, h=300, show_markers=False)
+    win.legend_zone_cb.setChecked(True)             # also fills the view cache
+    assert len(win._prov_pixmap_cache) >= 1
+
+    calls = []
+    real = export_mixin_module._load_rotated_display_pixmap
+
+    def spy(*args, **kwargs):
+        calls.append(dict(sha=args[1] if len(args) > 1 else kwargs.get("sha256"),
+                          passed="pixmap_cache" in kwargs,
+                          cache=kwargs.get("pixmap_cache")))
+        return real(*args, **kwargs)
+
+    out = tmp_path / "zone.png"
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(
+            export_mixin_module.QFileDialog, "getSaveFileName", return_value=(str(out), "")))
+        info = stack.enter_context(patch.object(export_mixin_module.QMessageBox, "information"))
+        critical = stack.enter_context(patch.object(export_mixin_module.QMessageBox, "critical"))
+        stack.enter_context(patch.object(export_mixin_module, "_load_rotated_display_pixmap", spy))
+        stack.enter_context(patch.object(
+            render, "apply_levels_uint16_lut", side_effect=AssertionError("LUT used by export")))
+        win.export_legend_zone_png()
+
+    assert not critical.called, f"export failed: {critical.call_args}"
+    assert info.call_args is not None and "Saved PNG" in info.call_args.args[2]
+    assert out.is_file() and out.stat().st_size > 0
+    assert win.current_project.operation_log[-1].field == "legend_zone_png"
+    # The spy really sat on the export's code path ...
+    assert calls and all(c["sha"] == blot.asset_sha256 for c in calls)
+    # ... and no call asked for the cache.
+    assert all(c["cache"] is None for c in calls)
+    assert not any(c["passed"] for c in calls)

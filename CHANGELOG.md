@@ -67,6 +67,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   height), and the figure draws its overlay ladder markers from those positions. Re-check those
   projects and re-assign the affected bands. Crop previews, blot images in exported figures and
   the operation log were not affected.
+- **Changing the kDa label size now updates the overlay ladder labels in the Original Image view
+  at once**, not only in the figure.
 
 ---
 

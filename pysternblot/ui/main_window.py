@@ -1587,7 +1587,14 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
              "panel.style.kda_label_font_size_pt", None),
             old, new,
         )
-        self._gesture_committer.request_redraw(lambda: self._refresh_final_only(fit=False))
+        self._gesture_committer.request_redraw(self._refresh_after_kda_label_size)
+
+    def _refresh_after_kda_label_size(self):
+        """The kDa label size is used by the figure's markers and by the
+        overlay ladder labels in the Original Image view: redraw both, with no
+        crop-preview regeneration (the size does not affect crops)."""
+        self._refresh_final_only(fit=False)
+        self._refresh_provenance_only()
 
     def _on_crop_resize_commit(self):
         """Called when the crop rectangle is resized (affects all blots via crop_template)."""

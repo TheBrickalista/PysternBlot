@@ -44,7 +44,6 @@ class ImportArchiveResult:
 
 from .image_utils import (
     load_image_as_uint16,
-    crop_uint16,
     levels_rotate_flip_crop_uint16,
     save_uint16_tiff,
 )
@@ -945,27 +944,6 @@ class Workspace:
             raise FileNotFoundError(f"No original.* found in {d}")
         return matches[0]
 
-    def generate_crop_preview_tiff(self, sha256: str, crop: dict) -> Path:
-        """
-        Generate (or overwrite) a 16-bit preview_crop.tif for this asset sha256
-        using the crop rectangle (absolute pixel coords).
-        """
-        self.ensure()
-        original_path = self.asset_original_file(sha256)
-
-        img = load_image_as_uint16(original_path)
-
-        x = int(round(float(crop.get("x", 0))))
-        y = int(round(float(crop.get("y", 0))))
-        w = int(round(float(crop.get("w", img.shape[1]))))
-        h = int(round(float(crop.get("h", img.shape[0]))))
-
-        cropped = crop_uint16(img, x, y, w, h)
-
-        out_path = (self.assets_dir / sha256) / "preview_crop.tif"
-        save_uint16_tiff(cropped, out_path)
-        return out_path
-    
     def ensure_blot_crop_preview(self, blot, panel, channel_index: int = -1, *, project=None) -> Path:
         """
         Generate/update a 16-bit crop preview TIFF from blot settings.

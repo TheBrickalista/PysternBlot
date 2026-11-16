@@ -301,6 +301,29 @@ class TestScopedRefresh:
         with patch.object(Workspace, "ensure_blot_crop_preview", wrapper):
             yield calls
 
+    def test_kda_label_size_redraws_original_image_labels_without_regeneration(
+            self, qapp, tmp_path, spy):
+        win = _window(tmp_path)
+        kda = float(win.marker_set_library.items[0].bands[0].kda)
+        win._save_overlay_ladder_options()              # overlay ladder with labels shown
+        win.pending_overlay_ladder_kda = kda
+        win._assign_pending_overlay_ladder_band(20.0)
+
+        def view_label_sizes():
+            return {t.font().pointSize() for t in win.prov_view.scene().items()
+                    if hasattr(t, "toPlainText") and t.toPlainText().endswith(" kDa")}
+
+        start = int(win.current_project.panel.style.kda_label_font_size_pt)
+        assert view_label_sizes() == {start}
+        spy.clear()
+        for v in (start + 2, start + 4, 30):            # one gesture
+            win.mw_label_size_spin.setValue(v)
+        win._gesture_committer.flush()                  # also runs the pending redraw
+        assert view_label_sizes() == {30}
+        assert spy == []                                # no crop preview regenerated
+        (entry,) = _ops(win, "kda_label_font_size_changed")
+        assert (entry.old_value, entry.new_value) == (float(start), 30.0)
+
     def test_protein_font_size_regenerates_nothing(self, qapp, tmp_path, spy):
         win = _window(tmp_path)
         spy.clear()

@@ -32,7 +32,7 @@ import tifffile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from pysternblot.models import (
@@ -40,6 +40,7 @@ from pysternblot.models import (
 )
 from pysternblot.storage import Workspace
 from pysternblot.ui import overlay_ladder_mixin as overlay_ladder_module
+from pysternblot.ui.crop_rect_item import CropRectItem
 from pysternblot.ui.main_window import MainWindow
 
 from test_source_export import _minimal_ladder, _minimal_project, _write_asset
@@ -152,11 +153,27 @@ def _typed_black(win):
     win._on_black_value_edited()            # non-gesture branch of _on_levels_changed
 
 
-def _crop_changed(win):
-    blot = win._get_active_blot()
-    blot.crop.x += 37
-    blot.crop.y -= 21
-    win._on_crop_changed(blot)
+def _crop_item(win):
+    """The crop rectangle of the Original Image view (legend zone hidden)."""
+    (item,) = [i for i in win.prov_view.scene().items() if isinstance(i, CropRectItem)]
+    return item
+
+
+def _crop_move_commit(win, dx=37.0, dy=-21.0):
+    """Drag the real crop rectangle and release: render's move commit ->
+    MainWindow._on_crop_commit (the live crop path)."""
+    item = _crop_item(win)
+    item.moveBy(dx, dy)                     # live on_change via itemChange
+    item._on_move_commit(item.crop_scene_rect())
+
+
+def _crop_resize_commit(win, dw=-60.0, dh=24.0):
+    """Resize the real crop rectangle and release: render's resize commit ->
+    MainWindow._on_crop_resize_commit (shared template, every blot)."""
+    item = _crop_item(win)
+    r = item.rect()
+    item.setRect(QRectF(r.x(), r.y(), r.width() + dw, r.height() + dh))
+    item._on_resize_commit(item.crop_scene_rect())
 
 
 def _protein_label(win):
@@ -198,7 +215,6 @@ def test_active_scope_nir_channel(qapp, tmp_path, name, action):
 NONE_CASES = [
     ("active_blot_changed", lambda w: _activate(w, NIR), []),
     ("nir_channel_changed", lambda w: (_activate(w, NIR), w._on_nir_channel_changed(1)), []),
-    ("crop_changed", _crop_changed, [(ECL_B, -1)]),          # its own [blot] regeneration
     ("move_up", lambda w: w._move_active_blot_up(), []),
     ("move_down", lambda w: w._move_active_blot_down(), []),
     ("toggle_overlay", lambda w: w.overlay_cb.setChecked(not w.overlay_cb.isChecked()), []),
@@ -273,5 +289,39 @@ def test_after_several_narrow_actions_everything_is_fresh(qapp, tmp_path):
     win._move_active_blot_up()
     _activate(win, ECL_A)
     win.invert_cb.setChecked(True)
-    _crop_changed(win)
+    _crop_move_commit(win)
+    _assert_previews_fresh(win)
+
+
+# --------------------------------------------------------------------------
+# Live crop paths (CropRectItem -> render -> MainWindow)
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("blot_id,channel,expected", [
+    (ECL_B, None, [(ECL_B, -1)]),
+    (NIR, 1, ALL_NIR),
+], ids=["ecl", "nir_channel_1"])
+def test_crop_move_commit_regenerates_only_that_blot(qapp, tmp_path, blot_id, channel, expected):
+    win = _window(tmp_path)
+    _activate(win, blot_id, channel=channel)
+    blot = win._get_active_blot()
+    before = blot.get_channel_crop(channel if channel is not None else 0).model_copy()
+    with _regenerated() as calls:
+        _crop_move_commit(win)
+    after = blot.get_channel_crop(channel if channel is not None else 0)
+    assert (after.x, after.y) == (before.x + 37.0, before.y - 21.0)
+    assert win.current_project.operation_log[-1].operation == "crop_committed"
+    assert calls == expected
+    _assert_previews_fresh(win)
+
+
+def test_crop_resize_commit_regenerates_every_blot(qapp, tmp_path):
+    win = _window(tmp_path)
+    _activate(win, ECL_B)
+    before = win.current_project.panel.crop_template.model_copy()
+    with _regenerated() as calls:
+        _crop_resize_commit(win)
+    ct = win.current_project.panel.crop_template
+    assert (ct.w, ct.h) == (before.w - 60.0, before.h + 24.0)
+    assert win.current_project.operation_log[-1].operation == "crop_template_resized"
+    assert sorted(calls) == sorted([(ECL_A, -1), (ECL_B, -1)] + ALL_NIR)
     _assert_previews_fresh(win)

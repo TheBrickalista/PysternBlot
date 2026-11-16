@@ -1946,21 +1946,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self._sync_controls_from_project()
 
-    def _on_crop_changed(self, blot):
-        if not self.current_project:
-            return
-        # persist crop
-        self._save_project()
-
-        # regenerate cached preview for this blot (all channels for NIR)
-        self._regenerate_crop_previews([blot])
-
-        # refresh both views
-        self.refresh_previews(regenerate="none")
-
     def _on_legend_zone_commit(self, blot):
-        """Mirrors _on_crop_changed but for the legend export zone — no crop
-        previews need regenerating since the legend zone doesn't affect them."""
+        """Called after the legend export zone is moved or resized in the
+        Original Image view: logs legend_zone_changed with the new zone and
+        saves the project. Nothing is regenerated or redrawn: the legend zone
+        does not affect crop previews or the figure."""
         if not self.current_project:
             return
 

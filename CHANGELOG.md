@@ -82,6 +82,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   "NIR channel <i> (Ch<i+1>)" in its note. Earlier NIR `crop_committed` entries recorded the
   blot's fallback crop rather than the moved channel's crop. Integrity verification of existing
   logs is unaffected: old entries are verified as written. ECL entries are unchanged.
+- **NIR display entries name the channel that was edited.** Levels (typed, sliders and
+  histogram), rotation (typed, dial and the 90° buttons), flips and invert are per channel on NIR
+  blots, but their log entries named only the blot (its asset, no channel). They now carry the
+  edited channel's asset in `asset_sha256` and "NIR channel <i> (Ch<i+1>)" in the note, with the
+  same field names; for a slider or dial gesture, the channel the gesture started on. Earlier NIR
+  display entries named the blot, not the channel; old entries verify as written. ECL entries
+  are unchanged.
 
 ---
 

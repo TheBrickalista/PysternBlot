@@ -2231,6 +2231,20 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         channel on NIR blots), None for ECL blots."""
         return self._active_nir_channel if blot.is_nir() and blot.channels else None
 
+    def _display_log_target(self, blot):
+        """(asset_sha256, note) for a log entry about the active display.
+
+        NIR: the channel whose display _active_display() edits, identified by
+        its own asset (as nir_channel_imported and NIR exports do) and a note
+        "NIR channel <i> (Ch<i+1>)" (i = channel_index). ECL: the blot's asset
+        and no note, exactly as before.
+        """
+        if blot.is_nir() and blot.channels:
+            ch = self._get_active_channel_or_blot()
+            i = ch.channel_index
+            return ch.asset_sha256, f"NIR channel {i} (Ch{i + 1})."
+        return blot.asset_sha256, None
+
     def _on_rotation_changed(self, value: int):
         """Rotation dial: a continuous gesture (one log entry per gesture)."""
         blot = self._get_active_blot()
@@ -2247,9 +2261,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         _display.rotation_deg = new
         self.prov_rotate_label.setText(f"{new:.1f}")
 
+        # asset/note name this tick's channel; the key carries the channel and
+        # a channel switch flushes first, so the entry names the channel the
+        # gesture started on.
+        _log_asset, _log_note = self._display_log_target(blot)
         self._gesture_committer.update(
             ("rotation_changed", "blot", blot.id, "display.rotation_deg", self._active_channel_key(blot)),
-            old, new, asset_sha256=blot.asset_sha256,
+            old, new, asset_sha256=_log_asset, note=_log_note,
             source=self.prov_rotate_dial,
         )
         self._gesture_committer.request_redraw(lambda: self.refresh_previews(regenerate="active"))
@@ -2270,11 +2288,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         _display.rotation_deg = new
 
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2294,11 +2314,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = float(_display.rotation_deg)
         new = (old - 90.0) % 360.0
         _display.rotation_deg = new
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2320,11 +2342,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = float(_display.rotation_deg)
         new = (old + 90.0) % 360.0
         _display.rotation_deg = new
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "rotation_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.rotation_deg",
             old_value=old,
             new_value=new,
@@ -2358,11 +2382,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = bool(_display.flip_horizontal)
         new = not old
         _display.flip_horizontal = new
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "flip_horizontal_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.flip_horizontal",
             old_value=old,
             new_value=new,
@@ -2380,11 +2406,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         old = bool(_display.flip_vertical)
         new = not old
         _display.flip_vertical = new
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "flip_vertical_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.flip_vertical",
             old_value=old,
             new_value=new,
@@ -2512,16 +2540,21 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             self.levels_black_slider, self.levels_white_slider, self.levels_gamma_slider))
 
         if _is_slider_gesture or _is_histogram_commit:
+            # The key carries the channel and a channel switch flushes first,
+            # so asset/note name the channel the gesture started on.
+            _log_asset, _log_note = self._display_log_target(blot)
             self._gesture_committer.update(
-                _levels_key, old_levels, new_levels, asset_sha256=blot.asset_sha256,
+                _levels_key, old_levels, new_levels, asset_sha256=_log_asset, note=_log_note,
                 source=sender if _is_slider_gesture else None,
             )
         elif not _is_drag:
+            _log_asset, _log_note = self._display_log_target(blot)
             self.log_operation(
                 "levels_changed",
                 target_type="blot",
                 target_id=blot.id,
-                asset_sha256=blot.asset_sha256,
+                asset_sha256=_log_asset,
+                note=_log_note,
                 field="display.levels",
                 old_value=old_levels,
                 new_value=new_levels,
@@ -2602,11 +2635,13 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         _display.invert = new
 
+        _log_asset, _log_note = self._display_log_target(blot)
         self.log_operation(
             "invert_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="display.invert",
             old_value=old,
             new_value=new,

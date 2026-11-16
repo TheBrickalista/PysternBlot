@@ -165,3 +165,134 @@ def test_old_style_nir_crop_entries_still_verify_as_written(win):
     old, new = [e for e in reloaded.operation_log if e.operation == "crop_committed"][-2:]
     assert old.note == ECL_NOTE and old.asset_sha256 == blot.asset_sha256
     assert _channel_note(1) in new.note and new.asset_sha256 == win.channel_sha[1]
+
+
+# --------------------------------------------------------------------------
+# 3b: display entries (levels, rotation, flips, invert)
+# --------------------------------------------------------------------------
+def _rotate_typed(w):
+    w.prov_rotate_label.setText("4.5")
+    w._on_rotate_label_edited()
+
+
+def _rotate_dial(w):
+    for v in (12, 18, 25):                          # one gesture
+        w.prov_rotate_dial.setValue(v)
+    w._gesture_committer.flush()
+
+
+def _levels_typed(w):
+    w.black_value_edit.setText("2500")
+    w._on_black_value_edited()
+
+
+def _levels_slider(w):
+    for v in (1000, 1500, 2100):                    # one gesture
+        w.levels_black_slider.setValue(v)
+    w._gesture_committer.flush()
+
+
+def _levels_histogram(w):
+    for v in (1200, 1800, 2400):
+        w._on_histogram_gate_changed("black", v)
+    w._on_histogram_gate_commit()
+
+
+DISPLAY_CASES = [
+    # (id, action, operation, field, model check on the edited display)
+    ("rotation_typed", _rotate_typed, "rotation_changed", "display.rotation_deg",
+     lambda d: d.rotation_deg == 4.5),
+    ("rotation_dial", _rotate_dial, "rotation_changed", "display.rotation_deg",
+     lambda d: d.rotation_deg == 2.5),
+    ("rotate_cw", lambda w: w._on_rotate_cw(), "rotation_changed", "display.rotation_deg",
+     lambda d: d.rotation_deg == 90.0),
+    ("rotate_ccw", lambda w: w._on_rotate_ccw(), "rotation_changed", "display.rotation_deg",
+     lambda d: d.rotation_deg == 270.0),
+    ("flip_horizontal", lambda w: w._flip_h_btn.click(), "flip_horizontal_changed",
+     "display.flip_horizontal", lambda d: d.flip_horizontal is True),
+    ("flip_vertical", lambda w: w._on_flip_vertical(), "flip_vertical_changed",
+     "display.flip_vertical", lambda d: d.flip_vertical is True),
+    ("invert", lambda w: w.invert_cb.setChecked(True), "invert_changed", "display.invert",
+     lambda d: d.invert is True),
+    ("levels_typed", _levels_typed, "levels_changed", "display.levels",
+     lambda d: d.levels_black == 2500),
+    ("levels_slider", _levels_slider, "levels_changed", "display.levels",
+     lambda d: d.levels_black == 2100),
+    ("levels_histogram", _levels_histogram, "levels_changed", "display.levels",
+     lambda d: d.levels_black == 2400),
+]
+CASE_IDS = [c[0] for c in DISPLAY_CASES]
+
+
+@pytest.mark.parametrize("channel", [0, 1])
+@pytest.mark.parametrize("name,action,operation,field,check", DISPLAY_CASES, ids=CASE_IDS)
+def test_nir_display_entry_names_the_channel(win, channel, name, action, operation, field, check):
+    _activate(win, NIR, channel=channel)
+    blot = _blot(win, NIR)
+    other = blot.channels[1 - channel].display.model_dump()
+    n = len(win.current_project.operation_log)
+
+    action(win)
+
+    entries = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert len(entries) == 1, [e.operation for e in win.current_project.operation_log[n:]]
+    (entry,) = entries
+    assert entry.target_id == NIR and entry.field == field            # field unchanged
+    assert entry.asset_sha256 == win.channel_sha[channel]
+    assert entry.note == _channel_note(channel) + "."
+    assert check(blot.channels[channel].display)                    # the edited channel
+    assert blot.channels[1 - channel].display.model_dump() == other # the other one untouched
+    assert verify_log_chain(win.current_project).status == "ok"
+
+
+@pytest.mark.parametrize("name,action,operation,field,check", DISPLAY_CASES, ids=CASE_IDS)
+def test_ecl_display_entry_is_unchanged(win, name, action, operation, field, check):
+    _activate(win, ECL)
+    n = len(win.current_project.operation_log)
+    action(win)
+    (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert entry.field == field
+    assert entry.asset_sha256 == win.ecl_sha
+    assert entry.note is None
+    assert check(_blot(win, ECL).display)
+
+
+@pytest.mark.parametrize("gesture", ["levels_slider", "rotation_dial"])
+def test_gesture_entry_names_the_channel_it_started_on(win, gesture):
+    _activate(win, NIR, channel=1)
+    n = len(win.current_project.operation_log)
+    if gesture == "levels_slider":
+        for v in (1000, 1700):
+            win.levels_black_slider.setValue(v)
+        operation = "levels_changed"
+    else:
+        for v in (15, 30):
+            win.prov_rotate_dial.setValue(v)
+        operation = "rotation_changed"
+    assert win._gesture_committer.has_pending
+    win._on_nir_channel_changed(0)                  # switch channel mid-gesture
+    assert win._active_nir_channel == 0
+    (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert entry.asset_sha256 == win.channel_sha[1]
+    assert entry.note == _channel_note(1) + "."
+    assert not win._gesture_committer.has_pending
+
+
+@pytest.mark.parametrize("gesture", ["levels_slider", "rotation_dial"])
+def test_gesture_entry_ignores_the_channel_active_at_flush_time(win, gesture):
+    # Stricter than the switch test above (which flushes before switching):
+    # change the active channel with no flush, then flush. The entry must
+    # still name the channel the gesture started on.
+    _activate(win, NIR, channel=1)
+    n = len(win.current_project.operation_log)
+    if gesture == "levels_slider":
+        win.levels_black_slider.setValue(1300)
+        operation = "levels_changed"
+    else:
+        win.prov_rotate_dial.setValue(20)
+        operation = "rotation_changed"
+    win._active_nir_channel = 0                     # no flush on purpose
+    win._gesture_committer.flush()
+    (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert entry.asset_sha256 == win.channel_sha[1]
+    assert entry.note == _channel_note(1) + "."

@@ -89,6 +89,12 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   same field names; for a slider or dial gesture, the channel the gesture started on. Earlier NIR
   display entries named the blot, not the channel; old entries verify as written. ECL entries
   are unchanged.
+- **NIR protein label, antibody name and inclusion entries name the channel too.** On NIR blots
+  the protein label text and font size, the antibody name and "include in figure" are set per
+  channel; their log entries now follow the same convention (the channel's asset, "NIR channel
+  <i> (Ch<i+1>)" in the note, same field names; for a font-size gesture, the channel it started
+  on). Earlier entries named the blot, not the channel; old entries verify as written. ECL
+  entries are unchanged.
 
 ---
 

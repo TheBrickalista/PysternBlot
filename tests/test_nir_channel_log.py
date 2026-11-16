@@ -296,3 +296,93 @@ def test_gesture_entry_ignores_the_channel_active_at_flush_time(win, gesture):
     (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
     assert entry.asset_sha256 == win.channel_sha[1]
     assert entry.note == _channel_note(1) + "."
+
+
+# --------------------------------------------------------------------------
+# 3c: per-channel non-display entries
+# --------------------------------------------------------------------------
+def _protein_label(w):
+    w.protein_label_combo.setCurrentText("RhoA-new")
+    w._on_protein_label_changed()
+
+
+def _antibody(w):
+    w.antibody_name_combo.setCurrentText("anti-RhoA 1:1000")
+    w._on_antibody_name_changed()
+
+
+_FONT_SIZE_TARGET = {}
+
+
+def _protein_font_size(w):
+    start = w.protein_font_size_spin.value()
+    for v in (start + 1, start + 2, start + 3):     # one gesture
+        w.protein_font_size_spin.setValue(v)
+    w._gesture_committer.flush()
+    _FONT_SIZE_TARGET["pt"] = float(start + 3)
+
+
+def _exclude(w):
+    w.include_in_final_cb.setChecked(False)
+
+
+NON_DISPLAY_CASES = [
+    # (id, action, operation, field, check on the edited channel / ECL blot)
+    ("protein_label", _protein_label, "protein_label_changed", "protein_label.text",
+     lambda t: t.protein_label.text == "RhoA-new"),
+    ("antibody_name", _antibody, "antibody_name_changed", "antibody_name",
+     lambda t: t.antibody_name == "anti-RhoA 1:1000"),
+    ("protein_font_size", _protein_font_size, "protein_font_size_changed",
+     "protein_label.font_size_pt",
+     lambda t: t.protein_label.font_size_pt == _FONT_SIZE_TARGET["pt"]),
+    ("included_in_final", _exclude, "included_in_final_changed", "included_in_final",
+     lambda t: t.included_in_final is False),
+]
+NON_DISPLAY_IDS = [c[0] for c in NON_DISPLAY_CASES]
+
+
+def _snapshot(ch):
+    return (ch.protein_label.model_dump(), ch.antibody_name, ch.included_in_final)
+
+
+@pytest.mark.parametrize("channel", [0, 1])
+@pytest.mark.parametrize("name,action,operation,field,check", NON_DISPLAY_CASES, ids=NON_DISPLAY_IDS)
+def test_nir_non_display_entry_names_the_channel(win, channel, name, action, operation, field, check):
+    _activate(win, NIR, channel=channel)
+    blot = _blot(win, NIR)
+    other = _snapshot(blot.channels[1 - channel])
+    n = len(win.current_project.operation_log)
+
+    action(win)
+
+    (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert entry.target_id == NIR and entry.field == field            # field unchanged
+    assert entry.asset_sha256 == win.channel_sha[channel]
+    assert entry.note == _channel_note(channel) + "."
+    assert check(blot.channels[channel])
+    assert _snapshot(blot.channels[1 - channel]) == other
+    assert verify_log_chain(win.current_project).status == "ok"
+
+
+@pytest.mark.parametrize("name,action,operation,field,check", NON_DISPLAY_CASES, ids=NON_DISPLAY_IDS)
+def test_ecl_non_display_entry_is_unchanged(win, name, action, operation, field, check):
+    _activate(win, ECL)
+    n = len(win.current_project.operation_log)
+    action(win)
+    (entry,) = [e for e in win.current_project.operation_log[n:] if e.operation == operation]
+    assert entry.field == field
+    assert entry.asset_sha256 == win.ecl_sha
+    assert entry.note is None
+    assert check(_blot(win, ECL))
+
+
+def test_protein_font_size_gesture_names_the_channel_it_started_on(win):
+    _activate(win, NIR, channel=1)
+    n = len(win.current_project.operation_log)
+    win.protein_font_size_spin.setValue(win.protein_font_size_spin.value() + 4)
+    win._active_nir_channel = 0                     # no flush on purpose
+    win._gesture_committer.flush()
+    (entry,) = [e for e in win.current_project.operation_log[n:]
+                if e.operation == "protein_font_size_changed"]
+    assert entry.asset_sha256 == win.channel_sha[1]
+    assert entry.note == _channel_note(1) + "."

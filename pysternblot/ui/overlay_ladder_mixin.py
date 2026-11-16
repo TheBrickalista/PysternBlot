@@ -239,11 +239,13 @@ class _OverlayLadderMixin:
 
         target.protein_label.text = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "protein_label_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="protein_label.text",
             old_value=old,
             new_value=new,
@@ -268,11 +270,13 @@ class _OverlayLadderMixin:
 
         target.antibody_name = new
 
+        _log_asset, _log_note = self._channel_log_target(blot)
         self.log_operation(
             "antibody_name_changed",
             target_type="blot",
             target_id=blot.id,
-            asset_sha256=blot.asset_sha256,
+            asset_sha256=_log_asset,
+            note=_log_note,
             field="antibody_name",
             old_value=old,
             new_value=new,
@@ -297,9 +301,13 @@ class _OverlayLadderMixin:
         target.protein_label.font_size_pt = new
 
         channel = self._active_nir_channel if blot.is_nir() and blot.channels else None
+        # asset/note name this tick's channel; the key carries the channel and
+        # a channel switch flushes first, so the entry names the channel the
+        # gesture started on.
+        _log_asset, _log_note = self._channel_log_target(blot)
         self._gesture_committer.update(
             ("protein_font_size_changed", "blot", blot.id, "protein_label.font_size_pt", channel),
-            old, new, asset_sha256=blot.asset_sha256,
+            old, new, asset_sha256=_log_asset, note=_log_note,
         )
         # The protein label is drawn only in the figure (build_panel_scene),
         # never in the Original Image view: no crop preview depends on it.

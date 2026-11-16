@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QEvent
 
+from .. import render as _render
 from ..models import OverlayLadder, LadderBandAssignment
 
 
@@ -310,8 +311,9 @@ class _OverlayLadderMixin:
                 pos = event.position().toPoint()
                 scene_pos = self.prov_view.mapToScene(pos)
 
-                # In render.py provenance image starts at x0=10, y0=10
-                image_y = float(scene_pos.y() - 10.0)
+                # Scene -> image pixels: the image is drawn at
+                # render.PROVENANCE_IMAGE_ORIGIN (read at call time).
+                image_y = float(scene_pos.y() - _render.PROVENANCE_IMAGE_ORIGIN[1])
 
                 self._assign_pending_overlay_ladder_band(image_y)
                 return True

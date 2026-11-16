@@ -30,6 +30,11 @@ from .image_utils import (
 )
 
 
+# Scene position of the image's top-left pixel in the Original Image view
+# (build_provenance_scene). Image pixel (x, y) is at scene (x0 + x, y0 + y);
+# code mapping scene clicks back to image pixels must use this constant.
+PROVENANCE_IMAGE_ORIGIN: tuple[float, float] = (10.0, 10.0)
+
 # LI-COR channel name -> excitation laser (nm), matching the Typhoon band keys.
 _LICOR_CHANNEL_EXCITATION_NM = {"700": 685, "800": 785}
 
@@ -919,7 +924,7 @@ def build_provenance_scene(
         return scene
 
     # Full blot image
-    x0, y0 = 10.0, 10.0
+    x0, y0 = PROVENANCE_IMAGE_ORIGIN
     img_item = scene.addPixmap(pm)
     img_item.setPos(x0, y0)
 

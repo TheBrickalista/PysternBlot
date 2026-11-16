@@ -35,6 +35,15 @@ from test_legend_layout_compat import (
     _zone_snapshot,
 )
 
+
+def _approx_pairs(pairs):
+    """Element-wise approx for a list of (x1, x2) tuples.
+
+    pytest >= 9.2 rejects nested structures in a single pytest.approx().
+    """
+    return [pytest.approx(p) for p in pairs]
+
+
 LANE_W = IMG_COL_W / 9.0
 PAD = 20.0
 
@@ -87,11 +96,11 @@ class TestComputeUpperLegendLayout:
     def test_parent_underlines_and_unchanged_lane_underlines(self):
         rows = _issue_rows()
         layout = compute_upper_legend_layout(rows, rows[-1], IMG_COL_X, IMG_COL_W)
-        assert layout.rows[1].parent_underlines == pytest.approx([
+        assert layout.rows[1].parent_underlines == _approx_pairs([
             (_lane_x(0) + PAD, _lane_x(4) - PAD),
             (_lane_x(4) + PAD, _lane_x(8) - PAD),
         ])
-        assert layout.rows[2].lane_underlines == pytest.approx(LANE_UNDERLINES)
+        assert layout.rows[2].lane_underlines == _approx_pairs(LANE_UNDERLINES)
         assert layout.rows[0].parent_underlines == []
         assert layout.rows[2].parent_underlines == []
 
@@ -100,7 +109,7 @@ class TestComputeUpperLegendLayout:
         layout = compute_upper_legend_layout(rows, rows[-1], IMG_COL_X, IMG_COL_W)
         assert layout.rows[0].centers[0] == pytest.approx(_lane_x(1.0))   # "Control" = lanes 0-1
         assert layout.rows[0].centers[1] == pytest.approx(_lane_x(6.0))
-        assert layout.rows[1].parent_underlines == pytest.approx([(_lane_x(4) + PAD, _lane_x(8) - PAD)])
+        assert layout.rows[1].parent_underlines == _approx_pairs([(_lane_x(4) + PAD, _lane_x(8) - PAD)])
 
     def test_non_contiguous_parent_is_reported_and_falls_back(self):
         rows = _issue_rows(middle_parents=(1, 2, 1, 0))
@@ -130,7 +139,7 @@ class TestComputeUpperLegendLayout:
         layout = compute_upper_legend_layout(rows, rows[-1], IMG_COL_X, IMG_COL_W)
         assert layout.rows[0].centers == pytest.approx([_lane_x(4.0)])                # lanes 0-7
         assert layout.rows[1].centers == pytest.approx([_lane_x(2.0), _lane_x(6.0)])
-        assert layout.rows[1].parent_underlines == pytest.approx([(_lane_x(0) + PAD, _lane_x(8) - PAD)])
+        assert layout.rows[1].parent_underlines == _approx_pairs([(_lane_x(0) + PAD, _lane_x(8) - PAD)])
         assert len(layout.rows[2].parent_underlines) == 2
 
     def test_mixed_mode_resolves_the_same_way(self):
@@ -168,9 +177,9 @@ class TestDrawnScenes:
         assert centres == pytest.approx({"Serum starved": round(_lane_x(2.0), 2), "Growing": round(_lane_x(6.0), 2)})
         parent = [(x1, x2) for x1, x2, rel, row in lines if (rel, row) == ("above", 1)]
         lane = [(x1, x2) for x1, x2, rel, row in lines if (rel, row) == ("above", 2)]
-        assert parent == pytest.approx([(round(_lane_x(0) + PAD, 2), round(_lane_x(4) - PAD, 2)),
+        assert parent == _approx_pairs([(round(_lane_x(0) + PAD, 2), round(_lane_x(4) - PAD, 2)),
                                         (round(_lane_x(4) + PAD, 2), round(_lane_x(8) - PAD, 2))])
-        assert lane == pytest.approx([(round(a, 2), round(b, 2)) for a, b in LANE_UNDERLINES])
+        assert lane == _approx_pairs([(round(a, 2), round(b, 2)) for a, b in LANE_UNDERLINES])
 
     def test_figure_tab_and_export_zone_identical(self, qapp, tmp_path):
         legend = _issue_legend()

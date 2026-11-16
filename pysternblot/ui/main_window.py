@@ -19,7 +19,7 @@ from importlib.resources import files
 from importlib.metadata import version as _pkg_version
 
 from ..storage import Workspace
-from ..render import build_panel_scene, build_provenance_scene
+from ..render import ProvenancePixmapCache, build_panel_scene, build_provenance_scene
 from ..physical_scale import scale_warnings
 from ..image_utils import get_bit_depth, load_image_as_uint16
 from ..integrity import SATURATION_SOLID_PIXEL_THRESHOLD
@@ -75,6 +75,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             project_getter=lambda: self.current_project,
             parent=self,
         )
+        # Original Image view pixmaps (screen only; exports never use it).
+        self._prov_pixmap_cache = ProvenancePixmapCache(maxsize=4)
+        self._prov_pixmap_cache_project = None
 
         self._update_banner = None
         self._update_pool = QThreadPool.globalInstance()
@@ -1861,6 +1864,11 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.scale_warning_label.setVisible(bool(warnings))
 
     def _build_provenance_scene_for_view(self):
+        # Screen-only pixmap cache, emptied whenever the project changes
+        # (any path that assigns current_project, including close/archive).
+        if self._prov_pixmap_cache_project is not self.current_project:
+            self._prov_pixmap_cache.clear()
+            self._prov_pixmap_cache_project = self.current_project
         return build_provenance_scene(
             self.current_project,
             self.workspace.root,
@@ -1871,6 +1879,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
             nir_channel_index=self._active_nir_channel,
             show_legend_zone=self._legend_zone_visible,
             on_legend_zone_commit=self._on_legend_zone_commit,
+            pixmap_cache=self._prov_pixmap_cache,
         )
 
     def _refresh_provenance_only(self):

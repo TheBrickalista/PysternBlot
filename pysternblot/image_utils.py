@@ -301,6 +301,26 @@ def apply_levels_uint16(
     return np.ascontiguousarray(out)
 
 
+def apply_levels_uint16_lut(
+    img: np.ndarray,
+    black: int,
+    white: int,
+    gamma: float,
+    invert: bool,
+) -> np.ndarray:
+    """
+    Same result as apply_levels_uint16, via a 65536-entry lookup table.
+
+    The table is built with apply_levels_uint16 itself (levels are pointwise),
+    so every value maps exactly as it would there. Faster on full images; used
+    by the Original Image view only, exports keep apply_levels_uint16.
+    """
+    if img.dtype != np.uint16:
+        raise TypeError(f"Expected uint16 image, got {img.dtype}")
+    lut = apply_levels_uint16(np.arange(65536, dtype=np.uint16), black, white, gamma, invert)
+    return np.ascontiguousarray(lut[img])
+
+
 def rotate_uint16(
     img: np.ndarray,
     rotation_deg: float,

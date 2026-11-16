@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import numpy as np
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,7 @@ from .physical_scale import blot_display_scale, native_crop_size, template_size_
 from .image_utils import (
     load_image_as_uint16,
     apply_levels_uint16,
+    apply_levels_uint16_lut,
     rotate_uint16,
     uint16_to_qpixmap,
 )
@@ -74,6 +76,37 @@ def _load_original_pixmap(workspace_root: Path, sha256: str) -> QPixmap:
 
 
 
+class ProvenancePixmapCache:
+    """Small LRU of Original Image view pixmaps (screen only).
+
+    Keyed on (sha256, rotation_deg, levels_black, levels_white, levels_gamma,
+    invert, flip_h, flip_v). Assets are content-addressed, so the sha covers
+    the file contents. Exports never pass a cache.
+    """
+
+    def __init__(self, maxsize: int = 4):
+        self.maxsize = int(maxsize)
+        self._items: "OrderedDict[tuple, QPixmap]" = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, key: tuple) -> Optional[QPixmap]:
+        pm = self._items.get(key)
+        if pm is not None:
+            self._items.move_to_end(key)
+        return pm
+
+    def put(self, key: tuple, pm: QPixmap) -> None:
+        self._items[key] = pm
+        self._items.move_to_end(key)
+        while len(self._items) > self.maxsize:
+            self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
 def _load_rotated_display_pixmap(
     workspace_root: Path,
     sha256: str,
@@ -84,10 +117,26 @@ def _load_rotated_display_pixmap(
     invert: bool = False,
     flip_horizontal: bool = False,
     flip_vertical: bool = False,
+    pixmap_cache: Optional[ProvenancePixmapCache] = None,
 ) -> QPixmap:
     """
     Load original image, apply levels → rotate → flip in 16-bit.
+
+    pixmap_cache (Original Image view only): reuse a pixmap built from the
+    same asset and display settings, and build new ones with the
+    lookup-table levels (identical values). Without it (every export), the
+    code path is unchanged.
     """
+    key = None
+    if pixmap_cache is not None:
+        key = (
+            sha256, float(rotation_deg), int(black), int(white), float(gamma),
+            bool(invert), bool(flip_horizontal), bool(flip_vertical),
+        )
+        cached = pixmap_cache.get(key)
+        if cached is not None:
+            return cached
+
     asset_dir = workspace_root / "assets" / sha256
     original_path = None
     for p in asset_dir.glob("original.*"):
@@ -99,15 +148,21 @@ def _load_rotated_display_pixmap(
 
     try:
         img = load_image_as_uint16(original_path)
-        img = apply_levels_uint16(img, black, white, gamma, invert)
+        if pixmap_cache is None:
+            img = apply_levels_uint16(img, black, white, gamma, invert)
+        else:
+            img = apply_levels_uint16_lut(img, black, white, gamma, invert)
         img = rotate_uint16(img, rotation_deg, expand=False)
         if flip_horizontal:
             img = np.fliplr(img)
         if flip_vertical:
             img = np.flipud(img)
-        return uint16_to_qpixmap(np.ascontiguousarray(img))
+        pm = uint16_to_qpixmap(np.ascontiguousarray(img))
     except Exception:
         return QPixmap()
+    if key is not None and not pm.isNull():
+        pixmap_cache.put(key, pm)
+    return pm
 
 def _load_preview_crop_pixmap(workspace_root: Path, sha256: str, blot_id: str) -> QPixmap:
     """
@@ -792,6 +847,7 @@ def build_provenance_scene(
     nir_channel_index: int = 0,
     show_legend_zone: bool = False,
     on_legend_zone_commit=None,
+    pixmap_cache: Optional[ProvenancePixmapCache] = None,
 ) -> QGraphicsScene:
     """
     Provenance view = full original blot + optional membrane overlay + interactive crop rectangle.
@@ -805,6 +861,9 @@ def build_provenance_scene(
     by "Export Zone + Legend". A default LegendZone centered on the image is created
     if blot.legend_zone is None. on_legend_zone_commit(blot) fires after a move or
     resize commit, mirroring on_crop_commit but without touching crop state.
+
+    pixmap_cache: only the on-screen view passes one (see
+    _load_rotated_display_pixmap); exports call without it.
     """
     scene = QGraphicsScene()
     s = project.panel.style
@@ -847,6 +906,7 @@ def build_provenance_scene(
         invert=invert,
         flip_horizontal=flip_h,
         flip_vertical=flip_v,
+        pixmap_cache=pixmap_cache,
     )
     if pm.isNull():
         scene.addText(
@@ -875,6 +935,7 @@ def build_provenance_scene(
             white=white,
             gamma=gamma,
             invert=invert,
+            pixmap_cache=pixmap_cache,
         )
         if not ov.isNull():
             ov_item = scene.addPixmap(ov)

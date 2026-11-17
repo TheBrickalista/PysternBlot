@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-11-17
+
 ### Changed
 - **The operation log now records one entry per gesture for continuous controls** (#223). This
   changes what the operation log contains. Dragging a slider or the rotation dial, or stepping a
@@ -64,15 +68,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Figure exports (PNG/PDF/SVG) rebuild the crop previews before rendering**, so an export can
   no longer use a stale cached crop, whatever the on-screen view last refreshed.
-- **The membrane overlay is now flipped with its blot.** In the Original Image view and the
-  annotated context TIFF export, the overlay was drawn with the blot's rotation and levels but
-  not its horizontal or vertical flip, so on a flipped blot it was mirrored relative to the image.
-  This has been the case since flips were added in 1.0.0. Overlay ladder bands are positioned by
-  clicking on that view, so **ladder bands picked on a flipped blot's membrane overlay before this
-  fix may be misplaced**, mostly with a vertical flip (the band is recorded at the mirrored
-  height), and the figure draws its overlay ladder markers from those positions. Re-check those
-  projects and re-assign the affected bands. Crop previews, blot images in exported figures and
-  the operation log were not affected.
+- **The membrane overlay is now flipped with its blot** (#227). In the Original Image view and the
+  annotated context TIFF export, the overlay was drawn with the blot's rotation and levels but not
+  its horizontal or vertical flip, so on a flipped blot it was mirrored relative to the image. This
+  has been the case since flips were added in 1.0.0. Overlay ladder bands are positioned by clicking
+  on that view, so **ladder bands picked on a flipped blot's membrane overlay before this fix may be
+  misplaced**, mostly with a vertical flip (the band is recorded at the mirrored height), and the
+  figure draws its overlay ladder markers from those positions. Re-check those projects and
+  re-assign the affected bands. Crop previews, blot images in exported figures and the operation log
+  were not affected.
 - **Changing the kDa label size now updates the overlay ladder labels in the Original Image view
   at once**, not only in the figure.
 - **Zoom and pan are kept when the views redraw.** Changing opacity, levels, label sizes, the grid

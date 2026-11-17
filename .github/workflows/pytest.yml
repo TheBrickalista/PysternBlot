@@ -131,6 +131,33 @@ jobs:
       - name: Run pyflakes
         run: uv run pyflakes pysternblot tests scripts launcher.py
 
+  # Builds the docs the way Read the Docs does: the same Python version as
+  # .readthedocs.yaml (build.tools.python; tests/test_docs_build_config.py
+  # keeps the two equal) and pip-installed docs/requirements.txt. A docs
+  # dependency bump that needs a newer Python then fails here, in the PR,
+  # instead of on Read the Docs. -W: warnings are errors.
+  docs:
+    name: Docs (Sphinx, as on Read the Docs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install docs requirements
+        run: python -m pip install -r docs/requirements.txt
+
+      - name: Build docs
+        run: python -m sphinx -W -b html docs "$RUNNER_TEMP/docs_html"
+
   audit:
     runs-on: ubuntu-24.04
 

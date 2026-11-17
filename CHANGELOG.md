@@ -60,6 +60,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   `astral-sh/setup-uv` 10.3.3 (was 10.3.0, via 10.3.2), `github/codeql-action` init/analyze 4.39.1
   (was 4.39.0).
 - **Docs build requires Sphinx ≥ 9.2.0** (was ≥ 9.1.1) (#222).
+- **Docs now build with Python 3.13** (was 3.12) on Read the Docs (`.readthedocs.yaml`): Sphinx
+  9.2.0 requires Python ≥ 3.13, so the 3.12 build failed at install. A new docs job in the PR
+  workflow builds the docs the same way (same Python version, enforced by a test; warnings are
+  errors), so a docs dependency that needs a newer Python fails in the PR.
 - **Dev dependencies: pytest 9.2.0** (was 9.1.1) **and pyflakes 4.1.0** (was 4.0.3) (#225).
 - **Tests pass under pytest 9.2.** pytest 9.2 rejects nested data structures in a single
   `pytest.approx()`; the legend layout tests now compare their lists of (x1, x2) underline pairs

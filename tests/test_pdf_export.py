@@ -19,7 +19,6 @@ hint) and checks that these assertions do catch it.
 
 from __future__ import annotations
 
-import math
 import os
 import re
 import sys

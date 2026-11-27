@@ -6,27 +6,54 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-from typing import List, Optional, Dict, Literal, Any, Union
-from pydantic import BaseModel, Field
+from typing import ClassVar, List, Optional, Dict, Literal, Any, Union
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-class Group(BaseModel):
+# On-disk format of project.json (ProjectMeta.format_version). A project
+# without the field predates versioning and is format 0. Bump this, and add
+# a step to migrations.MIGRATIONS, whenever a change would be misread by an
+# older PysternBlot: storage.load_project refuses formats newer than this.
+PROJECT_FORMAT_VERSION = 1
+
+
+class _Model(BaseModel):
+    """Base of every persisted model. Fields this version does not know
+    (written by a newer PysternBlot) are kept on load and written back on
+    save, never silently dropped; they are also part of an operation-log
+    entry's canonical payload, so a newer app's hashes still verify.
+
+    Fields PysternBlot itself has retired are not unknown: list them in a
+    subclass's _retired_fields and they are dropped on load, as before."""
+    model_config = ConfigDict(extra="allow")
+    _retired_fields: ClassVar[frozenset[str]] = frozenset()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_fields(cls, data: Any) -> Any:
+        if cls._retired_fields and isinstance(data, dict):
+            data = {k: v for k, v in data.items() if k not in cls._retired_fields}
+        return data
+
+
+
+class Group(_Model):
     label: str
     n_lanes: int = Field(ge=1)
     underline: bool = True
 
-class ConditionRow(BaseModel):
+class ConditionRow(_Model):
     values: List[str]
     unit_right: Optional[str] = None
 
-class Span(BaseModel):
+class Span(_Model):
     text: str
     start_group: int = Field(ge=0)
     end_group: int = Field(ge=0)
 
-class SpanRow(BaseModel):
+class SpanRow(_Model):
     spans: List[Span]
 
-class HeaderBlock(BaseModel):
+class HeaderBlock(_Model):
     """Legacy legend grouping structure. Retained for backward compatibility with
     existing project.json files (panel.header_block is a required, serialized field),
     but NO LONGER used for legend rendering — current legends are driven by
@@ -40,7 +67,7 @@ class HeaderBlock(BaseModel):
     def total_lanes(self) -> int:
         return sum(g.n_lanes for g in self.groups)
 
-class Crop(BaseModel):
+class Crop(_Model):
     x: float
     y: float
     w: float  # kept for backward compat; render/storage use panel.crop_template instead
@@ -48,14 +75,16 @@ class Crop(BaseModel):
     mode: Literal["absolute", "ladder_relative"] = "absolute"
     ladder_anchor: Optional[dict] = None
 
-class CropTemplate(BaseModel):
+class CropTemplate(_Model):
     """Shared crop dimensions for all blots in the panel."""
     w: float = 300.0
     h: float = 200.0
 
-class LegendZone(BaseModel):
+class LegendZone(_Model):
     """Optional per-blot export zone (absolute image pixel coords) used to export
     a region of the original image with the panel legend drawn above it."""
+    # "enabled" was stored by pre-fix builds and is ignored (see test_legend_zone).
+    _retired_fields: ClassVar[frozenset[str]] = frozenset({"enabled"})
     x: float = 0.0
     y: float = 0.0
     w: float = 300.0
@@ -63,16 +92,16 @@ class LegendZone(BaseModel):
     show_markers: bool = True
     marker_side: Literal["left", "right"] = "left"
 
-class CalibrationPoint(BaseModel):
+class CalibrationPoint(_Model):
     y_px: float
     kda: float
 
-class LadderFit(BaseModel):
+class LadderFit(_Model):
     a: float
     b: float
     model: Literal["y=a*log10(kDa)+b"] = "y=a*log10(kDa)+b"
 
-class MarkerBand(BaseModel):
+class MarkerBand(_Model):
     kda: float = Field(gt=0)
     label: Optional[str] = None
     visible: bool = True
@@ -80,29 +109,29 @@ class MarkerBand(BaseModel):
     channels: List[int] = Field(default_factory=list)
 
 
-class MarkerSet(BaseModel):
+class MarkerSet(_Model):
     id: str
     name: str
     unit: str = "kDa"
     bands: List[MarkerBand] = Field(default_factory=list)
 
 
-class MarkerSetLibrary(BaseModel):
+class MarkerSetLibrary(_Model):
     items: List[MarkerSet] = Field(default_factory=list)
 
-class Ladder(BaseModel):
+class Ladder(_Model):
     lane_index: int = Field(ge=0)
     marker_set_id: str
     calibration_points: List[CalibrationPoint] = Field(min_length=2)
     fit: Optional[LadderFit] = None
     show_ticks: bool = True
 
-class ProteinLabel(BaseModel):
+class ProteinLabel(_Model):
     text: str
     align: Literal["center"] = "center"
     font_size_pt: float | None = None
 
-class DisplaySettings(BaseModel):
+class DisplaySettings(_Model):
     invert: bool = False
     gamma: float = 1.0
     auto_contrast: bool = True
@@ -116,7 +145,7 @@ class DisplaySettings(BaseModel):
     levels_white: int = 65535  # 0..65535
     levels_gamma: float = 1.0
 
-class LegendRow(BaseModel):
+class LegendRow(_Model):
     left: str = ""
     cells: List[str] = Field(default_factory=list)
     right: str = ""
@@ -129,18 +158,18 @@ class LegendRow(BaseModel):
     # above. Lets a top-row cell span several middle-row cells (#202).
     parent_groups: List[int] = Field(default_factory=list)
 
-class LegendSettings(BaseModel):
+class LegendSettings(_Model):
     mode: Literal["protein", "dna"] = "protein"
     upper_rows: List[LegendRow] = Field(default_factory=list)
     lower_rows: List[LegendRow] = Field(default_factory=list)
 
-class LadderBandAssignment(BaseModel):
+class LadderBandAssignment(_Model):
     y_px: float
     kda: float
     show_in_final: bool = True
 
 
-class OverlayLadder(BaseModel):
+class OverlayLadder(_Model):
     marker_set_id: str
     bands: List[LadderBandAssignment] = Field(default_factory=list)
     side: Literal["left", "right"] = "left"
@@ -148,7 +177,7 @@ class OverlayLadder(BaseModel):
     show_only_highlighted: bool = False
 
 
-class BlotChannel(BaseModel):
+class BlotChannel(_Model):
     asset_sha256: str
     channel_index: int                                          # 0-based, from Scan number tag
     wavelength_nm: Optional[int] = None                        # e.g. 685, 785
@@ -167,7 +196,7 @@ class BlotChannel(BaseModel):
     included_in_final: bool = True
 
 
-class Blot(BaseModel):
+class Blot(_Model):
     id: str
     asset_sha256: str
     overlay_asset_sha256: Optional[str] = None
@@ -252,7 +281,7 @@ class Blot(BaseModel):
             raise IndexError(f"No channel {channel_index} in NIR blot {self.id}")
         return ch.asset_sha256, ch.display
 
-class Style(BaseModel):
+class Style(_Model):
     font_family: str = "Arial"
     font_size_pt: float = 9
     top_header_height_px: int = 70
@@ -263,16 +292,16 @@ class Style(BaseModel):
     border_width_px: int = 1
     kda_label_font_size_pt: float = 24.0
 
-class Layout(BaseModel):
+class Layout(_Model):
     stack_mode: Literal["vertical_stack"] = "vertical_stack"
     order: List[str]
 
-class LaneLayout(BaseModel):
+class LaneLayout(_Model):
     mode: Literal["derived_from_groups", "manual_n_lanes"] = "derived_from_groups"
     n_lanes_manual: Optional[int] = None
     header_block: HeaderBlock
 
-class Panel(BaseModel):
+class Panel(_Model):
     style: Style = Style()
     lane_layout: LaneLayout
     blots: List[Blot]
@@ -285,7 +314,7 @@ class Panel(BaseModel):
     crop_template: CropTemplate = Field(default_factory=CropTemplate)
     reference_pixel_size_um: Optional[float] = None
 
-class SaturationStats(BaseModel):
+class SaturationStats(_Model):
     # Union (not float): uint sources must keep serializing as an int, exactly
     # as before, because saturation.model_dump() feeds hashed log entries; a
     # float source records its real (non-integer) maximum here.
@@ -306,7 +335,7 @@ class SaturationStats(BaseModel):
     # were genuinely assessable uint sources — round-trip unchanged.
     assessable: bool = True
 
-class AssetEntry(BaseModel):
+class AssetEntry(_Model):
     sha256: str
     stored_original_path: str
     original_source_path: Optional[str] = None
@@ -320,7 +349,7 @@ class AssetEntry(BaseModel):
     #  nonfinite_count, negative_clipped_count}
     float_display_scale: Optional[dict] = None
 
-class ProjectMeta(BaseModel):
+class ProjectMeta(_Model):
     id: str
     name: str
     created_utc: str
@@ -328,8 +357,9 @@ class ProjectMeta(BaseModel):
     app_version: str
     license: Literal["GPL-3.0-only", "GPL-3.0-or-later"] = "GPL-3.0-only"
     is_archived: bool = False
+    format_version: int = PROJECT_FORMAT_VERSION
 
-class OperationLogEntry(BaseModel):
+class OperationLogEntry(_Model):
     timestamp_utc: str
     operation: str
 
@@ -346,7 +376,7 @@ class OperationLogEntry(BaseModel):
     prev_hash: Optional[str] = None
     entry_hash: Optional[str] = None
 
-class Project(BaseModel):
+class Project(_Model):
     project: ProjectMeta
     assets: Dict[str, AssetEntry] = {}
     marker_sets: List[MarkerSet] = Field(default_factory=list)

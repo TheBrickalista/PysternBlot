@@ -7,13 +7,14 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QGraphicsScene
 from PySide6.QtGui import QPainter, QImage, QImageWriter, QPdfWriter, QPageSize, QFont, QPen
-from PySide6.QtCore import Qt, QRectF, QRect, QSize
+from PySide6.QtCore import Qt, QMarginsF, QRectF, QRect, QSize, QSizeF
 from PySide6.QtSvg import QSvgGenerator
 
 from pathlib import Path
@@ -37,6 +38,63 @@ from ..integrity import (
 from ..models import CropTemplate
 from ..physical_scale import native_crop_size
 from ..storage import sha256_file
+
+
+# Final-figure PDF and SVG share one size: the scene rect, 1 scene unit = 1 pt
+# (QSvgGenerator's 72 dpi), rounded up to whole points because Qt writes the
+# PDF /MediaBox in whole points. The scene is drawn 1:1 at the origin, so any
+# slack (< 1 pt) is white at the right / bottom; nothing is stretched.
+_PDF_RESOLUTION = 300   # device units of the PDF painter; vectors and images do not depend on it
+
+
+def _figure_size_pt(rect: QRectF) -> tuple[int, int]:
+    return max(1, math.ceil(rect.width())), max(1, math.ceil(rect.height()))
+
+
+# SHARED-CORE candidate (from Pycrograph: pycrograph/export.py _pdf) — adapted:
+# single page sized in points from the scene rect, no XMP / info page.
+def _write_scene_pdf(scene, rect: QRectF, path: str) -> bool:
+    """Write the scene's rect to a one-page PDF of exactly that size, with
+    zero margins. LosslessImageRendering is what keeps Qt's PDF engine from
+    JPEG-encoding images (QPdfEnginePrivate::addImage uses DCT unless it is
+    set): every image is stored Flate-compressed, 8-bit RGB, at its own pixel
+    size. Text stays live (embedded TrueType). False if the file cannot be
+    opened for writing."""
+    w_pt, h_pt = _figure_size_pt(rect)
+    writer = QPdfWriter(path)
+    writer.setPageSize(QPageSize(QSizeF(w_pt, h_pt), QPageSize.Point, "", QPageSize.ExactMatch))
+    writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+    writer.setResolution(_PDF_RESOLUTION)
+    painter = QPainter(writer)
+    if not painter.isActive():
+        return False
+    painter.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing
+                           | QPainter.LosslessImageRendering)
+    painter.scale(_PDF_RESOLUTION / 72.0, _PDF_RESOLUTION / 72.0)   # 1 scene unit = 1 pt
+    scene.render(painter, QRectF(0, 0, rect.width(), rect.height()), rect)
+    painter.end()  # the file is complete on disk once end() returns
+    return True
+
+
+def _write_scene_svg(scene, rect: QRectF, path: str) -> bool:
+    """Write the scene's rect to an SVG of the same physical size as the PDF
+    (width/height in mm = points x 25.4 / 72, viewBox in points)."""
+    w_pt, h_pt = _figure_size_pt(rect)
+    generator = QSvgGenerator()
+    generator.setFileName(path)
+    generator.setSize(QSize(w_pt, h_pt))
+    generator.setViewBox(QRectF(0, 0, w_pt, h_pt))
+    generator.setResolution(72)
+    generator.setTitle("Pystern Blot Final Result")
+    generator.setDescription("Exported from Pystern Blot")
+    painter = QPainter(generator)
+    if not painter.isActive():
+        return False
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.TextAntialiasing, True)
+    scene.render(painter, QRectF(0, 0, rect.width(), rect.height()), rect)
+    painter.end()  # the file is complete on disk once end() returns
+    return True
 
 
 def _nir_channel_path(base_path: str, channel_index: int, wavelength_nm: int | None) -> str:
@@ -209,6 +267,8 @@ class _ExportMixin:
         return sha
 
     def export_final_png(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -272,6 +332,8 @@ class _ExportMixin:
         QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_pdf(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -292,36 +354,9 @@ class _ExportMixin:
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
 
-        margin = 20
-
-        writer = QPdfWriter(path)
-        writer.setPageSize(QPageSize(QPageSize.A4))
-        writer.setResolution(300)
-
-        painter = QPainter(writer)
-        if not painter.isActive():
+        if not _write_scene_pdf(scene, rect, path):
             QMessageBox.critical(self, "Export error", f"Could not write PDF:\n{path}")
             return
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
-
-        page_rect = writer.pageLayout().paintRectPixels(writer.resolution())
-
-        scale_x = page_rect.width() / (rect.width() + 2 * margin)
-        scale_y = page_rect.height() / (rect.height() + 2 * margin)
-        scale = min(scale_x, scale_y)
-
-        painter.scale(scale, scale)
-
-        target = QRectF(
-            margin,
-            margin,
-            rect.width(),
-            rect.height()
-        )
-
-        scene.render(painter, target, rect)
-        painter.end()  # the file is complete on disk once end() returns
 
         try:
             sha = self._log_export(
@@ -336,6 +371,8 @@ class _ExportMixin:
         QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_svg(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -356,43 +393,9 @@ class _ExportMixin:
         if not path.lower().endswith(".svg"):
             path += ".svg"
 
-        margin = 20
-
-        generator = QSvgGenerator()
-        generator.setFileName(path)
-        generator.setSize(
-            QSize(
-                int(rect.width() + 2 * margin),
-                int(rect.height() + 2 * margin)
-            )
-        )
-        generator.setViewBox(
-            QRectF(
-                0,
-                0,
-                rect.width() + 2 * margin,
-                rect.height() + 2 * margin
-            )
-        )
-        generator.setTitle("Pystern Blot Final Result")
-        generator.setDescription("Exported from Pystern Blot")
-
-        painter = QPainter(generator)
-        if not painter.isActive():
+        if not _write_scene_svg(scene, rect, path):
             QMessageBox.critical(self, "Export error", f"Could not write SVG:\n{path}")
             return
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setRenderHint(QPainter.TextAntialiasing, True)
-
-        target = QRectF(
-            margin,
-            margin,
-            rect.width(),
-            rect.height()
-        )
-
-        scene.render(painter, target, rect)
-        painter.end()  # the file is complete on disk once end() returns
 
         try:
             sha = self._log_export(
@@ -459,6 +462,8 @@ class _ExportMixin:
             raise RuntimeError(f"Could not save TIFF:\n{path}")
 
     def export_current_original_tiff(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -507,6 +512,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_original_tiffs(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -551,6 +558,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_current_source_asset(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -625,6 +634,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_source_assets(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -791,6 +802,8 @@ class _ExportMixin:
         return drawn_count
 
     def export_legend_zone_png(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -940,6 +953,8 @@ class _ExportMixin:
         return path if path.exists() else None
 
     def export_integrity_report(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -996,6 +1011,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Integrity report error", str(e))
 
     def export_detailed_integrity_report(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")

@@ -23,6 +23,50 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   the project behind a panel). Without it the app starts as before.
 - **`PYSTERNBLOT_WORKSPACE`** environment variable: use another workspace
   folder instead of `~/.pysternblot`.
+- **Project format version.** `project.json` now records
+  `project.format_version` (currently 1; a project without it is format 0 and
+  opens as before, stamped with 1 on its next save, with no log entry). A
+  project saved by a newer PysternBlot in a format this version doesn't know
+  is refused with a message asking you to update. It is never partly loaded or
+  saved over, it is listed in the library as "needs a newer PysternBlot", and
+  archive import skips it.
+- **Per-project edit lock and read-only mode.** Opening a project for editing
+  creates `projects/<id>/.lock` (host, process, app version, time). Closing it
+  or quitting removes it. If another PysternBlot is editing the project, you
+  choose **Open read-only** (default), **Open anyway** or **Cancel**; the
+  dialog shows when the other window started editing in local time ("today at
+  14:15"), while the `.lock` file keeps UTC. A lock
+  left by a crashed process on the same computer is taken over automatically.
+  In read-only mode nothing is saved or logged: a banner and the window title
+  say so, the first blocked change shows a one-time notice, and imports and
+  exports are disabled. A window whose lock was taken over switches to
+  read-only before its next save instead of overwriting. Reading never needs
+  the lock: the library, the Pyblication plugin and `.pbarchive` export ignore
+  it, and it is never archived. See "Several PysternBlot windows or
+  installations" in the Library guide.
+
+### Changed
+- **Unknown fields are kept.** Fields in `project.json` that this version
+  doesn't know (added by a newer PysternBlot) are now kept on load and written
+  back on save instead of being dropped. They are part of an operation-log
+  entry's hash, so such entries still verify. A field PysternBlot itself
+  retired (`legend_zone.enabled`) is still dropped.
+- **Atomic project saves.** `project.json` is written to a temporary file in
+  the project folder, flushed to disk and then swapped in. A crash or error
+  mid-save leaves the previous file intact, and readers (such as the
+  Pyblication plugin) never see a half-written file.
+- **SVG export: its size is now the figure itself** (no 20 pt margin), the
+  same physical size as the PDF. Width and height (in mm) and the `viewBox`
+  now agree; before, the size was truncated to whole units while the
+  `viewBox` was not.
+
+### Fixed
+- **PDF export: page sized to the figure; images embedded losslessly at native
+  resolution.** The page was A4, with the figure scaled to fit inside a margin,
+  and blots were JPEG-encoded. The page is now the figure's own bounds (whole
+  points, zero margins). Every blot and NIR channel is stored Flate-compressed,
+  8-bit RGB, at the crop's native pixel size, never JPEG. Text stays live with
+  embedded TrueType fonts. This meets Pyblication's panel contract.
 
 ---
 

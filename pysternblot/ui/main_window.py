@@ -13,11 +13,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QPixmap, QIntValidator, QDoubleValidator, QDesktopServices, QPainter
 from PySide6.QtCore import Qt, QThreadPool, QUrl
 
+import atexit
+import json
 import re
 from pathlib import Path
 from importlib.resources import files
 from importlib.metadata import version as _pkg_version
 
+from ..migrations import ProjectFormatTooNewError
 from ..storage import Workspace
 from ..render import ProvenancePixmapCache, build_panel_scene, build_provenance_scene, default_legend_zone
 from ..physical_scale import scale_warnings
@@ -91,7 +94,25 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         self.resize(1100, 700)
 
         self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        # Read-only banner above the tabs (project_io_mixin._update_read_only_indicator).
+        central = QWidget()
+        central_l = QVBoxLayout(central)
+        central_l.setContentsMargins(0, 0, 0, 0)
+        central_l.setSpacing(0)
+        self.read_only_banner = QLabel()
+        self.read_only_banner.setWordWrap(True)
+        self.read_only_banner.setStyleSheet(
+            "QLabel { background: #fff3cd; color: #664d03; "
+            "border-bottom: 1px solid #f0c36d; padding: 6px 12px; }"
+        )
+        self.read_only_banner.setVisible(False)
+        central_l.addWidget(self.read_only_banner)
+        central_l.addWidget(self.tabs)
+        self.setCentralWidget(central)
+        self._read_only_holder = None
+        self._read_only_notice_shown = False
+        # Edit locks are released on close; atexit covers other exits.
+        atexit.register(self.workspace.release_all_locks)
 
         # Home tab
         home = self._build_home_tab()
@@ -2865,6 +2886,7 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
     def closeEvent(self, event):
         # Quitting right after a change: commit the pending gesture first.
         self._flush_gesture()
+        self._end_editing()
         super().closeEvent(event)
 
     def refresh_library(self):
@@ -2898,6 +2920,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
                     "path": str(project_json),
                 })
 
+            except ProjectFormatTooNewError as e:
+                # Listed, not hidden: opening it explains that an update is needed.
+                rows.append(self._newer_format_library_row(project_json, e))
             except Exception as e:
                 print(f"[library] failed to read {project_json}: {e}")
 
@@ -2916,6 +2941,24 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
 
         self.library_table.resizeColumnsToContents()
         self.library_table.setColumnWidth(5, 360)  # path column
+
+    @staticmethod
+    def _newer_format_library_row(project_json: Path, error: ProjectFormatTooNewError) -> dict:
+        try:
+            data = json.loads(project_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        meta = data.get("project") if isinstance(data, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+        name = str(meta.get("name") or project_json.parent.name)
+        return {
+            "name": f"{name} (needs a newer PysternBlot)",
+            "project_id": str(meta.get("id") or project_json.parent.name),
+            "created": str(meta.get("created_utc") or ""),
+            "modified": str(meta.get("modified_utc") or ""),
+            "n_blots": "",
+            "path": str(project_json),
+        }
 
     def _open_project_from_library(self, row: int, _column: int):
         item = self.library_table.item(row, 5)  # path column
@@ -2945,7 +2988,9 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         double-click in the library does."""
         self._flush_gesture()
         try:
-            self.current_project = self.workspace.load_project(path)
+            project = self.workspace.load_project(path)
+            if not self._begin_editing(project):
+                return
             self._handle_duplicate_nir_channels(self.current_project)
             self._sync_controls_from_project()
             self.legend_tab.bind(

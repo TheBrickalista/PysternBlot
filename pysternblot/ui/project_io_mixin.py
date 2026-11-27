@@ -32,8 +32,10 @@ from ..image_utils import (
 from ..jsonsafe import finite_or_none
 from ..logchain import append_log_entry
 from ..physical_scale import native_crop_size, reconcile_reference_pixel_size
+from ..migrations import ProjectFormatTooNewError
 from ..storage import (
     DuplicateNirChannelError,
+    ProjectReadOnlyError,
     check_nir_channel_indices,
     parse_iq800_metadata,
     parse_licor_metadata,
@@ -152,9 +154,155 @@ class _ProjectIOMixin:
     def _save_project(self):
         """Every UI-initiated save goes through here: the pending gesture is
         committed first, so project.json never holds a value its operation
-        log does not record. Returns the saved path."""
+        log does not record. Returns the saved path.
+
+        In read-only mode, or once another window has taken over this
+        project's edit lock, nothing is written; the project.json path is
+        still returned."""
         self._flush_gesture()
-        return self.workspace.save_project(self.current_project)
+        project = self.current_project
+        if project is not None and not self._may_write(project):
+            return self.workspace.projects_dir / project.project.id / "project.json"
+        return self._guarded_save(project)
+
+    # ------------------------------------------------------------------
+    # Edit lock and read-only mode (project_lock.py, docs/guide/library.md)
+    # ------------------------------------------------------------------
+
+    def _is_read_only(self, project=None) -> bool:
+        project = self.current_project if project is None else project
+        workspace = getattr(self, "workspace", None)
+        return project is not None and project.project.id in getattr(
+            workspace, "read_only_ids", ())
+
+    def _may_write(self, project) -> bool:
+        """False (with the matching notice) if a save or log entry for
+        project must be skipped: it is open read-only, or our edit lock was
+        taken over by another window, which switches this one to read-only."""
+        if project is None:
+            return False
+        if self._is_read_only(project):
+            self._notify_change_not_saved()
+            return False
+        pid = project.project.id
+        held = getattr(self.workspace, "held_locks", {})
+        if pid in held and not self.workspace.still_holds_lock(pid):
+            self.workspace.held_locks.pop(pid, None)
+            self._set_read_only(project, True)
+            self._read_only_notice_shown = True      # this message says it
+            QMessageBox.warning(
+                self, "Project opened elsewhere",
+                "Another PysternBlot took over editing this project; "
+                "your last change was not saved.\n\n"
+                "This window is now read-only. Reopen the project to edit it again.",
+            )
+            return False
+        return True
+
+    def _guarded_save(self, project):
+        """workspace.save_project, with a refusal shown instead of raised."""
+        try:
+            return self.workspace.save_project(project)
+        except (ProjectReadOnlyError, ProjectFormatTooNewError) as e:
+            QMessageBox.warning(self, "Project not saved", str(e))
+            return self.workspace.projects_dir / project.project.id / "project.json"
+
+    def _notify_change_not_saved(self) -> None:
+        """Once per read-only opening: say that changes are not saved."""
+        if getattr(self, "_read_only_notice_shown", False):
+            return
+        self._read_only_notice_shown = True
+        text = "This project is open read-only: changes are not saved."
+        self.statusBar().showMessage(text, 10000)
+        QMessageBox.information(self, "Read-only", text)
+
+    def _refuse_if_read_only(self, action: str = "change this project") -> bool:
+        """For actions that would write (imports, exports): True, after
+        saying so, if the current project is open read-only."""
+        if not self._is_read_only():
+            return False
+        QMessageBox.information(
+            self, "Read-only",
+            f"This project is open read-only, so you cannot {action}. "
+            "Exports and imports are recorded in the project's log.",
+        )
+        return True
+
+    def _set_read_only(self, project, read_only: bool) -> None:
+        pid = project.project.id
+        if read_only:
+            self.workspace.read_only_ids.add(pid)
+        else:
+            self.workspace.read_only_ids.discard(pid)
+        self._read_only_notice_shown = False
+        self._update_read_only_indicator()
+
+    def _update_read_only_indicator(self) -> None:
+        read_only = self._is_read_only()
+        banner = getattr(self, "read_only_banner", None)
+        if banner is not None:
+            if read_only:
+                holder = getattr(self, "_read_only_holder", None)
+                who = f" ({holder.describe()})" if holder is not None else ""
+                banner.setText(
+                    "Read-only: this project is open in another PysternBlot"
+                    f"{who}. Changes are not saved."
+                )
+            banner.setVisible(read_only)
+        self.setWindowTitle("Pystern Blot — read-only" if read_only else "Pystern Blot")
+
+    def _ask_lock_choice(self, holder) -> str:
+        """"read_only" (default), "anyway" or "cancel"."""
+        who = holder.describe() if holder is not None else "an unknown PysternBlot"
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Project already open")
+        msg.setText(
+            f"This project is being edited in another PysternBlot:\n{who}\n\n"
+            "Opening it for editing in both could lose changes."
+        )
+        read_only = msg.addButton("Open read-only", QMessageBox.AcceptRole)
+        anyway = msg.addButton("Open anyway", QMessageBox.DestructiveRole)
+        msg.addButton(QMessageBox.Cancel)
+        msg.setDefaultButton(read_only)
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked is read_only:
+            return "read_only"
+        if clicked is anyway:
+            return "anyway"
+        return "cancel"
+
+    def _begin_editing(self, project) -> bool:
+        """Take project's edit lock before it becomes the current project.
+        If another window holds it, ask: read-only / open anyway / cancel.
+        False on cancel (the current project then stays open). On success
+        the previous project's lock is released."""
+        pid = project.project.id
+        previous = self.current_project
+        self.workspace.project_dir(pid).mkdir(parents=True, exist_ok=True)
+        self._read_only_holder = None
+        result = self.workspace.acquire_lock(pid)
+        read_only = False
+        if not result.acquired:
+            choice = self._ask_lock_choice(result.holder)
+            if choice == "cancel":
+                return False
+            if choice == "anyway":
+                self.workspace.force_lock(pid)
+            else:
+                read_only = True
+                self._read_only_holder = result.holder
+        if previous is not None and previous.project.id != pid:
+            self.workspace.release_lock(previous.project.id)
+            self.workspace.read_only_ids.discard(previous.project.id)
+        self.current_project = project
+        self._set_read_only(project, read_only)
+        return True
+
+    def _end_editing(self) -> None:
+        """Quitting: release every edit lock this window holds."""
+        self.workspace.release_all_locks()
 
     def _commit_gesture(self, project, key, old_value, new_value, log_kwargs) -> None:
         """GestureCommitter callback: one log entry (start -> final value) and
@@ -165,6 +313,8 @@ class _ProjectIOMixin:
         operation, target_type, target_id, field, _channel = key
         if old_value == new_value and old_value is not None:
             return  # gesture returned to its start: nothing to log or save
+        if not self._may_write(project):
+            return
         current = self.current_project
         self.current_project = project
         try:
@@ -177,7 +327,7 @@ class _ProjectIOMixin:
                 new_value=new_value,
                 **log_kwargs,
             )
-            self.workspace.save_project(project)  # raw save: the commit itself
+            self._guarded_save(project)  # raw save: the commit itself
         finally:
             self.current_project = current
 
@@ -201,6 +351,10 @@ class _ProjectIOMixin:
         self._flush_gesture()
 
         if old_value == new_value and old_value is not None:
+            return
+
+        if self._is_read_only():
+            self._notify_change_not_saved()
             return
 
         append_log_entry(
@@ -244,7 +398,7 @@ class _ProjectIOMixin:
         (a project that is not being opened); an opened project's previews
         are rebuilt by the open's full refresh."""
         blots = _blots_with_duplicate_channels(project)
-        if not blots:
+        if not blots or self._is_read_only(project):
             return False
         if not self._ask_renumber_channels(_duplicate_channels_in_project_message(project, blots)):
             return False
@@ -265,7 +419,8 @@ class _ProjectIOMixin:
                     new_value=new,
                     note=f"Duplicate NIR channel numbers renumbered in file order: {files}.",
                 )
-            self.workspace.save_project(project)
+            if self._may_write(project):
+                self._guarded_save(project)
         finally:
             self.current_project = current
 
@@ -285,7 +440,9 @@ class _ProjectIOMixin:
         if not path:
             return
         try:
-            self.current_project = self.workspace.load_project(path)
+            project = self.workspace.load_project(path)
+            if not self._begin_editing(project):
+                return
             self._handle_duplicate_nir_channels(self.current_project)
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
@@ -308,7 +465,8 @@ class _ProjectIOMixin:
             return
         try:
             proj_path = self.workspace.create_new_project(name.strip())
-            self.current_project = self.workspace.load_project(str(proj_path))
+            if not self._begin_editing(self.workspace.load_project(str(proj_path))):
+                return
             self._sync_controls_from_project()
             self.legend_tab.bind(self.current_project, self._get_legend_suggestions, self._add_legend_suggestion)
             # Must stay regenerate="all": crop previews are cached at
@@ -392,6 +550,8 @@ class _ProjectIOMixin:
 
     def import_blot(self):
         self._flush_gesture()
+        if self._refuse_if_read_only("import images into it"):
+            return
         if not self.current_project:
             QMessageBox.information(
                 self,
@@ -523,6 +683,8 @@ class _ProjectIOMixin:
 
     def _on_import_nir_blot(self):
         self._flush_gesture()
+        if self._refuse_if_read_only("import images into it"):
+            return
         if not self.current_project:
             QMessageBox.information(
                 self,
@@ -688,6 +850,8 @@ class _ProjectIOMixin:
 
     def import_membrane(self):
         self._flush_gesture()
+        if self._refuse_if_read_only("import images into it"):
+            return
         if not self.current_project or not self.current_project.panel.blots:
             QMessageBox.information(
                 self,

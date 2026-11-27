@@ -209,6 +209,8 @@ class _ExportMixin:
         return sha
 
     def export_final_png(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -272,6 +274,8 @@ class _ExportMixin:
         QMessageBox.information(self, "Exported", f"Saved PNG:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_pdf(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -336,6 +340,8 @@ class _ExportMixin:
         QMessageBox.information(self, "Exported", f"Saved PDF:\n{path}\nSHA-256: {sha[:12]}…")
 
     def export_final_svg(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         scene, rect = self._final_scene_and_rect()
         if scene is None:
@@ -459,6 +465,8 @@ class _ExportMixin:
             raise RuntimeError(f"Could not save TIFF:\n{path}")
 
     def export_current_original_tiff(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -507,6 +515,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_original_tiffs(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -551,6 +561,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_current_source_asset(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -625,6 +637,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Export error", str(e))
 
     def export_all_source_assets(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -791,6 +805,8 @@ class _ExportMixin:
         return drawn_count
 
     def export_legend_zone_png(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -940,6 +956,8 @@ class _ExportMixin:
         return path if path.exists() else None
 
     def export_integrity_report(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")
@@ -996,6 +1014,8 @@ class _ExportMixin:
             QMessageBox.critical(self, "Integrity report error", str(e))
 
     def export_detailed_integrity_report(self):
+        if self._refuse_if_read_only("export from it"):
+            return
         self._flush_gesture()   # export the committed state, after its log entry
         if not self.current_project:
             QMessageBox.information(self, "No project", "Create or open a project first.")

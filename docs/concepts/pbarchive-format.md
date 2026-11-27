@@ -43,6 +43,12 @@ archive — from before this check existed — still imports normally, with
 asset-level verification unchanged but no project-level guarantee; the import
 result reflects this rather than treating it as an error.
 
+The archive's `format_version` is separate from each project's own
+`project.format_version`. A project saved by a newer PysternBlot, in a project
+format this version doesn't know, is skipped on import and reported, so it is
+never re-saved in a form that would drop what it doesn't understand. Project
+edit locks (`.lock`) are never written into an archive.
+
 Because a `.pbarchive` is exchanged between labs by design, it is untrusted
 input in the ordinary case, not the exceptional one. Import additionally
 validates every archive member's path — rejecting absolute paths, backslash

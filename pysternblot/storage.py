@@ -6,7 +6,7 @@
 # the Free Software Foundation, version 3 of the License.
 
 from __future__ import annotations
-import hashlib, json, re, zipfile
+import hashlib, json, os, re, tempfile, zipfile
 
 try:
     from pysternblot import __version__ as _pysternblot_version
@@ -25,6 +25,14 @@ from .models import (
     Project,
 )
 from .logchain import append_log_entry
+from .migrations import (
+    ProjectFormatTooNewError,
+    check_supported,
+    migrate_project_dict,
+    read_format_version,
+)
+from .models import PROJECT_FORMAT_VERSION
+from . import project_lock
 from .jsonsafe import dumps_strict
 from .physical_scale import native_crop_size, reconcile_reference_pixel_size
 import datetime, uuid
@@ -651,9 +659,55 @@ def _read_member_limited(
     return b"".join(chunks)
 
 
+class ProjectReadOnlyError(RuntimeError):
+    """A save was refused: the project is open read-only in this window."""
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write text to path atomically: a temp file in the same folder,
+    flushed and fsynced, then os.replace()d over path. A crash or error
+    mid-write leaves the previous file intact, and a reader never sees a
+    half-written file. The temp file (".<name>.*.tmp") is removed on any
+    failure; it never matches a "*/project.json" glob."""
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(
+        prefix=f".{path.stem}.", suffix=f"{path.suffix}.tmp", dir=path.parent,
+    )
+    try:
+        # mkstemp creates 0600; keep the mode the file had (or the usual 0644).
+        try:
+            mode = path.stat().st_mode & 0o777
+        except OSError:
+            mode = 0o644
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            os.chmod(tmp, mode)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _on_disk_format_version(path: Path) -> int | None:
+    """format_version of an existing project.json, None if absent/unreadable."""
+    try:
+        return read_format_version(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
 @dataclass
 class Workspace:
     root: Path
+    # Projects open read-only in this window: save_project refuses them.
+    read_only_ids: set[str] = field(default_factory=set)
+    # Edit locks this process holds: project id -> lock token.
+    held_locks: dict[str, str] = field(default_factory=dict)
 
     @property
     def assets_dir(self) -> Path: return self.root / "assets"
@@ -716,13 +770,91 @@ class Workspace:
         proj_dir = self.projects_dir / project.project.id
         proj_dir.mkdir(parents=True, exist_ok=True)
         path = proj_dir / "project.json"
-        path.write_text(project.model_dump_json(indent=2), encoding="utf-8")
+        if project.project.id in self.read_only_ids:
+            raise ProjectReadOnlyError(
+                f"Project {project.project.name!r} is open read-only; it was not saved."
+            )
+        # Never save over a project written by a newer PysternBlot (e.g. one
+        # opened with "Open anyway" and upgraded by the other app meanwhile).
+        on_disk = _on_disk_format_version(path)
+        if on_disk is not None and on_disk > PROJECT_FORMAT_VERSION:
+            raise ProjectFormatTooNewError(on_disk, path)
+        project.project.format_version = PROJECT_FORMAT_VERSION
+        atomic_write_text(path, project.model_dump_json(indent=2))
         return path
+
+    # ------------------------------------------------------------------
+    # Edit locks (project_lock.py). Reading never needs one.
+    # ------------------------------------------------------------------
+    def project_dir(self, project_id: str) -> Path:
+        return self.projects_dir / project_id
+
+    def acquire_lock(self, project_id: str) -> project_lock.LockResult:
+        result = project_lock.acquire(
+            self.project_dir(project_id), frozenset(self.held_locks.values()),
+        )
+        if result.acquired:
+            self.held_locks[project_id] = result.token
+        return result
+
+    def force_lock(self, project_id: str) -> str:
+        token = project_lock.force(self.project_dir(project_id))
+        self.held_locks[project_id] = token
+        return token
+
+    def release_lock(self, project_id: str) -> None:
+        token = self.held_locks.pop(project_id, None)
+        project_dir = self.project_dir(project_id)
+        if project_lock.release(project_dir, token):
+            # A project opened from outside the workspace and never saved
+            # leaves a folder holding only the lock: remove it if now empty,
+            # so it does not look like an existing project (archive import).
+            # os.rmdir only, never rmtree: it removes nothing but an empty
+            # folder, and fails (ignored) if any file or folder is left in it.
+            try:
+                project_dir.rmdir()
+            except OSError:
+                pass
+
+    def release_all_locks(self) -> None:
+        for project_id in list(self.held_locks):
+            self.release_lock(project_id)
+
+    def still_holds_lock(self, project_id: str) -> bool:
+        token = self.held_locks.get(project_id)
+        return bool(token) and project_lock.still_ours(self.project_dir(project_id), token)
+
+    def locked_by_other(self, project_id: str) -> project_lock.LockInfo | None:
+        """The live holder of another process's lock on this project, else
+        None (no lock, our own lock, or a stale one). An unreadable lock is
+        reported as held, by an unknown holder."""
+        path = project_lock.lock_path(self.project_dir(project_id))
+        if not path.exists():
+            return None
+        holder = project_lock.LockInfo.from_file(path)
+        own = frozenset(self.held_locks.values())
+        if holder is None:
+            return project_lock.LockInfo("unknown host", 0, "", "", "unknown time")
+        if holder.token in own or project_lock.is_stale(holder, own):
+            return None
+        return holder
+
+    def _refuse_if_locked_by_other(self, project_id: str) -> None:
+        holder = self.locked_by_other(project_id)
+        if holder is not None:
+            raise ProjectReadOnlyError(
+                "This project is being edited in another PysternBlot "
+                f"({holder.describe()}); it was not changed."
+            )
 
     def set_project_archived(self, project_path: str, archived: bool) -> None:
         """Flip the is_archived flag on a project and persist it to disk."""
         project = self.load_project(project_path)
         old_value = project.project.is_archived
+        if old_value != archived:
+            self._refuse_if_locked_by_other(project.project.id)
+        elif self.locked_by_other(project.project.id) is not None:
+            return   # nothing to change, and the other window owns the file
         project.project.is_archived = archived
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         append_log_entry(
@@ -740,6 +872,7 @@ class Workspace:
         self.save_project(project)
 
     def rename_project(self, project: Project, new_name: str) -> Path:
+        self._refuse_if_locked_by_other(project.project.id)
         old_name = project.project.name
         now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
         project.project.name = new_name
@@ -759,7 +892,10 @@ class Workspace:
         return self.save_project(project)
 
     def load_project(self, project_json_path: str) -> Project:
-        data = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
+        raw = json.loads(Path(project_json_path).read_text(encoding="utf-8"))
+        # Refuse a newer format before building anything: never half-loaded.
+        check_supported(raw, project_json_path)
+        data, _old_version = migrate_project_dict(raw)
         project = Project.model_validate(data)
         # Migrate old projects that pre-date crop_template: seed from first blot's crop w/h.
         if "crop_template" not in data.get("panel", {}) and project.panel.blots:
@@ -941,6 +1077,7 @@ class Workspace:
                 "modified_utc": now,
                 "app_version": app_version,
                 "license": "GPL-3.0-only",
+                "format_version": PROJECT_FORMAT_VERSION,
             },
             "assets": {},
             "marker_sets": [],
@@ -975,7 +1112,7 @@ class Workspace:
         proj_dir = self.projects_dir / project_id
         proj_dir.mkdir(parents=True, exist_ok=True)
         path = proj_dir / "project.json"
-        path.write_text(dumps_strict(project_data, indent=2), encoding="utf-8")
+        atomic_write_text(path, dumps_strict(project_data, indent=2))
         return path
     
     def asset_original_file(self, sha256: str) -> Path:
@@ -1486,7 +1623,16 @@ class Workspace:
 
                 try:
                     proj_data = json.loads(raw_bytes.decode("utf-8"))
+                    check_supported(proj_data)
+                    proj_data, _old_version = migrate_project_dict(proj_data)
                     project = Project.model_validate(proj_data)
+                except ProjectFormatTooNewError:
+                    result.integrity_errors.append(
+                        f"Project {project_id} was saved by a newer PysternBlot "
+                        f"(format {read_format_version(proj_data)}); skipped. "
+                        "Please update PysternBlot to import it."
+                    )
+                    continue
                 except Exception as exc:
                     result.integrity_errors.append(
                         f"Failed to parse project.json for {project_id}: {exc}"

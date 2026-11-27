@@ -325,3 +325,48 @@ a real Odyssey CLx export (float16 tiled pyramid, and a legacy uint16 file, with
 the LI-COR baseline tags): `tests/test_licor_float_import.py` and
 `tests/test_licor_marker_channels.py`. See the [contributing guide](https://pysternblot.readthedocs.io/en/stable/contributing.html) for how to
 contribute sanitised instrument output.
+
+## Concurrent use: format version and edit lock
+
+Several PysternBlots (windows, or a standalone install and the copy bundled in
+Pyblication) can share one workspace, at different versions.
+
+- **`migrations.py`**, the same design as Pycrograph's:
+  - `PROJECT_FORMAT_VERSION` (in `models.py`) is stored as
+    `project.format_version`; a project without it is format 0.
+  - `Workspace.load_project` calls `check_supported` on the raw JSON before
+    building any model, and raises `ProjectFormatTooNewError` for a newer
+    format. It then runs `migrate_project_dict` (one step per version).
+  - `save_project` refuses to replace an on-disk file of a newer format.
+  - Archive import skips newer projects.
+  - A step that changes data should log a migration entry. The 0 → 1 step only
+    adds the stamp, so it logs nothing.
+- **Unknown fields:**
+  - Every persisted model derives from `models._Model` (`extra="allow"`), so
+    fields a newer version adds are kept and written back.
+  - `logchain.canonical_payload` uses `model_dump`, which includes them, so a
+    newer app's entry hashes still verify.
+  - Fields PysternBlot itself retired are listed in `_retired_fields` and
+    dropped on load.
+- **Atomic save:** `storage.atomic_write_text` writes a temp file in the same
+  folder (`.project.*.json.tmp`), then flush, `fsync` and `os.replace`. A
+  `*/project.json` glob never matches the temp file.
+- **`project_lock.py`** (no Qt):
+  - `projects/<id>/.lock` is created with `O_CREAT | O_EXCL` and holds host,
+    pid, app, version, time, executable and a random token.
+  - A lock is stale when it was written on this host by a pid that is no
+    longer alive (ctypes on Windows, where `os.kill` would terminate the
+    process). A stale lock is taken over with replace-then-verify.
+  - `release` and `still_ours` compare tokens.
+  - `Workspace` keeps `held_locks` and `read_only_ids`. `save_project` refuses
+    read-only ids, and library rename or archive refuse a project another live
+    process holds.
+- **UI** (`project_io_mixin`):
+  - `_begin_editing` takes the lock before a project becomes current and asks
+    read-only / open anyway / cancel when another window holds it.
+  - `_may_write`, called before every save and gesture commit, blocks writes in
+    read-only mode. It also switches the window to read-only when the lock no
+    longer carries our token.
+  - `log_operation` skips entries in read-only mode.
+  - Imports and exports are refused in read-only mode.
+  - `closeEvent` releases the locks, with an `atexit` hook as a fallback.

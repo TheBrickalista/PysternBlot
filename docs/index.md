@@ -32,6 +32,7 @@ concepts/film-to-digital
 concepts/provenance
 concepts/pbarchive-format
 concepts/nir-typhoon
+concepts/pyblication-plugin
 ```
 
 ```{toctree}

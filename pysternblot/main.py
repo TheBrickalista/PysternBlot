@@ -8,6 +8,19 @@
 import sys
 
 
+def parse_project_arg(argv: list[str]) -> str | None:
+    """The project id given with --project ID / --project=ID, or None.
+
+    Used by the Pyblication plugin's open_project() to open a given project;
+    without it the app starts exactly as before."""
+    for i, arg in enumerate(argv):
+        if arg == "--project" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--project="):
+            return arg.split("=", 1)[1] or None
+    return None
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
 
@@ -18,7 +31,11 @@ def main(argv=None):
         sys.exit(run_selfcheck(out_path))
 
     from .app import run
-    run()
+    project_id = parse_project_arg(argv)
+    if project_id:
+        run(project_id=project_id)
+    else:
+        run()
 
 if __name__ == "__main__":
     main()

@@ -55,6 +55,18 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   the project folder, flushed to disk and then swapped in. A crash or error
   mid-save leaves the previous file intact, and readers (such as the
   Pyblication plugin) never see a half-written file.
+- **SVG export: its size is now the figure itself** (no 20 pt margin), the
+  same physical size as the PDF. Width and height (in mm) and the `viewBox`
+  now agree; before, the size was truncated to whole units while the
+  `viewBox` was not.
+
+### Fixed
+- **PDF export: page sized to the figure; images embedded losslessly at native
+  resolution.** The page was A4, with the figure scaled to fit inside a margin,
+  and blots were JPEG-encoded. The page is now the figure's own bounds (whole
+  points, zero margins). Every blot and NIR channel is stored Flate-compressed,
+  8-bit RGB, at the crop's native pixel size, never JPEG. Text stays live with
+  embedded TrueType fonts. This meets Pyblication's panel contract.
 
 ---
 

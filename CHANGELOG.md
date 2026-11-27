@@ -8,6 +8,22 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Pyblication plugin.** PysternBlot exports can now be recognised by
+  [Pyblication](https://github.com/TheBrickalista/Pyblication), which tracks
+  manuscript figures: given an exported file, the plugin finds the project
+  whose operation log recorded it (by SHA-256) and lists the files the figure
+  is made from (`project.json` and the stored originals of every blot,
+  overlay and NIR channel), with the export's log entry and the log chain
+  status. It only reads the workspace, never writes to it. Registered as the
+  `pyblication.plugins` entry point `pysternblot`; PysternBlot doesn't depend
+  on Pyblication and works exactly as before without it. See
+  "Pyblication plugin" in the docs.
+- **`--project <id>`** opens a project at startup (used by Pyblication to open
+  the project behind a panel). Without it the app starts as before.
+- **`PYSTERNBLOT_WORKSPACE`** environment variable: use another workspace
+  folder instead of `~/.pysternblot`.
+
 ---
 
 ## [1.3.0] — 2026-11-17

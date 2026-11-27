@@ -7,14 +7,11 @@
 
 from __future__ import annotations
 from PySide6.QtWidgets import QApplication
-from pathlib import Path
+from .paths import default_workspace  # also importable as pysternblot.app.default_workspace
 from .storage import Workspace
 from .ui.main_window import MainWindow
 
-def default_workspace() -> Path:
-    return Path.home() / ".pysternblot"
-
-def run():
+def run(project_id: str | None = None):
     app = QApplication([])
     app.setOrganizationName("IRCAN")
     app.setApplicationName("PysternBlot")
@@ -22,5 +19,7 @@ def run():
     ws.ensure()
     win = MainWindow(ws)
     win.show()
+    if project_id:
+        win.open_project_by_id(project_id)
     win.maybe_prompt_and_check_updates()
     app.exec()

@@ -2926,6 +2926,23 @@ class MainWindow(_ProjectIOMixin, _MarkerSetMixin, _OverlayLadderMixin, _ExportM
         if not path:
             return
 
+        self.open_project_at(path)
+
+    def open_project_by_id(self, project_id: str) -> None:
+        """Open workspace/projects/<project_id>/project.json (the --project
+        command-line option, used by the Pyblication plugin)."""
+        path = self.workspace.projects_dir / project_id / "project.json"
+        if not path.is_file():
+            QMessageBox.warning(
+                self, "Project not found",
+                f"No project {project_id!r} in this workspace:\n{self.workspace.root}",
+            )
+            return
+        self.open_project_at(str(path))
+
+    def open_project_at(self, path: str) -> None:
+        """Open a project.json and show its Final Result tab, as a
+        double-click in the library does."""
         self._flush_gesture()
         try:
             self.current_project = self.workspace.load_project(path)

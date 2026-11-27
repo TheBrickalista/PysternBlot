@@ -71,6 +71,12 @@ Issues = "https://github.com/TheBrickalista/PysternBlot/issues"
 [project.scripts]
 pysternblot = "pysternblot.main:main"
 
+# Pyblication plugin (protocol v1, see docs/concepts/pyblication-plugin.md).
+# Metadata only: PysternBlot never imports Pyblication, and has no
+# dependency on it.
+[project.entry-points."pyblication.plugins"]
+pysternblot = "pysternblot.plugin:describe"
+
 [tool.setuptools.package-data]
 pysternblot = ["resources/*", "resources/**/*"]
 

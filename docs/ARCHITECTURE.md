@@ -15,7 +15,13 @@ SHA-256; every state mutation is recorded to an operation log.
 ## Entry point
 
 `main.py` → `app.py` → creates a `Workspace`, instantiates `MainWindow(ws)`, and
-runs the Qt event loop. The workspace root is `~/.pysternblot/`.
+runs the Qt event loop. The workspace root is `~/.pysternblot/`, or
+`$PYSTERNBLOT_WORKSPACE` when set (`paths.default_workspace()`, a Qt-free
+module; `app.default_workspace` still works). `--project <id>` opens
+`projects/<id>/project.json` after the window is shown
+(`MainWindow.open_project_by_id` → `open_project_at`, the same sequence as a
+double-click in the library); without it the app starts as before.
+`--selfcheck` exits before Qt is imported.
 
 ## Data model (`models.py`)
 
@@ -271,6 +277,45 @@ channel matches (`_band_visible_on_channel`, keyed by `_marker_channel_key`) —
 with no first-row special case. There is no
 false-colour composite in the final figure (greyscale per channel), though a
 composite is available in the Original Image tab for orientation.
+
+## Pyblication plugin (`plugin.py`)
+
+Pyblication (the manuscript figure manager) discovers PysternBlot through the
+entry point `[project.entry-points."pyblication.plugins"] pysternblot =
+"pysternblot.plugin:describe"`: metadata only, PysternBlot never imports
+Pyblication. The contract is Pyblication's `docs/plugin-protocol.md`
+(protocol 1).
+
+- **No Qt.** `plugin.py` imports only the standard library, `paths`,
+  `models`, `logchain` and `__version__` (not `storage`, which pulls in
+  `image_utils` and PySide6), because Pyblication's CLI is headless. A test
+  imports it and identifies an export in a subprocess and checks that
+  PySide6 never reaches `sys.modules`.
+- **`identify(export_path)`**, read-only: SHA-256 of the file → the
+  `export_generated` entries (dict `new_value.sha256`) in
+  `projects/*/project.json`, read as raw JSON, so a project that fails
+  validation still identifies its exports. No match → `None`. Several
+  matches → the most recent entry (`timestamp_utc`, then log position, then
+  project id); the other project ids go in `provenance["also_logged_in"]`.
+- **Members:** `project.json` (role `project`), and
+  `assets/<sha>/original.<ext>` (role `raw`, `sha256` = the asset's sha) for
+  every asset the project references: `project.assets`, each blot's
+  `asset_sha256` and `overlay_asset_sha256`, and each NIR channel's
+  `asset_sha256`. A missing original is still listed (Pyblication reports
+  it). Rendering reads nothing else from the workspace: marker sets come
+  from `project.marker_sets`, `presets/` only feeds the UI, and the
+  `preview_crop_*.tif` caches are derived from the originals, so neither is
+  a member.
+- **Provenance:** project id and name, the export entry (timestamp, format,
+  size, field, path, `entry_hash`/`prev_hash`), `verify_log_chain` status,
+  PysternBlot version.
+- **`open_project(project_id, project_path)`** launches
+  `python -m pysternblot --project <id>` as a separate process, with
+  `PYSTERNBLOT_WORKSPACE` set to the workspace holding `project_path`. It
+  writes nothing.
+- Exports are on disk with their log entry before the export dialog reports
+  success (every export handler logs, then `_save_project()`, then shows the
+  message); `tests/test_pyblication_ui.py` checks this for PNG, PDF and SVG.
 
 ## Test data
 
